@@ -1,0 +1,21 @@
+appId: com.compile.editor
+productName: comπle Editor
+directories:
+  buildResources: build
+files:
+  - '!**/.vscode/*'
+  - '!src/*'
+  - '!electron.vite.config.*'
+  - '!{.eslintignore,.eslintrc.cjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+win:
+  executableName: compile-editor
+mac:
+  entitlementsInherit: build/entitlements.mac.plist
+linux:
+  target:
+    - AppImage
+    - snap
+    - deb
+  maintainer: compile-editor
+  category: Development

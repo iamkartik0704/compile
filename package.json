@@ -1,0 +1,37 @@
+{
+  "name": "compile-editor",
+  "version": "1.0.0",
+  "description": "comπle Code Editor — A secure Electron IDE with AI streaming",
+  "main": "./out/main/index.js",
+  "author": "comπle",
+  "license": "MIT",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@electron-toolkit/preload": "^3.0.1",
+    "@electron-toolkit/utils": "^3.0.0",
+    "@google/generative-ai": "^0.24.0",
+    "@monaco-editor/react": "^4.7.0",
+    "lucide-react": "^1.21.0",
+    "monaco-editor": "^0.55.1",
+    "monaco-languageclient": "^8.1.1",
+    "openai": "^4.77.0",
+    "vscode-languageclient": "^9.0.1",
+    "vscode-ws-jsonrpc": "^3.3.2"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^3.0.0",
+    "pyright": "^1.1.410",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "vite-plugin-monaco-editor": "^1.1.0"
+  }
+}
