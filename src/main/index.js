@@ -137,7 +137,7 @@ const SIMULATION_RESPONSES = {
 /**
  * Stream from Anthropic (Claude Sonnet, Claude Opus)
  */
-async function streamAnthropic(apiModel, prompt, sender, images = []) {
+async function streamAnthropic(apiModel, prompt, sender, images = [], emitEvent = 'ai-stream-chunk') {
   const Anthropic = (await import('@anthropic-ai/sdk')).default
   const client = new Anthropic({ apiKey: apiKeyCache['anthropic'] })
 
@@ -163,7 +163,7 @@ async function streamAnthropic(apiModel, prompt, sender, images = []) {
   })
 
   stream.on('text', (text) => {
-    sender.send('ai-stream-chunk', text)
+    sender.send(emitEvent, text)
   })
 
   // Wait for stream to complete
@@ -173,7 +173,7 @@ async function streamAnthropic(apiModel, prompt, sender, images = []) {
 /**
  * Stream from Google Gemini (Gemini Flash, Gemini Pro)
  */
-async function streamGemini(apiModel, prompt, sender, images = []) {
+async function streamGemini(apiModel, prompt, sender, images = [], emitEvent = 'ai-stream-chunk') {
   const { GoogleGenerativeAI } = await import('@google/generative-ai')
   const genAI = new GoogleGenerativeAI(apiKeyCache['google'])
   const model = genAI.getGenerativeModel({ model: apiModel })
@@ -200,7 +200,7 @@ async function streamGemini(apiModel, prompt, sender, images = []) {
   for await (const chunk of result.stream) {
     const text = chunk.text()
     if (text) {
-      sender.send('ai-stream-chunk', text)
+      sender.send(emitEvent, text)
     }
   }
 }
@@ -209,7 +209,7 @@ async function streamGemini(apiModel, prompt, sender, images = []) {
  * Stream from OpenAI-compatible APIs (OpenAI, DeepSeek, Qwen)
  * These providers expose OpenAI-compatible endpoints.
  */
-async function streamOpenAICompatible(apiModel, prompt, sender, baseURL, provider, images = []) {
+async function streamOpenAICompatible(apiModel, prompt, sender, baseURL, provider, images = [], emitEvent = 'ai-stream-chunk') {
   const OpenAI = (await import('openai')).default
   const isOpenRouter = baseURL && baseURL.includes('openrouter.ai')
   const client = new OpenAI({
@@ -239,7 +239,7 @@ async function streamOpenAICompatible(apiModel, prompt, sender, baseURL, provide
   for await (const chunk of stream) {
     const text = chunk.choices[0]?.delta?.content
     if (text) {
-      sender.send('ai-stream-chunk', text)
+      sender.send(emitEvent, text)
     }
   }
 }
@@ -247,16 +247,16 @@ async function streamOpenAICompatible(apiModel, prompt, sender, baseURL, provide
 /**
  * Simulation fallback for models without hosted APIs
  */
-async function streamSimulation(modelId, sender) {
+async function streamSimulation(modelId, sender, emitEvent = 'ai-stream-chunk') {
   const config = SIMULATION_RESPONSES[modelId]
   if (!config) {
-    sender.send('ai-stream-chunk', `// No simulation available for model: ${modelId}\n`)
+    sender.send(emitEvent, `// No simulation available for model: ${modelId}\n`)
     return
   }
 
   for (let i = 0; i < config.tokens.length; i++) {
     await new Promise((r) => setTimeout(r, config.delay[i] || 80))
-    sender.send('ai-stream-chunk', config.tokens[i])
+    sender.send(emitEvent, config.tokens[i])
   }
 }
 
@@ -265,6 +265,7 @@ async function streamSimulation(modelId, sender) {
 // ============================================================
 async function routeToProvider(modelId, prompt, sender, fullConfig = {}) {
   let config = MODEL_CONFIG[modelId]
+  const emitEvent = fullConfig.emitEvent || 'ai-stream-chunk'
 
   // Handle Dynamic Custom Provider
   if (modelId === 'custom') {
@@ -277,14 +278,14 @@ async function routeToProvider(modelId, prompt, sender, fullConfig = {}) {
   }
 
   if (!config) {
-    sender.send('ai-stream-chunk', `// Unknown model: ${modelId}\n`)
+    sender.send(emitEvent, `// Unknown model: ${modelId}\n`)
     return
   }
 
   // Simulation-only models (no hosted API)
   if (config.type === 'simulation') {
-    sender.send('ai-stream-chunk', `// ℹ️ ${modelId} uses local/self-hosted inference.\n// This is a simulated response.\n\n`)
-    await streamSimulation(modelId, sender)
+    sender.send(emitEvent, `// ℹ️ ${modelId} uses local/self-hosted inference.\n// This is a simulated response.\n\n`)
+    await streamSimulation(modelId, sender, emitEvent)
     return
   }
 
@@ -292,7 +293,7 @@ async function routeToProvider(modelId, prompt, sender, fullConfig = {}) {
   const apiKey = apiKeyCache[config.provider]
   if (!apiKey) {
     sender.send(
-      'ai-stream-chunk',
+      emitEvent,
       `// ⚠️ No API key configured for "${config.provider}".\n` +
       `// Go to Settings (gear icon) → Select "${config.provider}" → Paste your API key → Save.\n` +
       `// Then try again.\n`
@@ -304,16 +305,16 @@ async function routeToProvider(modelId, prompt, sender, fullConfig = {}) {
   try {
     switch (config.type) {
       case 'anthropic':
-        await streamAnthropic(config.apiModel, prompt, sender, fullConfig.images)
+        await streamAnthropic(config.apiModel, prompt, sender, fullConfig.images, emitEvent)
         break
       case 'gemini':
-        await streamGemini(config.apiModel, prompt, sender, fullConfig.images)
+        await streamGemini(config.apiModel, prompt, sender, fullConfig.images, emitEvent)
         break
       case 'openai-compatible':
-        await streamOpenAICompatible(config.apiModel, prompt, sender, config.baseURL, config.provider, fullConfig.images)
+        await streamOpenAICompatible(config.apiModel, prompt, sender, config.baseURL, config.provider, fullConfig.images, emitEvent)
         break
       default:
-        sender.send('ai-stream-chunk', `// Unknown provider type: ${config.type}\n`)
+        sender.send(emitEvent, `// Unknown provider type: ${config.type}\n`)
     }
   } catch (err) {
     // Handle API-specific errors gracefully
@@ -330,7 +331,7 @@ async function routeToProvider(modelId, prompt, sender, fullConfig = {}) {
       userFriendlyError = `Network error — cannot reach "${config.provider}" API. Check your internet connection.`
     }
 
-    sender.send('ai-stream-chunk', `\n// ❌ Error: ${userFriendlyError}\n`)
+    sender.send(emitEvent, `\n// ❌ Error: ${userFriendlyError}\n`)
     console.error(`Provider error (${config.provider}/${config.apiModel}):`, err)
   }
 }
@@ -669,6 +670,10 @@ function createWindow() {
     const entry = { process: childProcess, buffer: '' }
     lspProcesses.set(language, entry)
 
+    childProcess.on('error', (err) => {
+      console.error(`LSP process error [${language}]:`, err)
+    })
+
     childProcess.stdout.on('data', (data) => {
       entry.buffer += data.toString()
 
@@ -777,6 +782,57 @@ function createWindow() {
       console.error('Provider error:', err)
       mainWindow.webContents.send('ai-stream-chunk', `\n// ❌ Error: ${err.message}`)
       return { status: 'error', model, error: err.message }
+    }
+  })
+
+  /**
+   * Handler: Inline AI Prompt (Ctrl+K)
+   * Streams to 'inline-ai-stream-chunk' to separate from chat
+   */
+  ipcMain.handle('send-inline-ai-prompt', async (event, prompt, config = {}) => {
+    let model = config.model || 'auto'
+
+    if (model === 'auto') {
+      model = resolveAutoMode(prompt)
+    }
+
+    try {
+      await routeToProvider(model, prompt, mainWindow.webContents, { ...config, emitEvent: 'inline-ai-stream-chunk' })
+      return { status: 'done', model }
+    } catch (err) {
+      console.error('Provider error:', err)
+      mainWindow.webContents.send('inline-ai-stream-chunk', `\n// ❌ Error: ${err.message}`)
+      return { status: 'error', model, error: err.message }
+    }
+  })
+
+  /**
+   * Handler: Ghost Text Completion
+   * Collects the stream server-side and returns a resolved string.
+   */
+  ipcMain.handle('get-ai-completion', async (event, prompt, config = {}) => {
+    console.log('GET AI COMPLETION TRIGGERED:', prompt.substring(0, 50) + '...')
+    let model = config.model || 'auto'
+    if (model === 'auto') model = resolveAutoMode(prompt)
+    
+    let fullResponse = ''
+    const mockSender = {
+      send: (eventName, chunk) => {
+        if (eventName === 'ghost-text-stream') {
+          // ignore status/info comments like // Unknown provider
+          if (!chunk.startsWith('//')) {
+            fullResponse += chunk
+          }
+        }
+      }
+    }
+    
+    try {
+      await routeToProvider(model, prompt, mockSender, { ...config, emitEvent: 'ghost-text-stream' })
+      return { success: true, text: fullResponse }
+    } catch (err) {
+      console.error('Provider error:', err)
+      return { success: false, error: err.message }
     }
   })
 

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { Sidebar } from './components/Sidebar'
 import { CodeEditor } from './components/CodeEditor'
 import { TerminalPanel } from './components/TerminalPanel'
@@ -7,6 +8,7 @@ import ReactMarkdown from 'react-markdown'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { applyDiff, unescapeXml } from './diffUtils'
+import { X } from 'lucide-react'
 import './assets/sidebar.css'
 import './assets/editor.css'
 
@@ -241,6 +243,114 @@ function App() {
   const [terminalHeight, setTerminalHeight] = useState(250)
 
   // ── Layout State ──
+  const terminalPanelRef = useRef(null)
+  const [bottomTab, setBottomTab] = useState('terminal') // 'terminal' | 'ai-debugger'
+  const [aiDebugger, setAiDebugger] = useState({ explanation: '', codeFix: '', loading: false })
+
+  const [autoCompleteEnabled, setAutoCompleteEnabled] = useState(true)
+  const [autoCompleteDelay, setAutoCompleteDelay] = useState(500)
+
+  const handleRunFile = () => {
+    if (!activeFile) return
+    let cmd = ''
+    
+    const isWindows = navigator.userAgent.toLowerCase().includes('win')
+
+    if (activeFile.endsWith('.js')) cmd = `node "${activeFile}"`
+    else if (activeFile.endsWith('.py')) cmd = `python "${activeFile}"`
+    else if (activeFile.endsWith('.cpp') || activeFile.endsWith('.c++') || activeFile.endsWith('.c')) {
+      cmd = isWindows 
+        ? `g++ "${activeFile}" -o out.exe && out.exe`
+        : `g++ "${activeFile}" -o out && ./out`
+    } else {
+      console.log('Unsupported file type for running')
+      return
+    }
+    
+    setShowTerminal(true)
+    setTimeout(() => {
+      if (terminalPanelRef.current) {
+        terminalPanelRef.current.executeCommand(cmd)
+      }
+    }, 100)
+  }
+
+  // Global Keyboard Shortcut: Ctrl+Enter or Cmd+Enter to Run File
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault()
+        handleRunFile()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [handleRunFile])
+
+  const handleFixWithAi = async () => {
+    if (!terminalPanelRef.current || !activeFile) return
+    const bufferText = terminalPanelRef.current.getBuffer()
+    
+    // Switch to AI Debugger Tab
+    setBottomTab('ai-debugger')
+    setAiDebugger({ explanation: '', codeFix: '', loading: true })
+    
+    let activeFileContent = ''
+    try {
+      const fileRes = await window.api.getFileContents(activeFile)
+      activeFileContent = fileRes.content || fileRes || ''
+    } catch (e) {
+      console.error('Could not read active file contents for AI', e)
+    }
+    
+const promptText = `The user encountered a terminal error.
+Terminal Output:
+${bufferText.substring(Math.max(0, bufferText.length - 2000))}
+
+Active File (${activeFile}):
+${activeFileContent.substring(0, 3000)}
+
+Analyze the error and provide a fix. Return your response in exactly this format:
+EXPLANATION: <brief explanation of the error in 1-2 short sentences>
+FIX:
+<edit_file path="${activeFile}">
+<search_replace>
+<search>
+the exact code to be replaced
+</search>
+<replace>
+the new code
+</replace>
+</search_replace>
+</edit_file>`
+    
+    try {
+      const res = await window.api.getAiCompletion(promptText, { model: selectedModel, customConfig: { baseURL: customBaseUrl, modelId: customModelId } })
+      if (res && res.success && res.text) {
+        const parts = res.text.split('FIX:')
+        const explanation = parts[0].replace('EXPLANATION:', '').trim()
+        
+        let codeFix = parts[1] ? parts[1].trim() : ''
+        // Strip markdown backticks around XML if the AI included them
+        codeFix = codeFix.replace(/^```[a-zA-Z0-9+#-]*\n/, '').replace(/```$/, '').trim()
+        
+        setAiDebugger({ explanation, codeFix, loading: false })
+      } else {
+        setAiDebugger({ explanation: 'Failed to generate a fix.', codeFix: '', loading: false })
+      }
+    } catch (e) {
+      setAiDebugger({ explanation: `Error during AI analysis: ${e.message}`, codeFix: '', loading: false })
+    }
+  }
+
+  const applyAiDebuggerFix = async () => {
+    if (!activeFile || !aiDebugger.codeFix) return
+    window.dispatchEvent(new CustomEvent('auto-apply-diff', {
+      detail: { body: aiDebugger.codeFix, path: activeFile }
+    }))
+    setBottomTab('terminal')
+  }
+
   const [sidebarWidth, setSidebarWidth] = useState(260)
   const [rightPanelWidth, setRightPanelWidth] = useState(320)
   
@@ -327,8 +437,9 @@ function App() {
   }, [apiKeyInput])
 
   // ── Send Prompt ──
-  const handleSend = async () => {
-    const trimmed = prompt.trim()
+  const handleSend = async (directPromptOverride = null) => {
+    const isDirectOverride = typeof directPromptOverride === 'string'
+    const trimmed = isDirectOverride ? directPromptOverride.trim() : prompt.trim()
     if (!trimmed || isStreaming) return
 
     // Reset stream accumulator
@@ -339,11 +450,15 @@ function App() {
     const currentAttachments = [...attachments]
     setMessages((prev) => [
       ...prev,
-      { role: 'user', content: trimmed, images: currentAttachments },
+      { role: 'user', content: trimmed, images: isDirectOverride ? [] : currentAttachments },
       { role: 'assistant', content: '' }
     ])
-    setPrompt('')
-    setAttachments([])
+    
+    if (!isDirectOverride) {
+      setPrompt('')
+      setAttachments([])
+    }
+    
     setIsStreaming(true)
 
     try {
@@ -679,16 +794,87 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
                 markFileDirty={markFileDirty}
                 markFileClean={markFileClean}
                 projectRoot={projectRoot}
+                aiConfig={{ 
+                  model: selectedModel, 
+                  customConfig: { baseURL: customBaseUrl, modelId: customModelId },
+                  autoCompleteEnabled,
+                  autoCompleteDelay
+                }}
+                onRun={handleRunFile}
               />
             </div>
             {showTerminal && (
-              <>
-                <Resizer 
-                  orientation="horizontal" 
-                  onResize={(_, y) => setTerminalHeight(Math.max(100, Math.min(window.innerHeight - y - 24, window.innerHeight - 150)))} 
-                />
-                <TerminalPanel key={projectRoot || 'default'} height={terminalHeight} cwd={projectRoot} />
-              </>
+              <div className="bottom-panel" style={{ height: terminalHeight, display: 'flex', flexDirection: 'column', background: 'var(--bg-main)', borderTop: '1px solid rgba(255,255,255,0.15)', position: 'relative', boxShadow: '0 -4px 15px rgba(0,0,0,0.3)' }}>
+                <div style={{ position: 'absolute', top: -3, left: 0, right: 0, zIndex: 10, display: 'flex', justifyContent: 'center' }}>
+                  <div style={{ position: 'absolute', width: '100%', height: '100%' }}>
+                    <Resizer 
+                      orientation="horizontal" 
+                      onResize={(_, y) => setTerminalHeight(Math.max(100, Math.min(window.innerHeight - y - 24, window.innerHeight - 150)))} 
+                    />
+                  </div>
+                  <div style={{ width: '40px', height: '4px', background: 'rgba(255,255,255,0.2)', borderRadius: '2px', marginTop: '-2px', pointerEvents: 'none', zIndex: 11 }} />
+                </div>
+                
+                <div className="bottom-tabs" style={{ display: 'flex', padding: '0 16px', background: 'var(--bg-dark)', borderBottom: '1px solid var(--border-light)', alignItems: 'center', height: '35px', gap: '20px' }}>
+                  <button 
+                    onClick={() => setBottomTab('terminal')}
+                    style={{ background: 'transparent', border: 'none', color: bottomTab === 'terminal' ? 'var(--text-main)' : 'var(--text-muted)', cursor: 'pointer', fontSize: '11px', textTransform: 'uppercase', padding: '0', borderBottom: bottomTab === 'terminal' ? '1px solid var(--accent-color)' : '1px solid transparent', height: '100%', fontWeight: bottomTab === 'terminal' ? 'bold' : 'normal' }}
+                  >Terminal</button>
+                  <button 
+                    onClick={() => setBottomTab('ai-debugger')}
+                    style={{ background: 'transparent', border: 'none', color: bottomTab === 'ai-debugger' ? 'var(--accent-color)' : 'var(--text-muted)', cursor: 'pointer', fontSize: '11px', textTransform: 'uppercase', padding: '0', borderBottom: bottomTab === 'ai-debugger' ? '1px solid var(--accent-color)' : '1px solid transparent', height: '100%', fontWeight: bottomTab === 'ai-debugger' ? 'bold' : 'normal', display: 'flex', alignItems: 'center', gap: '6px' }}
+                  >✨ AI Debugger</button>
+                  <div style={{ flex: 1 }} />
+                  <button 
+                    onClick={handleFixWithAi} 
+                    style={{ background: 'var(--accent-color)', color: 'var(--bg-main)', border: 'none', padding: '2px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}
+                  >
+                    ✨ Fix with AI
+                  </button>
+                </div>
+
+                <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+                  <div style={{ position: 'absolute', inset: 0, opacity: bottomTab === 'terminal' ? 1 : 0, pointerEvents: bottomTab === 'terminal' ? 'auto' : 'none', zIndex: bottomTab === 'terminal' ? 1 : 0 }}>
+                    <TerminalPanel ref={terminalPanelRef} key={projectRoot || 'default'} height={terminalHeight - 36} cwd={projectRoot} hideHeader={true} />
+                  </div>
+                  
+                  {bottomTab === 'ai-debugger' && (
+                     <div className="ai-debugger-panel" style={{ position: 'absolute', inset: 0, zIndex: 2, padding: '16px', background: '#0c0c14', display: 'flex', flexDirection: 'column' }}>
+                       {aiDebugger.loading ? (
+                         <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                           <div className="loading-spinner" style={{ marginBottom: '16px', fontSize: '24px' }}>⚙️</div>
+                           Analyzing terminal error...
+                         </div>
+                       ) : (
+                         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', flex: 1, minHeight: 0 }}>
+                           {aiDebugger.explanation && (
+                             <div style={{ background: 'rgba(255,255,255,0.05)', padding: '16px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)' }}>
+                               <strong style={{ display: 'block', marginBottom: '8px', color: '#10a37f' }}>Explanation:</strong>
+                               <p style={{ margin: 0, whiteSpace: 'pre-wrap', color: '#e2e2e2', fontSize: '13px', lineHeight: '1.5' }}>{aiDebugger.explanation}</p>
+                             </div>
+                           )}
+                           {aiDebugger.codeFix && (
+                             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+                               <strong style={{ display: 'block', marginBottom: '8px', color: '#e2e2e2' }}>Proposed Fix:</strong>
+                               <div style={{ flex: 1, overflow: 'auto', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', background: '#1e1e1e' }}>
+                                 <SyntaxHighlighter language="javascript" style={vscDarkPlus} customStyle={{ margin: 0, fontSize: '13px', background: 'transparent' }}>
+                                   {(() => {
+                                      const matches = [...aiDebugger.codeFix.matchAll(/<replace>([\s\S]*?)<\/replace>/g)]
+                                      return matches.length > 0 ? matches.map(m => m[1].trim()).join('\n// ...\n') : aiDebugger.codeFix
+                                   })()}
+                                 </SyntaxHighlighter>
+                               </div>
+                               <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'flex-end' }}>
+                                 <button onClick={applyAiDebuggerFix} style={{ background: 'var(--accent-color)', color: 'var(--bg-main)', border: 'none', padding: '8px 20px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: 'bold' }}>Review in Editor</button>
+                               </div>
+                             </div>
+                           )}
+                         </div>
+                       )}
+                     </div>
+                  )}
+                </div>
+              </div>
             )}
           </div>
 
@@ -1148,13 +1334,47 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
                   </div>
                 </div>
               </div>
+
+              {/* ── AI Auto-Complete Settings ── */}
+              <div className="security-info" style={{ marginTop: '24px' }}>
+                <h3>✨ AI Auto-Complete</h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '12px' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                    <input 
+                      type="checkbox" 
+                      checked={autoCompleteEnabled} 
+                      onChange={e => setAutoCompleteEnabled(e.target.checked)} 
+                    />
+                    Enable Inline Auto-Complete (Ghost Text)
+                  </label>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <label style={{ fontSize: '0.9rem', display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)' }}>
+                      <span>Trigger Delay (Speed)</span>
+                      <span>{autoCompleteDelay}ms</span>
+                    </label>
+                    <input 
+                      type="range" 
+                      min="100" 
+                      max="2000" 
+                      step="100" 
+                      value={autoCompleteDelay} 
+                      onChange={e => setAutoCompleteDelay(Number(e.target.value))} 
+                      style={{ cursor: 'pointer' }}
+                    />
+                    <small style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Lower delay = faster suggestions (uses more API calls)</small>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         )}
       </div>
-      </>
-    )}
-  </div>
+    </>
+  )}
+</div>
+      
+
+
         {/* ── Status Bar ── */}
         <footer className="status-bar">
           <div className="status-left">
@@ -1170,6 +1390,14 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
             </span>
           </div>
           <div className="status-right">
+            <span 
+              className="status-item" 
+              style={{ cursor: 'pointer', padding: '0 8px', borderLeft: '1px solid var(--border-light)' }}
+              onClick={() => setAutoCompleteEnabled(!autoCompleteEnabled)}
+              title="Toggle AI Autocomplete"
+            >
+              πlot Autocomplete: {autoCompleteEnabled ? <span style={{ color: '#10a37f' }}>On</span> : <span style={{ color: 'var(--text-muted)' }}>Off</span>}
+            </span>
             <span 
               className="status-item" 
               style={{ cursor: 'pointer', padding: '0 8px', borderLeft: '1px solid var(--border-light)' }}

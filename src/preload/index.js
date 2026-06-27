@@ -58,6 +58,16 @@ const api = {
   },
 
   /**
+   * Inline AI Handlers
+   */
+  sendInlineAiPrompt: (prompt, config) => ipcRenderer.invoke('send-inline-ai-prompt', prompt, config),
+  onInlineAiStreamChunk: (callback) => {
+    ipcRenderer.removeAllListeners('inline-ai-stream-chunk')
+    ipcRenderer.on('inline-ai-stream-chunk', (_event, chunk) => callback(chunk))
+  },
+  getAiCompletion: (prompt, config) => ipcRenderer.invoke('get-ai-completion', prompt, config),
+
+  /**
    * Model Resolution Listener — Push model (Main → Renderer).
    * When Auto Mode resolves to a specific model, this fires
    * so the UI can display which model was selected.

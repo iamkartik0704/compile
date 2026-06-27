@@ -1,10 +1,10 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState, forwardRef, useImperativeHandle } from 'react'
 import { Terminal } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
 import 'xterm/css/xterm.css'
 import '../assets/terminal.css'
 
-export const TerminalPanel = ({ height, cwd }) => {
+export const TerminalPanel = forwardRef(({ height, cwd, onFixWithAi, hideHeader }, ref) => {
   const terminalRef = useRef(null)
   const terminalInstance = useRef(null)
   const fitAddon = useRef(null)
@@ -94,6 +94,28 @@ export const TerminalPanel = ({ height, cwd }) => {
     }
   }, [])
 
+  useImperativeHandle(ref, () => ({
+    executeCommand: (cmd) => {
+      if (terminalId.current !== null) {
+        window.api.sendTerminalData(terminalId.current, cmd + '\r')
+      }
+    },
+    getBuffer: () => {
+      if (!terminalInstance.current) return ''
+      const term = terminalInstance.current
+      let bufferText = ''
+      for (let i = 0; i < term.buffer.active.length; i++) {
+        bufferText += term.buffer.active.getLine(i).translateToString(true) + '\n'
+      }
+      return bufferText
+    },
+    write: (text) => {
+      if (terminalInstance.current) {
+        terminalInstance.current.write(text)
+      }
+    }
+  }))
+
   // Refit when height changes
   useEffect(() => {
     if (isTerminalReady && fitAddon.current) {
@@ -102,11 +124,21 @@ export const TerminalPanel = ({ height, cwd }) => {
   }, [height, isTerminalReady])
 
   return (
-    <div className="terminal-container" style={{ height: height ? `${height}px` : '100%' }}>
-      <div className="terminal-header">
-        <span className="terminal-title">Terminal</span>
-      </div>
-      <div className="terminal-wrapper" ref={terminalRef}></div>
+    <div className="terminal-container" style={{ height: height ? (typeof height === 'number' ? `${height}px` : height) : '100%', display: 'flex', flexDirection: 'column' }}>
+      {!hideHeader && (
+        <div className="terminal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingRight: '12px' }}>
+          <span className="terminal-title">Terminal</span>
+          {onFixWithAi && (
+            <button 
+              onClick={onFixWithAi} 
+              style={{ background: 'var(--accent-color)', color: 'var(--bg-main)', border: 'none', padding: '2px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}
+            >
+              ✨ Fix with AI
+            </button>
+          )}
+        </div>
+      )}
+      <div className="terminal-wrapper" ref={terminalRef} style={{ flex: 1, overflow: 'hidden' }}></div>
     </div>
   )
-}
+})

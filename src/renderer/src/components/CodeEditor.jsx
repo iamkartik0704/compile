@@ -160,7 +160,7 @@ const getLanguageFromPath = (path) => {
     // Python
     py: 'python', pyw: 'python', pyi: 'python',
     // C/C++ family
-    c: 'c', hpp: 'cpp', cpp: 'cpp', cc: 'cpp', cxx: 'cpp', h: 'c',
+    c: 'c', hpp: 'cpp', cpp: 'cpp', cc: 'cpp', cxx: 'cpp', 'c++': 'cpp', h: 'c',
     // Go
     go: 'go',
     // Rust
@@ -244,6 +244,12 @@ const lspClients = new Map()      // lspKey → LspClient
 const registeredProviders = new Set() // monacoLangId strings already registered
 let ipcListenerInstalled = false
 
+// Global reference to the current AI config so the provider can access it
+let globalAiConfig = null
+let globalOpenFiles = []
+let globalFileContents = {}
+let globalActiveFile = null
+
 function installGlobalIpcListener() {
   if (ipcListenerInstalled) return
   ipcListenerInstalled = true
@@ -262,6 +268,92 @@ function registerProvidersForLanguage(monacoLangId) {
     const key = lspLanguageKey(monacoLangId)
     return key ? lspClients.get(key) : null
   }
+
+  // ── Ghost Text Auto-Completion ──
+  monaco.languages.registerInlineCompletionsProvider(monacoLangId, {
+    provideInlineCompletions: async (model, position, context, token) => {
+      if (!globalAiConfig || globalAiConfig.autoCompleteEnabled === false) return { items: [] }
+
+      // 1. Native Debounce using cancellation token
+      await new Promise(resolve => setTimeout(resolve, globalAiConfig.autoCompleteDelay || 800))
+      if (token.isCancellationRequested) return { items: [] }
+
+      // 2. Build Context
+      const startLine = Math.max(1, position.lineNumber - 30)
+      const endLine = Math.min(model.getLineCount(), position.lineNumber + 5)
+      
+      const prefixRange = new monaco.Range(startLine, 1, position.lineNumber, position.column)
+      const suffixRange = new monaco.Range(position.lineNumber, position.column, endLine, model.getLineMaxColumn(endLine))
+      
+      const prefix = model.getValueInRange(prefixRange)
+      const suffix = model.getValueInRange(suffixRange)
+
+      // 2.5 Extract context from other open files
+      let otherFilesContext = ''
+      if (globalOpenFiles && globalOpenFiles.length > 1) {
+        for (const f of globalOpenFiles) {
+          if (f.path !== globalActiveFile) {
+            const fileData = globalFileContents[f.path]?.content || ''
+            if (fileData) {
+              otherFilesContext += `\n<context_file path="${f.path}">\n${fileData.substring(0, 2000)}\n</context_file>`
+            }
+          }
+        }
+      }
+
+      // 3. Prompt Construction
+      const prompt = `You are a strict code completion engine. Your ONLY job is to output the exact code to insert at the cursor position. 
+DO NOT output any conversational text. DO NOT explain the code. 
+DO NOT output markdown blocks. JUST the raw code.
+Do not repeat the prefix. Just complete what comes next.
+If the code is logically complete and no further code is needed, output EXACTLY the word "NOTHING" and nothing else.
+If you need to insert a new line, include the newline character.
+
+ADDITIONAL CONTEXT:
+${otherFilesContext || 'None'}
+
+PREFIX:
+${prefix}
+
+SUFFIX:
+${suffix}
+
+COMPLETION:`
+
+      // 4. Fetch Completion
+      const res = await window.api.getAiCompletion(prompt, globalAiConfig)
+      if (token.isCancellationRequested || !res.success || !res.text) {
+        return { items: [] }
+      }
+
+      let completionText = res.text
+      // cleanup markdown if the AI ignored instructions
+      completionText = completionText.replace(/^```[a-z]*\n?/i, '')
+      completionText = completionText.replace(/\n?```$/i, '')
+      
+      // If there's still conversational text before a markdown block, try to extract just the code
+      if (completionText.includes('```')) {
+        const match = completionText.match(/```[a-z]*\n([\s\S]*?)```/i)
+        if (match) {
+          completionText = match[1]
+        }
+      }
+
+      if (completionText.trim() === 'NOTHING') {
+        return { items: [] }
+      }
+
+      return {
+        items: [
+          {
+            insertText: completionText,
+            range: new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column)
+          }
+        ]
+      }
+    },
+    freeInlineCompletions: () => {}
+  })
 
   // Completion
   monaco.languages.registerCompletionItemProvider(monacoLangId, {
@@ -325,13 +417,33 @@ export const CodeEditor = ({
   closeFile, 
   markFileDirty, 
   markFileClean,
-  projectRoot
+  projectRoot,
+  aiConfig,
+  onRun
 }) => {
   const [fileContents, setFileContents] = useState({})
   const [currentValue, setCurrentValue] = useState('')
   const [draggedTabIdx, setDraggedTabIdx] = useState(null)
   const [contextMenu, setContextMenu] = useState(null)
   const editorRef = useRef(null)
+
+
+
+  useEffect(() => {
+    globalAiConfig = aiConfig
+  }, [aiConfig])
+
+  useEffect(() => {
+    globalOpenFiles = openFiles
+  }, [openFiles])
+
+  useEffect(() => {
+    globalFileContents = fileContents
+  }, [fileContents])
+
+  useEffect(() => {
+    globalActiveFile = activeFile
+  }, [activeFile])
 
   // Close context menu on outside click
   useEffect(() => {
@@ -578,16 +690,108 @@ export const CodeEditor = ({
     }
   }
 
-  // Set up refs for decorations
   const monacoRef = useRef(null)
   const decorationsCollectionRef = useRef(null)
   const [hasActiveAiEdit, setHasActiveAiEdit] = useState(false)
   const [showDiff, setShowDiff] = useState(false)
   const [originalText, setOriginalText] = useState(null)
+  
+  const [inlineAi, setInlineAi] = useState({
+    visible: false,
+    top: 0,
+    left: 0,
+    prompt: '',
+    isLoading: false,
+    range: null,
+    selectionText: ''
+  })
+
+  const submitInlineAi = async () => {
+    if (!inlineAi.prompt.trim() || !inlineAi.range) return
+    
+    setInlineAi(prev => ({ ...prev, isLoading: true }))
+    
+    const instructions = `Edit the following code based on the instructions. Return ONLY the raw modified code without markdown blocks. \n\nCode to edit:\n${inlineAi.selectionText}\n\nInstructions: ${inlineAi.prompt}`
+    
+    let generatedCode = ''
+    
+    const handleChunk = (chunk) => {
+      generatedCode += chunk
+    }
+    
+    window.api.onInlineAiStreamChunk(handleChunk)
+    
+    await window.api.sendInlineAiPrompt(instructions, {})
+    
+    // Stream finished, apply it!
+    if (editorRef.current && generatedCode) {
+      const cleanedCode = generatedCode.replace(/^```[a-z]*\n/i, '').replace(/\n```$/, '')
+      
+      const model = editorRef.current.getModel()
+      const originalValue = model.getValue()
+      setOriginalText(originalValue)
+      
+      editorRef.current.pushUndoStop()
+      editorRef.current.executeEdits("inline-ai", [{
+        range: inlineAi.range,
+        text: cleanedCode
+      }])
+      editorRef.current.pushUndoStop()
+      
+      // Highlight the change
+      if (monacoRef.current && decorationsCollectionRef.current) {
+        const startLine = inlineAi.range.startLineNumber
+        const numLinesAdded = cleanedCode.split('\n').length - 1
+        const endLine = startLine + numLinesAdded
+        
+        const monacoRanges = [{
+          range: new monacoRef.current.Range(startLine, 1, endLine, 1),
+          options: {
+            isWholeLine: true,
+            className: 'ai-edit-highlight',
+            marginClassName: 'ai-edit-highlight'
+          }
+        }]
+        decorationsCollectionRef.current.set(monacoRanges)
+        setHasActiveAiEdit(true)
+      }
+    }
+    
+    setInlineAi({ visible: false, top: 0, left: 0, prompt: '', isLoading: false, range: null, selectionText: '' })
+  }
 
   const handleEditorDidMountWrapper = (editor, monacoInstance) => {
     monacoRef.current = monacoInstance
     decorationsCollectionRef.current = editor.createDecorationsCollection([])
+    
+    // Command: Inline AI Edit (Ctrl+K)
+    editor.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.KeyK, () => {
+      const position = editor.getPosition()
+      const selection = editor.getSelection()
+      
+      let selectionText = ''
+      let range = selection
+      
+      if (!selection.isEmpty()) {
+        selectionText = editor.getModel().getValueInRange(selection)
+      } else {
+        range = new monacoInstance.Range(position.lineNumber, 1, position.lineNumber, editor.getModel().getLineMaxColumn(position.lineNumber))
+        selectionText = editor.getModel().getValueInRange(range)
+      }
+      
+      const pixelPos = editor.getScrolledVisiblePosition(position)
+      
+      setInlineAi({
+        visible: true,
+        top: pixelPos.top + 20, // slightly below cursor
+        left: pixelPos.left,
+        prompt: '',
+        isLoading: false,
+        range,
+        selectionText
+      })
+    })
+
     handleEditorDidMount(editor, monacoInstance)
   }
 
@@ -742,6 +946,20 @@ export const CodeEditor = ({
             </div>
           )
         })}
+        
+        {/* Run Button Container inside tabs header */}
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', paddingRight: '12px' }}>
+          <button 
+            className="action-btn"
+            onClick={(e) => {
+              e.stopPropagation()
+              if (onRun) onRun()
+            }}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#10a37f', color: '#fff', padding: '4px 12px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 500, fontSize: '0.85rem' }}
+          >
+            ▶ Run
+          </button>
+        </div>
       </div>
 
       {/* ── Context Menu Overlay ── */}
@@ -782,6 +1000,30 @@ export const CodeEditor = ({
       )}
       
       <div className="editor-body">
+        {inlineAi.visible && (
+          <div 
+            className="inline-ai-widget" 
+            style={{ top: inlineAi.top, left: inlineAi.left }}
+          >
+            <input 
+              autoFocus
+              type="text" 
+              placeholder="Ask AI to edit or generate code..."
+              value={inlineAi.prompt}
+              onChange={(e) => setInlineAi(prev => ({ ...prev, prompt: e.target.value }))}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !inlineAi.isLoading) {
+                  submitInlineAi()
+                } else if (e.key === 'Escape') {
+                  setInlineAi(prev => ({ ...prev, visible: false }))
+                }
+              }}
+              disabled={inlineAi.isLoading}
+            />
+            {inlineAi.isLoading && <span className="inline-ai-spinner">Generating...</span>}
+          </div>
+        )}
+
         {fileContents[activeFile]?.isLoading && (
           <div className="editor-loading">Loading...</div>
         )}
@@ -839,6 +1081,7 @@ export const CodeEditor = ({
                 cursorSmoothCaretAnimation: 'on',
                 formatOnPaste: true,
                 automaticLayout: true,
+                inlineSuggest: { enabled: true },
               }}
             />
           )
