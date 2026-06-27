@@ -5,6 +5,7 @@
 
 /* ── Design Tokens ── */
 :root {
+  color-scheme: dark;
   /* Backgrounds — true charcoal/navy spectrum */
   --bg-deep: #0c0c14;
   --bg-activity: #101018;

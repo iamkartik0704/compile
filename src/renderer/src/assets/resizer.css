@@ -1,0 +1,37 @@
+.resizer-vertical {
+  width: 4px;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.2s ease;
+  z-index: 10;
+  flex-shrink: 0;
+}
+
+.resizer-vertical:hover,
+.resizer-vertical:active {
+  background: var(--accent-purple);
+}
+
+.resizer-horizontal {
+  height: 4px;
+  cursor: row-resize;
+  background: transparent;
+  transition: background 0.2s ease;
+  z-index: 10;
+  flex-shrink: 0;
+}
+
+.resizer-horizontal:hover,
+.resizer-horizontal:active {
+  background: var(--accent-purple);
+}
+
+.resizing-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 9999;
+  cursor: inherit;
+}

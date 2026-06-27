@@ -15,6 +15,11 @@ const api = {
   readDirectory: (path) => ipcRenderer.invoke('read-directory', path),
   createFile: (path) => ipcRenderer.invoke('create-file', path),
   createFolder: (path) => ipcRenderer.invoke('create-folder', path),
+  watchProject: (path) => ipcRenderer.invoke('watch-project', path),
+  onFsChanged: (callback) => {
+    ipcRenderer.removeAllListeners('fs-changed')
+    ipcRenderer.on('fs-changed', (_event, data) => callback(data))
+  },
 
   /**
    * File Read — Invoke/Handle Promise pattern.
@@ -84,7 +89,27 @@ const api = {
    * Removes the provider's encrypted key from disk and memory.
    * Returns { success: boolean, provider? }.
    */
-  deleteApiKey: (provider) => ipcRenderer.invoke('delete-api-key', provider)
+  deleteApiKey: (provider) => ipcRenderer.invoke('delete-api-key', provider),
+
+  // ── Custom Configuration Persistence ──
+  getCustomConfig: () => ipcRenderer.invoke('get-custom-config'),
+  saveCustomConfig: (config) => ipcRenderer.invoke('save-custom-config', config),
+
+  // ── Terminal ──
+  createTerminal: (options) => ipcRenderer.invoke('create-terminal', options),
+  resizeTerminal: (id, cols, rows) => ipcRenderer.invoke('resize-terminal', { id, cols, rows }),
+  sendTerminalData: (id, data) => ipcRenderer.invoke('send-terminal-data', { id, data }),
+  killTerminal: (id) => ipcRenderer.invoke('kill-terminal', id),
+  onTerminalData: (id, callback) => {
+    const channel = `terminal-data-${id}`
+    ipcRenderer.removeAllListeners(channel)
+    ipcRenderer.on(channel, (_event, data) => callback(data))
+  },
+  onTerminalExit: (id, callback) => {
+    const channel = `terminal-exit-${id}`
+    ipcRenderer.removeAllListeners(channel)
+    ipcRenderer.on(channel, (_event, data) => callback(data))
+  }
 }
 
 // ============================================================

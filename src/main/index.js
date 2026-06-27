@@ -1,7 +1,10 @@
-import { app, shell, BrowserWindow, ipcMain, safeStorage, dialog } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, safeStorage, dialog, nativeTheme } from 'electron'
 import { join } from 'path'
 import { readFileSync, writeFileSync, existsSync, chmodSync, promises as fsPromises } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+import { terminalManager } from './terminal-manager.js'
+
+let currentWatcher = null
 
 // ============================================================
 // IN-MEMORY API KEY CACHE — per-provider map
@@ -16,7 +19,7 @@ let apiKeyCache = {}
 // Only these provider IDs are accepted via IPC. Prevents
 // arbitrary strings from being used as storage keys.
 // ============================================================
-const VALID_PROVIDERS = ['openai', 'anthropic', 'google', 'deepseek', 'qwen', 'meta', 'oss']
+const VALID_PROVIDERS = ['openai', 'anthropic', 'google', 'deepseek', 'qwen', 'meta', 'oss', 'groq', 'custom']
 
 // ============================================================
 // SECURITY — API Key Format Validation
@@ -88,6 +91,18 @@ const MODEL_CONFIG = {
     type: 'openai-compatible',
     baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1'
   },
+  'groq-llama-3': {
+    provider: 'groq',
+    apiModel: 'llama-3.3-70b-versatile',
+    type: 'openai-compatible',
+    baseURL: 'https://api.groq.com/openai/v1'
+  },
+  'groq-mixtral': {
+    provider: 'groq',
+    apiModel: 'mixtral-8x7b-32768',
+    type: 'openai-compatible',
+    baseURL: 'https://api.groq.com/openai/v1'
+  },
   'gpt-oss-120b': {
     provider: 'oss',
     apiModel: null,
@@ -110,7 +125,7 @@ const SIMULATION_RESPONSES = {
     delay: [80, 40, 40, 40, 40, 40, 30, 40, 30, 40, 50, 30, 50, 50, 30]
   },
   'llama-4': {
-    tokens: ['// Llama 4 🔓 Open Source (Simulated — no hosted API)\n', 'import ', 'torch\n', 'from ', 'transformers ', 'import ', 'AutoModelForCausalLM\n\n', 'model ', '= AutoModelForCausalLM.', 'from_pretrained(\n', '  "meta-llama/Llama-4"\n', ')\n', 'output = ', 'model.generate(', 'input_ids, ', 'max_length=512', ')'],
+    tokens: ['// Llama 4 🔓 Open Source (Simulated — no hosted API)\n', 'import ', 'torch\n', 'from ', 'transformers ', 'import ', 'AutoModelForCausalLM\n\n', 'model ', '= AutoModelForCausalLM.', 'from_pretrained(\n', '  "meta-llama/Llama-4"\n', ')\n', 'output = ', 'model.generate(', 'input_ids, ', 'max_length=512', ')\n', ''],
     delay: [90, 40, 30, 30, 50, 30, 60, 20, 40, 60, 50, 50, 30, 40, 50, 40, 50, 30]
   }
 }
@@ -122,14 +137,29 @@ const SIMULATION_RESPONSES = {
 /**
  * Stream from Anthropic (Claude Sonnet, Claude Opus)
  */
-async function streamAnthropic(apiModel, prompt, sender) {
+async function streamAnthropic(apiModel, prompt, sender, images = []) {
   const Anthropic = (await import('@anthropic-ai/sdk')).default
   const client = new Anthropic({ apiKey: apiKeyCache['anthropic'] })
+
+  let content = prompt
+  if (images && images.length > 0) {
+    content = [
+      ...images.map(img => {
+        const [header, base64] = img.split(',')
+        const media_type = header.match(/:(.*?);/)[1]
+        return {
+          type: 'image',
+          source: { type: 'base64', media_type, data: base64 }
+        }
+      }),
+      { type: 'text', text: prompt }
+    ]
+  }
 
   const stream = client.messages.stream({
     model: apiModel,
     max_tokens: 4096,
-    messages: [{ role: 'user', content: prompt }]
+    messages: [{ role: 'user', content }]
   })
 
   stream.on('text', (text) => {
@@ -143,12 +173,29 @@ async function streamAnthropic(apiModel, prompt, sender) {
 /**
  * Stream from Google Gemini (Gemini Flash, Gemini Pro)
  */
-async function streamGemini(apiModel, prompt, sender) {
+async function streamGemini(apiModel, prompt, sender, images = []) {
   const { GoogleGenerativeAI } = await import('@google/generative-ai')
   const genAI = new GoogleGenerativeAI(apiKeyCache['google'])
   const model = genAI.getGenerativeModel({ model: apiModel })
 
-  const result = await model.generateContentStream(prompt)
+  let parts = [prompt]
+  if (images && images.length > 0) {
+    parts = [
+      prompt,
+      ...images.map(img => {
+        const [header, base64] = img.split(',')
+        const mimeType = header.match(/:(.*?);/)[1]
+        return {
+          inlineData: {
+            data: base64,
+            mimeType
+          }
+        }
+      })
+    ]
+  }
+
+  const result = await model.generateContentStream(parts)
 
   for await (const chunk of result.stream) {
     const text = chunk.text()
@@ -162,17 +209,31 @@ async function streamGemini(apiModel, prompt, sender) {
  * Stream from OpenAI-compatible APIs (OpenAI, DeepSeek, Qwen)
  * These providers expose OpenAI-compatible endpoints.
  */
-async function streamOpenAICompatible(apiModel, prompt, sender, baseURL, provider) {
+async function streamOpenAICompatible(apiModel, prompt, sender, baseURL, provider, images = []) {
   const OpenAI = (await import('openai')).default
+  const isOpenRouter = baseURL && baseURL.includes('openrouter.ai')
   const client = new OpenAI({
     apiKey: apiKeyCache[provider],
-    baseURL: baseURL || undefined
+    baseURL: baseURL || undefined,
+    defaultHeaders: isOpenRouter ? {
+      'HTTP-Referer': 'https://github.com/comiple/ide',
+      'X-Title': 'comiple IDE'
+    } : undefined
   })
+
+  let content = prompt
+  if (images && images.length > 0) {
+    content = [
+      { type: 'text', text: prompt },
+      ...images.map(img => ({ type: 'image_url', image_url: { url: img } }))
+    ]
+  }
 
   const stream = await client.chat.completions.create({
     model: apiModel,
     stream: true,
-    messages: [{ role: 'user', content: prompt }]
+    max_tokens: 4096,
+    messages: [{ role: 'user', content }]
   })
 
   for await (const chunk of stream) {
@@ -202,8 +263,19 @@ async function streamSimulation(modelId, sender) {
 // ============================================================
 // MAIN PROVIDER ROUTER — Real API calls
 // ============================================================
-async function routeToProvider(modelId, prompt, sender) {
-  const config = MODEL_CONFIG[modelId]
+async function routeToProvider(modelId, prompt, sender, fullConfig = {}) {
+  let config = MODEL_CONFIG[modelId]
+
+  // Handle Dynamic Custom Provider
+  if (modelId === 'custom') {
+    config = {
+      provider: 'custom',
+      apiModel: fullConfig.customConfig?.modelId || '',
+      type: 'openai-compatible',
+      baseURL: fullConfig.customConfig?.baseURL || ''
+    }
+  }
+
   if (!config) {
     sender.send('ai-stream-chunk', `// Unknown model: ${modelId}\n`)
     return
@@ -232,13 +304,13 @@ async function routeToProvider(modelId, prompt, sender) {
   try {
     switch (config.type) {
       case 'anthropic':
-        await streamAnthropic(config.apiModel, prompt, sender)
+        await streamAnthropic(config.apiModel, prompt, sender, fullConfig.images)
         break
       case 'gemini':
-        await streamGemini(config.apiModel, prompt, sender)
+        await streamGemini(config.apiModel, prompt, sender, fullConfig.images)
         break
       case 'openai-compatible':
-        await streamOpenAICompatible(config.apiModel, prompt, sender, config.baseURL, config.provider)
+        await streamOpenAICompatible(config.apiModel, prompt, sender, config.baseURL, config.provider, fullConfig.images)
         break
       default:
         sender.send('ai-stream-chunk', `// Unknown provider type: ${config.type}\n`)
@@ -365,6 +437,30 @@ function createWindow() {
     }
   })
 
+  ipcMain.handle('watch-project', async (event, rootPath) => {
+    if (currentWatcher) {
+      await currentWatcher.close()
+    }
+    
+    if (!rootPath) return
+
+    const { default: chokidar } = await import('chokidar')
+
+    currentWatcher = chokidar.watch(rootPath, {
+      ignored: /(^|[\/\\])\../, // ignore dotfiles
+      persistent: true,
+      ignoreInitial: true,
+      depth: 10
+    })
+
+    currentWatcher.on('all', (eventName, path) => {
+      // Forward add, unlink, change events to frontend
+      if (['add', 'unlink', 'addDir', 'unlinkDir'].includes(eventName)) {
+        event.sender.send('fs-changed', { event: eventName, path })
+      }
+    })
+  })
+
   // --- EXISTING HANDLERS ---
   const mainWindow = new BrowserWindow({
     width: 1280,
@@ -387,10 +483,15 @@ function createWindow() {
     }
   })
 
+  // Force dark theme so native inputs (like <select> dropdown popups) render correctly
+  nativeTheme.themeSource = 'dark'
+
   // Prevent white flash — show only when fully rendered
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
   })
+
+  terminalManager.init(mainWindow)
 
   // Route external links to the OS browser, never in-app
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -427,6 +528,7 @@ function createWindow() {
    */
   ipcMain.handle('save-file-contents', async (_event, filePath, content) => {
     try {
+      await fsPromises.mkdir(require('path').dirname(filePath), { recursive: true })
       await fsPromises.writeFile(filePath, content, 'utf-8')
       return { success: true }
     } catch (error) {
@@ -480,29 +582,83 @@ function createWindow() {
   function getLspCommand(language) {
     switch (language) {
       case 'python': {
-        const serverPath = join(process.cwd(), 'node_modules', 'pyright', 'langserver.index.js')
-        return ['node', [serverPath, '--stdio']]
+        // Try pyright first (bundled with this IDE)
+        try {
+          const serverPath = join(process.cwd(), 'node_modules', 'pyright', 'langserver.index.js')
+          if (existsSync(serverPath)) {
+            return ['node', [serverPath, '--stdio']]
+          }
+        } catch (e) {}
+
+        // Fallback to pylsp if available
+        if (commandExists('pylsp')) return ['pylsp', []]
+        return null
       }
+
       case 'c':
       case 'cpp': {
         const clangd = findBinary('clangd')
         if (clangd) return [clangd, ['--log=error']]
         return null
       }
+
       case 'go': {
         const gopls = findBinary('gopls')
         if (gopls) return [gopls, ['serve']]
         return null
       }
+
       case 'rust': {
         const ra = findBinary('rust-analyzer')
         if (ra) return [ra, []]
         return null
       }
+
+      case 'typescript':
+      case 'javascript': {
+        // Try typescript-language-server (Node.js package)
+        try {
+          const tsLsPath = join(process.cwd(), 'node_modules', 'typescript-language-server', 'lib', 'cli.js')
+          if (existsSync(tsLsPath)) {
+            return ['node', [tsLsPath, '--stdio']]
+          }
+        } catch (e) {}
+
+        // Fallback to vscode-langservers-extracted if available
+        if (commandExists('typescript-language-server')) {
+          return ['typescript-language-server', ['--stdio']]
+        }
+        return null
+      }
+
       case 'shell':
-      case 'bash':
+      case 'bash': {
         if (commandExists('bash-language-server')) return ['bash-language-server', ['start']]
         return null
+      }
+
+      case 'html':
+      case 'css':
+      case 'json': {
+        // These are handled natively by Monaco, no external LSP needed
+        return null
+      }
+
+      case 'java': {
+        // Check for Eclipse JDTLS (Java Debug Language Server)
+        const jdtls = findBinary('jdtls')
+        if (jdtls) return [jdtls, []]
+        return null
+      }
+
+      case 'csharp':
+      case 'cs': {
+        // Check for OmniSharp
+        const omnisharp = findBinary('omnisharp')
+        if (omnisharp) return [omnisharp, ['--loglevel', 'error']]
+        return null
+      }
+
       default:
         return null
     }
@@ -613,16 +769,15 @@ function createWindow() {
     console.log(`Routing to provider: ${model}`)
 
     // Route to provider (async streaming)
-    routeToProvider(model, prompt, mainWindow.webContents)
-      .then(() => {
-        mainWindow.webContents.send('ai-stream-chunk', '\n')
-      })
-      .catch((err) => {
-        console.error('Provider error:', err)
-        mainWindow.webContents.send('ai-stream-chunk', `\n// ❌ Error: ${err.message}`)
-      })
-
-    return { status: 'streaming', model }
+    try {
+      await routeToProvider(model, prompt, mainWindow.webContents, config)
+      mainWindow.webContents.send('ai-stream-chunk', '\n')
+      return { status: 'done', model }
+    } catch (err) {
+      console.error('Provider error:', err)
+      mainWindow.webContents.send('ai-stream-chunk', `\n// ❌ Error: ${err.message}`)
+      return { status: 'error', model, error: err.message }
+    }
   })
 
   // ============================================================
@@ -736,6 +891,32 @@ function createWindow() {
   })
 
   /**
+   * Handler: Custom Config Persistence
+   */
+  const CONFIG_FILE = join(app.getPath('userData'), 'custom_config.json')
+
+  ipcMain.handle('get-custom-config', () => {
+    try {
+      if (existsSync(CONFIG_FILE)) {
+        return JSON.parse(readFileSync(CONFIG_FILE, 'utf-8'))
+      }
+    } catch (e) {
+      console.error('Failed to read custom config', e)
+    }
+    return null
+  })
+
+  ipcMain.handle('save-custom-config', (_event, config) => {
+    try {
+      writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf-8')
+      return true
+    } catch (e) {
+      console.error('Failed to write custom config', e)
+      return false
+    }
+  })
+
+  /**
    * Handler: Delete API Key for a specific provider
    *
    * Security:
@@ -780,6 +961,10 @@ function createWindow() {
 // ============================================================
 // APP LIFECYCLE
 // ============================================================
+
+// Force chromium to render native UI (dropdowns, scrollbars) in dark mode
+app.commandLine.appendSwitch('force-dark-mode')
+
 app.whenReady().then(() => {
   // Set app user model id for Windows
   electronApp.setAppUserModelId('com.compile.editor')
@@ -797,6 +982,7 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
+  terminalManager.killAll()
   // ── Security: Clear all decrypted keys from memory ──
   for (const key of Object.keys(apiKeyCache)) {
     apiKeyCache[key] = '' // overwrite the string reference

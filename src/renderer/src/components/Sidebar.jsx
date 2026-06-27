@@ -155,7 +155,12 @@ const FileTreeNode = ({
   )
 }
 
-export const Sidebar = ({ projectRoot, setProjectRoot, onOpenFile }) => {
+export const Sidebar = ({
+  projectRoot,
+  setProjectRoot,
+  onOpenFile,
+  width
+}) => {
   const [rootChildren, setRootChildren] = useState([])
   
   // Selection State
@@ -187,6 +192,24 @@ export const Sidebar = ({ projectRoot, setProjectRoot, onOpenFile }) => {
       setRootChildren(data || [])
     }
   }
+
+  useEffect(() => {
+    const onRefreshSidebar = () => handleRefresh()
+    window.addEventListener('refresh-sidebar', onRefreshSidebar)
+    
+    if (projectRoot) {
+      // Start the backend chokidar watcher
+      window.api.watchProject(projectRoot)
+      
+      // Listen for file system changes (add/unlink) from the backend
+      window.api.onFsChanged((data) => {
+        console.log('FS Event:', data)
+        handleRefresh()
+      })
+    }
+    
+    return () => window.removeEventListener('refresh-sidebar', onRefreshSidebar)
+  }, [projectRoot])
 
   const handleCollapseAll = () => {
     setCollapseSignal(s => s + 1)
@@ -246,7 +269,7 @@ export const Sidebar = ({ projectRoot, setProjectRoot, onOpenFile }) => {
   const isRootSelected = selectedPath === projectRoot
 
   return (
-    <aside className="sidebar" onClick={() => setSelectedPath(null)}>
+    <aside className="sidebar" style={{ width: width ? `${width}px` : undefined }} onClick={() => setSelectedPath(null)}>
       <div className="sidebar-header">
         <h2>EXPLORER</h2>
       </div>

@@ -1,8 +1,34 @@
 import { useState, useEffect, useRef } from 'react'
 import { Sidebar } from './components/Sidebar'
 import { CodeEditor } from './components/CodeEditor'
+import { TerminalPanel } from './components/TerminalPanel'
+import { Resizer } from './components/Resizer'
+import ReactMarkdown from 'react-markdown'
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
+import { applyDiff, unescapeXml } from './diffUtils'
 import './assets/sidebar.css'
 import './assets/editor.css'
+
+const renderMessageParts = (content) => {
+  const parts = []
+  // Matches <edit_file path="xyz"> ... </edit_file>
+  // using [\s\S]*? to match across newlines
+  const regex = /<edit_file\s+path="([^"]+)">([\s\S]*?)<\/edit_file>/g
+  let lastIndex = 0
+  let match
+  while ((match = regex.exec(content)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push({ type: 'text', content: content.slice(lastIndex, match.index) })
+    }
+    parts.push({ type: 'edit', path: match[1], body: match[2], full: match[0] })
+    lastIndex = regex.lastIndex
+  }
+  if (lastIndex < content.length) {
+    parts.push({ type: 'text', content: content.slice(lastIndex) })
+  }
+  return parts
+}
 
 // ============================================================
 // PROVIDER REGISTRY — Known API providers with detection patterns
@@ -48,6 +74,22 @@ const PROVIDERS = {
     prefixes: [],
     placeholder: 'sk-xxxxxxxxxxxxxxxxxxxxxxxx'
   },
+  groq: {
+    id: 'groq',
+    name: 'Groq',
+    emoji: '⚡',
+    color: '#f55036',
+    prefixes: ['gsk_'],
+    placeholder: 'gsk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+  },
+  custom: {
+    id: 'custom',
+    name: 'Custom',
+    emoji: '🔌',
+    color: '#8e44ad',
+    prefixes: [],
+    placeholder: 'your-custom-api-key'
+  },
   meta: {
     id: 'meta',
     name: 'Meta',
@@ -79,6 +121,8 @@ function detectProviderFromKey(key) {
   if (key.startsWith('sk-ant-')) return 'anthropic'
   // Check Google
   if (key.startsWith('AIza')) return 'google'
+  // Check Groq
+  if (key.startsWith('gsk_')) return 'groq'
   // sk-proj- is OpenAI-specific
   if (key.startsWith('sk-proj-')) return 'openai'
   // Generic sk- is ambiguous (OpenAI, DeepSeek, etc.) — don't auto-detect
@@ -94,7 +138,8 @@ const MODEL_GROUPS = [
     models: [
       { id: 'auto', name: 'Auto Mode', badge: 'DEFAULT' },
       { id: 'gemini-flash', name: 'Gemini Flash', provider: 'google' },
-      { id: 'deepseek-chat', name: 'DeepSeek', provider: 'deepseek' }
+      { id: 'deepseek-chat', name: 'DeepSeek', provider: 'deepseek' },
+      { id: 'groq-llama-3', name: 'Llama 3.3 (Groq)', provider: 'groq' }
     ]
   },
   {
@@ -102,7 +147,8 @@ const MODEL_GROUPS = [
     models: [
       { id: 'claude-sonnet', name: 'Claude Sonnet', provider: 'anthropic' },
       { id: 'gemini-pro', name: 'Gemini Pro', provider: 'google' },
-      { id: 'qwen-plus', name: 'Qwen', provider: 'qwen' }
+      { id: 'qwen-plus', name: 'Qwen', provider: 'qwen' },
+      { id: 'groq-mixtral', name: 'Mixtral (Groq)', provider: 'groq' }
     ]
   },
   {
@@ -118,6 +164,12 @@ const MODEL_GROUPS = [
       { id: 'gpt-oss-120b', name: 'GPT-OSS 120B', provider: 'oss' },
       { id: 'llama-4', name: 'Llama 4', provider: 'meta' }
     ]
+  },
+  {
+    label: '🔌 Custom',
+    models: [
+      { id: 'custom', name: 'Custom Model', provider: 'custom' }
+    ]
   }
 ]
 
@@ -129,6 +181,7 @@ function App() {
   // ── Chat State ──
   const [messages, setMessages] = useState([])
   const [prompt, setPrompt] = useState('')
+  const [attachments, setAttachments] = useState([])
   const [isStreaming, setIsStreaming] = useState(false)
   const streamRef = useRef('')
 
@@ -151,17 +204,53 @@ function App() {
 
   // ── UI State ──
   const [showExplorer, setShowExplorer] = useState(true)
-  const [rightPanel, setRightPanel] = useState('chat') // chat | settings | null
+  const [rightPanel, setRightPanel] = useState(null)
+  
+  // Custom Provider State
+  const [customBaseUrl, setCustomBaseUrl] = useState('https://openrouter.ai/api/v1')
+  const [customModelId, setCustomModelId] = useState('qwen/qwen-2.5-coder-32b-instruct')
+  const [customName, setCustomName] = useState('')
+  const [customConfigLoaded, setCustomConfigLoaded] = useState(false)
+  
+  useEffect(() => {
+    window.api.getCustomConfig().then(config => {
+      if (config) {
+        if (config.customBaseUrl) setCustomBaseUrl(config.customBaseUrl)
+        if (config.customModelId) setCustomModelId(config.customModelId)
+        if (config.customName !== undefined) setCustomName(config.customName)
+      }
+      setCustomConfigLoaded(true)
+    })
+  }, [])
+  
+  useEffect(() => {
+    if (customConfigLoaded) {
+      window.api.saveCustomConfig({ customBaseUrl, customModelId, customName })
+    }
+  }, [customBaseUrl, customModelId, customName, customConfigLoaded])
+
+  // Refs
   const chatEndRef = useRef(null)
 
   // ── Editor State ──
   const [openFiles, setOpenFiles] = useState([])
   const [activeFile, setActiveFile] = useState(null)
   
+  // ── Terminal State ──
+  const [showTerminal, setShowTerminal] = useState(false)
+  const [terminalHeight, setTerminalHeight] = useState(250)
+
+  // ── Layout State ──
+  const [sidebarWidth, setSidebarWidth] = useState(260)
+  const [rightPanelWidth, setRightPanelWidth] = useState(320)
+  
   const handleOpenFile = (path, name) => {
-    if (!openFiles.find(f => f.path === path)) {
-      setOpenFiles([...openFiles, { path, name, isDirty: false }])
-    }
+    setOpenFiles((prev) => {
+      if (!prev.find(f => f.path === path)) {
+        return [...prev, { path, name, isDirty: false }]
+      }
+      return prev
+    })
     setActiveFile(path)
   }
 
@@ -190,12 +279,13 @@ function App() {
   // ── Subscribe to AI stream chunks ──
   useEffect(() => {
     window.api.onAIStream((chunk) => {
+      if (chunk === undefined) return
       streamRef.current += chunk
       setMessages((prev) => {
         const updated = [...prev]
         const last = updated[updated.length - 1]
         if (last && last.role === 'assistant') {
-          updated[updated.length - 1] = { ...last, content: streamRef.current }
+          updated[updated.length - 1] = { ...last, content: streamRef.current || '' }
         }
         return updated
       })
@@ -213,6 +303,19 @@ function App() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  // ── Global Hotkeys ──
+  useEffect(() => {
+    const handleGlobalKeyDown = (e) => {
+      // Ctrl + Shift + ` (backtick) toggles terminal
+      if (e.ctrlKey && e.shiftKey && e.code === 'Backquote') {
+        e.preventDefault()
+        setShowTerminal((prev) => !prev)
+      }
+    }
+    window.addEventListener('keydown', handleGlobalKeyDown)
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown)
+  }, [])
 
   // ── Auto-detect provider from key input ──
   useEffect(() => {
@@ -233,19 +336,110 @@ function App() {
     setResolvedModel(null)
 
     // Add user message + empty assistant placeholder
+    const currentAttachments = [...attachments]
     setMessages((prev) => [
       ...prev,
-      { role: 'user', content: trimmed },
+      { role: 'user', content: trimmed, images: currentAttachments },
       { role: 'assistant', content: '' }
     ])
     setPrompt('')
+    setAttachments([])
     setIsStreaming(true)
 
     try {
-      await window.api.sendAIPrompt(trimmed, { model: selectedModel })
-      // Stream chunks arrive via onAIStream callback
-      // Wait a bit for final chunks then mark done
-      setTimeout(() => setIsStreaming(false), 800)
+      let finalPrompt = trimmed
+      let contextBlocks = []
+
+      if (projectRoot) {
+        contextBlocks.push(`Workspace Root: ${projectRoot}\nIf you need to create a new file or edit a background file, construct an absolute path using this root directory.`)
+      }
+
+      const diffInstructions = `If you want to modify a file or create a new file, DO NOT output a standard markdown code block. Instead, output an edit block using this EXACT XML format:
+<edit_file path="ABSOLUTE_PATH_TO_FILE">
+<search>
+the exact old code to be replaced
+</search>
+<replace>
+the new code
+</replace>
+</edit_file>
+You can output multiple <search>/<replace> blocks if needed.
+CRITICAL RULE: If the file is empty, or you are creating a new file from scratch, or you want to entirely replace the file contents, you MUST leave the <search> block completely empty (i.e., <search></search>).`
+
+      contextBlocks.push(diffInstructions)
+
+      if (activeFile) {
+        try {
+          const fileContent = await window.api.getFileContents(activeFile)
+          
+          let fileText = fileContent.content || fileContent
+          if (typeof window.getEditorValue === 'function') {
+            fileText = window.getEditorValue()
+          }
+
+          let diagnosticsText = ""
+          if (typeof window.getEditorDiagnostics === 'function') {
+            const markers = window.getEditorDiagnostics()
+            if (markers && markers.length > 0) {
+              const severityMap = { 1: 'Hint', 2: 'Info', 4: 'Warning', 8: 'Error' }
+              diagnosticsText = "\n\nLSP Diagnostics (Compiler/Linter feedback for the active file):\n" + markers.map(m => `[Line ${m.startLineNumber}, Col ${m.startColumn}] ${severityMap[m.severity] || 'Error'}: ${m.message}`).join('\n')
+            }
+          }
+
+          contextBlocks.push(`The user is currently working on this active file: ${activeFile}\n\nFile Content:\n\`\`\`\n${fileText}\n\`\`\`${diagnosticsText}\n\nYou should default to editing this file unless requested otherwise.`)
+        } catch (e) {
+          console.warn("Could not load active file context:", e)
+        }
+      }
+
+      if (contextBlocks.length > 0) {
+        finalPrompt = `[SYSTEM CONTEXT]\n${contextBlocks.join('\n\n')}\n[END SYSTEM CONTEXT]\n\n${trimmed}`
+      }
+
+      const res = await window.api.sendAIPrompt(finalPrompt, {
+        model: selectedModel,
+        images: currentAttachments,
+        customConfig: selectedModel === 'custom' ? {
+          baseURL: customBaseUrl.trim(),
+          modelId: customModelId.trim()
+        } : undefined
+      })
+      
+      // Stream is now fully finished
+      setIsStreaming(false)
+      const finalMsg = streamRef.current
+      const regex = /<edit_file\s+path="([^"]+)">([\s\S]*?)<\/edit_file>/g
+      let match
+      while ((match = regex.exec(finalMsg)) !== null) {
+        const editPath = match[1]
+        const editBody = match[2]
+        
+        const normalize = (p) => (p || '').replace(/\\/g, '/').toLowerCase()
+        if (normalize(activeFile) === normalize(editPath)) {
+          window.dispatchEvent(new CustomEvent('auto-apply-diff', {
+            detail: { path: editPath, body: editBody }
+          }))
+        } else {
+          try {
+            let oldContent = ''
+            try {
+              const fileContext = await window.api.getFileContents(editPath)
+              oldContent = fileContext.content || fileContext || ''
+            } catch (e) {
+              // File doesn't exist yet
+            }
+            
+            const { newText, hasChanges } = applyDiff(oldContent, editBody)
+            if (hasChanges) {
+              await window.api.saveFileContents(editPath, newText)
+              handleOpenFile(editPath, editPath.split(/[\\/]/).pop())
+              window.dispatchEvent(new Event('refresh-sidebar'))
+            }
+          } catch (err) {
+            console.error("Failed to auto-apply to background file", err)
+          }
+        }
+      }
     } catch (err) {
       console.error('Send error:', err)
       setMessages((prev) => [
@@ -262,6 +456,46 @@ function App() {
       e.preventDefault()
       handleSend()
     }
+  }
+
+  // ── Handle Image Attachment ──
+  const fileInputRef = useRef(null)
+  const handleFileChange = (e) => {
+    const files = Array.from(e.target.files)
+    files.forEach(file => {
+      if (file.type.startsWith('image/')) {
+        const reader = new FileReader()
+        reader.onload = (event) => {
+          setAttachments(prev => [...prev, event.target.result])
+        }
+        reader.readAsDataURL(file)
+      }
+    })
+    e.target.value = null // reset input
+  }
+  const removeAttachment = (idx) => {
+    setAttachments(prev => prev.filter((_, i) => i !== idx))
+  }
+
+  // ── Handle Paste Events ──
+  const handlePaste = (e) => {
+    const items = Array.from(e.clipboardData.items)
+    let pastedImage = false
+    
+    items.forEach(item => {
+      if (item.type.indexOf('image/') !== -1) {
+        pastedImage = true
+        const file = item.getAsFile()
+        const reader = new FileReader()
+        reader.onload = (event) => {
+          setAttachments(prev => [...prev, event.target.result])
+        }
+        reader.readAsDataURL(file)
+      }
+    })
+    
+    // Optional: if we only pasted an image (no text), we can prevent default
+    // to avoid weird behaviors, but usually pasting an image into textarea does nothing anyway.
   }
 
   // ── Save API Key for selected provider ──
@@ -310,7 +544,7 @@ function App() {
   }
 
   // ── Get display name for model ──
-  const getModelName = (id) => MODEL_MAP[id]?.name || id
+  const getModelName = (id) => id === 'custom' ? (customName || 'Custom Model') : (MODEL_MAP[id]?.name || id)
 
   // ── Check if a model's provider has a key ──
   const hasKeyForModel = (modelId) => {
@@ -366,12 +600,23 @@ function App() {
         </div>
       </aside>
 
-      {/* ── Sidebar Pane ── */}
+      {/* ── Sidebar (File Explorer) ── */}
       {showExplorer && (
-        <Sidebar projectRoot={projectRoot} setProjectRoot={setProjectRoot} onOpenFile={handleOpenFile} />
+        <>
+          <Sidebar 
+            projectRoot={projectRoot} 
+            setProjectRoot={setProjectRoot}
+            onOpenFile={handleOpenFile}
+            width={sidebarWidth}
+          />
+          <Resizer 
+            orientation="vertical" 
+            onResize={(x) => setSidebarWidth(Math.max(150, Math.min(x - 48, 600)))} 
+          />
+        </>
       )}
 
-      {/* ── Main Content Area ── */}
+      {/* ── Main Area ── */}
       <div className="main-area">
         {/* ── Title Bar ── */}
         <header className="title-bar">
@@ -393,7 +638,7 @@ function App() {
                   <optgroup key={group.label} label={group.label}>
                     {group.models.map((m) => (
                       <option key={m.id} value={m.id}>
-                        {m.name}
+                        {m.id === 'custom' ? (customName || 'Custom Model') : m.name}
                         {m.badge ? ` (${m.badge})` : ''}
                         {m.provider && providerKeys[m.provider]?.exists ? ' ✓' : ''}
                         {m.provider && !providerKeys[m.provider]?.exists ? ' ⚠' : ''}
@@ -423,20 +668,38 @@ function App() {
 
         {/* ── Content Split Area ── */}
         <div className="content-split">
-          <div className="editor-pane">
-            <CodeEditor 
-              openFiles={openFiles}
-              activeFile={activeFile}
-              setActiveFile={setActiveFile}
-              closeFile={closeFile}
-              markFileDirty={markFileDirty}
-              markFileClean={markFileClean}
-            />
+          <div className="editor-pane" style={{ display: 'flex', flexDirection: 'column' }}>
+            <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+              <CodeEditor 
+                openFiles={openFiles}
+                setOpenFiles={setOpenFiles}
+                activeFile={activeFile}
+                setActiveFile={setActiveFile}
+                closeFile={closeFile}
+                markFileDirty={markFileDirty}
+                markFileClean={markFileClean}
+                projectRoot={projectRoot}
+              />
+            </div>
+            {showTerminal && (
+              <>
+                <Resizer 
+                  orientation="horizontal" 
+                  onResize={(_, y) => setTerminalHeight(Math.max(100, Math.min(window.innerHeight - y - 24, window.innerHeight - 150)))} 
+                />
+                <TerminalPanel key={projectRoot || 'default'} height={terminalHeight} cwd={projectRoot} />
+              </>
+            )}
           </div>
 
           {rightPanel && (
-            <div className="right-pane">
-              {/* ── Chat Panel ── */}
+            <>
+              <Resizer 
+                orientation="vertical" 
+                onResize={(x) => setRightPanelWidth(Math.max(200, Math.min(window.innerWidth - x, 800)))} 
+              />
+              <div className="right-pane" style={{ width: `${rightPanelWidth}px` }}>
+                {/* ── Chat Panel ── */}
               {rightPanel === 'chat' && (
                 <div className="chat-panel">
             {/* ── Message List ── */}
@@ -469,18 +732,97 @@ function App() {
                         <span className="auto-badge">Auto → {getModelName(resolvedModel)}</span>
                       )}
                     </div>
-                    <div className="message-content">
+                    <div className="message-content" style={{ overflowX: 'auto' }}>
                       {msg.role === 'assistant' ? (
-                        <pre className="code-block">
-                          <code>
-                            {msg.content || (isStreaming && i === messages.length - 1 ? '' : '...')}
-                            {isStreaming && i === messages.length - 1 && (
-                              <span className="cursor-blink">▌</span>
-                            )}
-                          </code>
-                        </pre>
+                        renderMessageParts(msg.content + (isStreaming && i === messages.length - 1 ? ' ▌' : '')).map((part, idx) => (
+                          part.type === 'text' ? (
+                            <ReactMarkdown
+                              key={idx}
+                              components={{
+                                code({ node, inline, className, children, ...props }) {
+                                  const match = /language-(\w+)/.exec(className || '')
+                                  return !inline && match ? (
+                                    <div className="code-block-wrapper" style={{ position: 'relative', marginTop: '10px', marginBottom: '10px' }}>
+                                      <button
+                                        className="apply-code-btn"
+                                        title="Apply to Editor"
+                                        onClick={() => {
+                                          if (activeFile) {
+                                            window.dispatchEvent(new CustomEvent('apply-code', {
+                                              detail: {
+                                                code: String(children).replace(/\n$/, ''),
+                                                path: activeFile
+                                              }
+                                            }))
+                                          }
+                                        }}
+                                        style={{
+                                          position: 'absolute',
+                                          top: '8px',
+                                          right: '8px',
+                                          background: 'var(--bg-accent)',
+                                          color: 'var(--text-main)',
+                                          border: '1px solid var(--border-light)',
+                                          borderRadius: '4px',
+                                          padding: '4px 8px',
+                                          fontSize: '12px',
+                                          cursor: 'pointer',
+                                          zIndex: 10
+                                        }}
+                                      >
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14" style={{ verticalAlign: 'middle', marginRight: '4px' }}>
+                                          <path d="M5 13l4 4L19 7" />
+                                        </svg>
+                                        Apply
+                                      </button>
+                                      <SyntaxHighlighter
+                                        {...props}
+                                        children={String(children).replace(/\n$/, '')}
+                                        style={vscDarkPlus}
+                                        language={match[1]}
+                                        PreTag="div"
+                                        customStyle={{ margin: 0, borderRadius: '6px' }}
+                                      />
+                                    </div>
+                                  ) : (
+                                    <code {...props} className={className} style={{ background: 'var(--bg-light)', padding: '2px 4px', borderRadius: '4px', fontFamily: 'monospace' }}>
+                                      {children}
+                                    </code>
+                                  )
+                                }
+                              }}
+                            >
+                              {part.content}
+                            </ReactMarkdown>
+                          ) : (
+                            <div key={idx} className="edit-block-ui" style={{ margin: '10px 0', padding: '10px', background: 'var(--bg-light)', borderRadius: '6px', border: '1px solid var(--border-light)' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-main)', fontSize: '13px', marginBottom: '8px', flexWrap: 'wrap' }}>
+                                <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none" style={{ flexShrink: 0 }}><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+                                <strong style={{ flexShrink: 0 }}>Agent Edit:</strong> <span style={{ wordBreak: 'break-all', flex: '1 1 auto' }}>{part.path}</span>
+                                <span style={{ marginLeft: 'auto', fontSize: '12px', color: 'var(--text-muted)', flexShrink: 0 }}>Auto-applied ✨</span>
+                              </div>
+                              <details>
+                                <summary style={{ cursor: 'pointer', outline: 'none', padding: '4px', background: 'var(--bg-dark)', borderRadius: '4px', border: '1px solid var(--border-light)' }}>
+                                  <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>View Changes (if auto-apply failed)</span>
+                                </summary>
+                                <pre style={{ marginTop: '8px', padding: '10px', background: 'var(--bg-dark)', borderRadius: '4px', overflowX: 'auto', fontSize: '13px' }}>
+                                  {unescapeXml(part.body)}
+                                </pre>
+                              </details>
+                            </div>
+                          )
+                        ))
                       ) : (
-                        <p>{msg.content}</p>
+                        <>
+                          {msg.images && msg.images.length > 0 && (
+                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                              {msg.images.map((img, i) => (
+                                <img key={i} src={img} alt="attachment" style={{ maxWidth: '200px', maxHeight: '200px', borderRadius: '4px', objectFit: 'contain' }} />
+                              ))}
+                            </div>
+                          )}
+                          <p>{msg.content}</p>
+                        </>
                       )}
                     </div>
                   </div>
@@ -491,14 +833,47 @@ function App() {
 
             {/* ── Input Bar ── */}
             <div className="input-bar">
+              {attachments.length > 0 && (
+                <div style={{ display: 'flex', gap: '8px', padding: '8px', background: 'var(--bg-dark)', borderBottom: '1px solid var(--border-color)', flexWrap: 'wrap' }}>
+                  {attachments.map((src, idx) => (
+                    <div key={idx} style={{ position: 'relative' }}>
+                      <img src={src} alt="preview" style={{ width: '60px', height: '60px', objectFit: 'cover', borderRadius: '4px', border: '1px solid var(--border-light)' }} />
+                      <button 
+                        onClick={() => removeAttachment(idx)}
+                        style={{ position: 'absolute', top: '-6px', right: '-6px', background: 'var(--bg-light)', color: 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '50%', width: '20px', height: '20px', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
               <div className="input-wrapper">
+                <input 
+                  type="file" 
+                  accept="image/*" 
+                  multiple 
+                  ref={fileInputRef} 
+                  onChange={handleFileChange} 
+                  style={{ display: 'none' }} 
+                />
+                <button 
+                  className="attachment-btn"
+                  onClick={() => fileInputRef.current?.click()}
+                  title="Attach Image"
+                  disabled={isStreaming}
+                  style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '0 8px' }}
+                >
+                  <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" strokeWidth="2" fill="none"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+                </button>
                 <textarea
                   id="prompt-input"
                   className="prompt-input"
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="Send a message..."
+                  onPaste={handlePaste}
+                  placeholder="Send a message... (Paste images here)"
                   rows={1}
                   disabled={isStreaming}
                 />
@@ -650,6 +1025,56 @@ function App() {
                   )}
                 </div>
 
+                {selectedProvider === 'custom' && (
+                  <div className="custom-provider-config" style={{ marginTop: '12px', marginBottom: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <label className="key-label" style={{ fontSize: '0.8rem', opacity: 0.8 }}>Base URL</label>
+                    <select 
+                      className="key-input" 
+                      style={{ padding: '8px', cursor: 'pointer', appearance: 'auto', border: '1px solid var(--border-color)' }}
+                      value={
+                        ['https://openrouter.ai/api/v1', 'https://api.together.xyz/v1', 'http://localhost:1234/v1', 'http://localhost:11434/v1'].includes(customBaseUrl) ? customBaseUrl : 'other'
+                      }
+                      onChange={e => {
+                        if (e.target.value === 'other') setCustomBaseUrl('')
+                        else setCustomBaseUrl(e.target.value)
+                      }}
+                    >
+                      <option value="https://openrouter.ai/api/v1">OpenRouter (https://openrouter.ai/api/v1)</option>
+                      <option value="https://api.together.xyz/v1">Together AI (https://api.together.xyz/v1)</option>
+                      <option value="http://localhost:1234/v1">LM Studio (Local)</option>
+                      <option value="http://localhost:11434/v1">Ollama (Local)</option>
+                      <option value="https://api.groq.com/openai/v1">Groq</option>
+                      <option value="other">Other (Manual Entry)</option>
+                    </select>
+                    {!['https://openrouter.ai/api/v1', 'https://api.together.xyz/v1', 'http://localhost:1234/v1', 'http://localhost:11434/v1', 'https://api.groq.com/openai/v1'].includes(customBaseUrl) && (
+                      <input 
+                        type="text" 
+                        className="key-input" 
+                        value={customBaseUrl} 
+                        onChange={e => setCustomBaseUrl(e.target.value)} 
+                        placeholder="https://api.yourprovider.com/v1"
+                        style={{ marginTop: '4px' }}
+                      />
+                    )}
+                    <label className="key-label" style={{ fontSize: '0.8rem', opacity: 0.8 }}>Provider Name (Optional)</label>
+                    <input 
+                      type="text" 
+                      className="key-input" 
+                      value={customName} 
+                      onChange={e => setCustomName(e.target.value)} 
+                      placeholder="e.g. My OpenRouter"
+                    />
+                    <label className="key-label" style={{ fontSize: '0.8rem', opacity: 0.8 }}>Model ID</label>
+                    <input 
+                      type="text" 
+                      className="key-input" 
+                      value={customModelId} 
+                      onChange={e => setCustomModelId(e.target.value)} 
+                      placeholder="llama3-70b-8192"
+                    />
+                  </div>
+                )}
+
                 {/* Key Input + Save */}
                 <div className="key-input-row">
                   <input
@@ -727,6 +1152,7 @@ function App() {
           </div>
         )}
       </div>
+      </>
     )}
   </div>
         {/* ── Status Bar ── */}
@@ -744,6 +1170,14 @@ function App() {
             </span>
           </div>
           <div className="status-right">
+            <span 
+              className="status-item" 
+              style={{ cursor: 'pointer', padding: '0 8px', borderLeft: '1px solid var(--border-light)' }}
+              onClick={() => setShowTerminal(!showTerminal)}
+              title="Toggle Terminal (Ctrl+Shift+`)"
+            >
+              Terminal {showTerminal ? '▾' : '▴'}
+            </span>
             <span className="status-item">
               {keyCount > 0 ? (
                 <span className="status-key-ok">🔑 {keyCount} key{keyCount > 1 ? 's' : ''}</span>

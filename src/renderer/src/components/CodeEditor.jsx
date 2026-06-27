@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
-import Editor, { loader } from '@monaco-editor/react'
+import Editor, { loader, DiffEditor } from '@monaco-editor/react'
 import * as monaco from 'monaco-editor'
+import { applyDiff } from '../diffUtils'
 import { X, Save, Circle } from 'lucide-react'
 
 // --- Monaco Workers ---
@@ -147,20 +148,52 @@ const getLanguageFromPath = (path) => {
   if (!path) return 'plaintext'
   const ext = path.split('.').pop().toLowerCase()
   const map = {
-    js: 'javascript', jsx: 'javascript',
-    ts: 'typescript', tsx: 'typescript',
-    html: 'html', css: 'css', json: 'json',
-    md: 'markdown', py: 'python', sh: 'shell',
-    c: 'c', h: 'c', cpp: 'cpp', cc: 'cpp', cxx: 'cpp', hpp: 'cpp',
-    go: 'go', rs: 'rust', bash: 'shell',
-    xml: 'xml', yaml: 'yaml', yml: 'yaml'
+    // JavaScript/TypeScript family
+    js: 'javascript', jsx: 'javascript', mjs: 'javascript',
+    ts: 'typescript', tsx: 'typescript', mts: 'typescript', cts: 'typescript',
+    // Web
+    html: 'html', htm: 'html', vue: 'html',
+    css: 'css', scss: 'scss', sass: 'sass', less: 'less',
+    json: 'json', jsonc: 'json',
+    // Markup & config
+    xml: 'xml', md: 'markdown', yaml: 'yaml', yml: 'yaml',
+    // Python
+    py: 'python', pyw: 'python', pyi: 'python',
+    // C/C++ family
+    c: 'c', hpp: 'cpp', cpp: 'cpp', cc: 'cpp', cxx: 'cpp', h: 'c',
+    // Go
+    go: 'go',
+    // Rust
+    rs: 'rust',
+    // Shell/Bash
+    sh: 'shell', bash: 'bash', zsh: 'shell', fish: 'shell',
+    // Java
+    java: 'java', class: 'java', jar: 'java',
+    // C#
+    cs: 'csharp', csx: 'csharp',
+    // Other
+    php: 'php', rb: 'ruby', kt: 'kotlin', swift: 'swift', m: 'objective-c',
+    scala: 'scala', groovy: 'groovy', sql: 'sql'
   }
   return map[ext] || 'plaintext'
 }
 
 // Maps our language IDs to the LSP language key used by the backend
 const lspLanguageKey = (lang) => {
-  const map = { python: 'python', c: 'c', cpp: 'cpp', go: 'go', rust: 'rust', shell: 'shell' }
+  const map = {
+    python: 'python',
+    c: 'c',
+    cpp: 'cpp',
+    go: 'go',
+    rust: 'rust',
+    shell: 'shell',
+    bash: 'bash',
+    typescript: 'typescript',
+    javascript: 'javascript',
+    java: 'java',
+    csharp: 'csharp',
+    cs: 'cs'
+  }
   return map[lang] || null
 }
 
@@ -285,16 +318,112 @@ function registerProvidersForLanguage(monacoLangId) {
 
 // ─── Component ─────────────────────────────────────────────────────
 export const CodeEditor = ({ 
-  openFiles, 
+  openFiles,
+  setOpenFiles,
   activeFile, 
   setActiveFile, 
   closeFile, 
   markFileDirty, 
-  markFileClean 
+  markFileClean,
+  projectRoot
 }) => {
   const [fileContents, setFileContents] = useState({})
   const [currentValue, setCurrentValue] = useState('')
+  const [draggedTabIdx, setDraggedTabIdx] = useState(null)
+  const [contextMenu, setContextMenu] = useState(null)
   const editorRef = useRef(null)
+
+  // Close context menu on outside click
+  useEffect(() => {
+    const closeContextMenu = () => setContextMenu(null)
+    window.addEventListener('click', closeContextMenu)
+    return () => window.removeEventListener('click', closeContextMenu)
+  }, [])
+
+  // ─── Drag and Drop Handlers ───
+  const handleDragStart = (e, idx) => {
+    setDraggedTabIdx(idx)
+    e.dataTransfer.effectAllowed = 'move'
+    // This is required for Firefox, but also good practice
+    e.dataTransfer.setData('text/plain', idx.toString()) 
+  }
+
+  const handleDragOver = (e) => {
+    e.preventDefault() // Necessary to allow dropping
+    e.dataTransfer.dropEffect = 'move'
+  }
+
+  const handleDrop = (e, dropIdx) => {
+    e.preventDefault()
+    if (draggedTabIdx === null || draggedTabIdx === dropIdx) return
+
+    const newFiles = [...openFiles]
+    const [draggedFile] = newFiles.splice(draggedTabIdx, 1)
+    newFiles.splice(dropIdx, 0, draggedFile)
+    setOpenFiles(newFiles)
+    setDraggedTabIdx(null)
+  }
+
+  // ─── Context Menu Handlers ───
+  const handleContextMenu = (e, file, index) => {
+    e.preventDefault()
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      path: file.path,
+      index
+    })
+  }
+
+  const handleContextAction = (action, e) => {
+    e.stopPropagation()
+    if (!contextMenu) return
+
+    const { path, index } = contextMenu
+    const targetFile = openFiles[index]
+
+    switch (action) {
+      case 'close':
+        closeFile(path)
+        break
+      case 'closeOthers':
+        setOpenFiles([targetFile])
+        setActiveFile(targetFile.path)
+        break
+      case 'closeToRight':
+        const keptFiles = openFiles.slice(0, index + 1)
+        setOpenFiles(keptFiles)
+        if (!keptFiles.find(f => f.path === activeFile)) {
+          setActiveFile(keptFiles.length > 0 ? keptFiles[keptFiles.length - 1].path : null)
+        }
+        break
+      case 'closeSaved':
+        const dirtyFiles = openFiles.filter(f => f.isDirty)
+        setOpenFiles(dirtyFiles)
+        if (!dirtyFiles.find(f => f.path === activeFile)) {
+          setActiveFile(dirtyFiles.length > 0 ? dirtyFiles[dirtyFiles.length - 1].path : null)
+        }
+        break
+      case 'closeAll':
+        setOpenFiles([])
+        setActiveFile(null)
+        break
+      case 'copyPath':
+        navigator.clipboard.writeText(path)
+        break
+      case 'copyRelativePath':
+        if (projectRoot && path.startsWith(projectRoot)) {
+          const relativePath = path.substring(projectRoot.length).replace(/^[\\/]/, '')
+          navigator.clipboard.writeText(relativePath)
+        } else {
+          // Fallback to basename if not in project root
+          const basename = path.split(/[\\/]/).pop()
+          navigator.clipboard.writeText(basename)
+        }
+        break
+    }
+    setContextMenu(null)
+  }
 
   // Load file content when active file changes
   useEffect(() => {
@@ -353,9 +482,9 @@ export const CodeEditor = ({
             source: d.source || lspKey
           }))
 
-          const targetUri = params.uri
+          const targetUri = monaco.Uri.parse(params.uri).toString().toLowerCase()
           const models = monaco.editor.getModels()
-          const model = models.find(m => m.uri.toString() === targetUri)
+          const model = models.find(m => m.uri.toString().toLowerCase() === targetUri)
           if (model) {
             monaco.editor.setModelMarkers(model, lspKey, markers)
           }
@@ -388,14 +517,158 @@ export const CodeEditor = ({
     }
   }, [activeFile])
 
+  const handleSave = async () => {
+    if (!activeFile || !editorRef.current) return
+    const content = editorRef.current.getValue()
+    
+    const res = await window.api.saveFileContents(activeFile, content)
+    if (res.success) {
+      setFileContents(prev => ({
+        ...prev,
+        [activeFile]: { ...prev[activeFile], content }
+      }))
+      markFileClean(activeFile)
+    } else {
+      console.error('Failed to save file:', res.error)
+    }
+  }
+
   // Handle Monaco Mount
   const handleEditorDidMount = (editor, monacoInstance) => {
     editorRef.current = editor
+    
+    // Set up LSP logic
+    const monacoLangId = getLanguageFromPath(activeFile)
+    registerProvidersForLanguage(monacoLangId)
 
+    const lspKey = lspLanguageKey(monacoLangId)
+    if (lspKey && lspClients.has(lspKey)) {
+      const client = lspClients.get(lspKey)
+      const uri = pathToUri(activeFile)
+      
+      // Update LSP server on type
+      editor.onDidChangeModelContent(() => {
+        client.didChange(uri, editor.getValue())
+        
+        // Clear active AI edit if the user starts typing manually
+        if (hasActiveAiEdit) {
+          setHasActiveAiEdit(false)
+          if (decorationsCollectionRef.current) {
+            decorationsCollectionRef.current.clear()
+          }
+        }
+      })
+    }
+
+    // Command: Save
     editor.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.KeyS, () => {
-      saveActiveFile()
+      handleSave()
     })
+
+    // Expose diagnostics to the global window so the AI can read them
+    window.getEditorDiagnostics = () => {
+      const model = editor.getModel()
+      if (!model) return []
+      return monacoInstance.editor.getModelMarkers({ resource: model.uri })
+    }
+
+    // Expose live editor content so the AI sees unsaved changes
+    window.getEditorValue = () => {
+      return editor.getValue()
+    }
   }
+
+  // Set up refs for decorations
+  const monacoRef = useRef(null)
+  const decorationsCollectionRef = useRef(null)
+  const [hasActiveAiEdit, setHasActiveAiEdit] = useState(false)
+  const [showDiff, setShowDiff] = useState(false)
+  const [originalText, setOriginalText] = useState(null)
+
+  const handleEditorDidMountWrapper = (editor, monacoInstance) => {
+    monacoRef.current = monacoInstance
+    decorationsCollectionRef.current = editor.createDecorationsCollection([])
+    handleEditorDidMount(editor, monacoInstance)
+  }
+
+  const handleRevertEdit = () => {
+    if (editorRef.current) {
+      editorRef.current.trigger('keyboard', 'undo', null)
+    }
+    setHasActiveAiEdit(false)
+    setShowDiff(false)
+    setOriginalText(null)
+    if (decorationsCollectionRef.current) {
+      decorationsCollectionRef.current.clear()
+    }
+  }
+
+  const handleAcceptEdit = () => {
+    setHasActiveAiEdit(false)
+    setShowDiff(false)
+    setOriginalText(null)
+    if (decorationsCollectionRef.current) {
+      decorationsCollectionRef.current.clear()
+    }
+  }
+
+  // Listen for 'apply-code' events to overwrite the editor cleanly
+  useEffect(() => {
+    const handleApplyCode = (e) => {
+      const { code, path } = e.detail
+      if (activeFile === path && editorRef.current) {
+        editorRef.current.pushUndoStop()
+        editorRef.current.executeEdits("ai-apply", [{
+          range: editorRef.current.getModel().getFullModelRange(),
+          text: code
+        }])
+        editorRef.current.pushUndoStop()
+      }
+    }
+    window.addEventListener('apply-code', handleApplyCode)
+    return () => window.removeEventListener('apply-code', handleApplyCode)
+  }, [activeFile])
+
+  // Listen for 'auto-apply-diff' events from the AI
+  useEffect(() => {
+    const handleAutoApplyDiff = (e) => {
+      const { path, body } = e.detail
+      const normalize = (p) => (p || '').replace(/\\/g, '/').toLowerCase()
+      if (normalize(activeFile) === normalize(path) && editorRef.current) {
+        const model = editorRef.current.getModel()
+        let newText = model.getValue()
+        
+        const { newText: diffedText, hasChanges, editRanges } = applyDiff(newText, body)
+        
+        if (hasChanges) {
+          setOriginalText(newText)
+          newText = diffedText
+          
+          editorRef.current.pushUndoStop()
+          editorRef.current.executeEdits("ai-diff", [{
+            range: model.getFullModelRange(),
+            text: newText
+          }])
+          editorRef.current.pushUndoStop()
+
+          if (editRanges && editRanges.length > 0 && monacoRef.current && decorationsCollectionRef.current) {
+            const monacoRanges = editRanges.map(r => ({
+              range: new monacoRef.current.Range(r.startLine, 1, r.endLine, 1),
+              options: {
+                isWholeLine: true,
+                className: 'ai-edit-highlight',
+                marginClassName: 'ai-edit-highlight'
+              }
+            }))
+            decorationsCollectionRef.current.set(monacoRanges)
+            setHasActiveAiEdit(true)
+          }
+        }
+      }
+    }
+    window.addEventListener('auto-apply-diff', handleAutoApplyDiff)
+    return () => window.removeEventListener('auto-apply-diff', handleAutoApplyDiff)
+  }, [activeFile])
 
   // Handle Content Change — also notify LSP
   const handleEditorChange = (value) => {
@@ -441,15 +714,20 @@ export const CodeEditor = ({
   }
 
   return (
-    <div className="editor-container">
+    <div className="editor-container" style={{ position: 'relative' }}>
       <div className="editor-tabs">
-        {openFiles.map(file => {
+        {openFiles.map((file, idx) => {
           const isActive = file.path === activeFile
           return (
             <div 
               key={file.path} 
-              className={`editor-tab ${isActive ? 'active' : ''}`}
+              className={`editor-tab ${isActive ? 'active' : ''} ${draggedTabIdx === idx ? 'dragging' : ''}`}
+              draggable
+              onDragStart={(e) => handleDragStart(e, idx)}
+              onDragOver={handleDragOver}
+              onDrop={(e) => handleDrop(e, idx)}
               onClick={() => setActiveFile(file.path)}
+              onContextMenu={(e) => handleContextMenu(e, file, idx)}
             >
               <span className="tab-name">{file.name}</span>
               <div 
@@ -465,32 +743,105 @@ export const CodeEditor = ({
           )
         })}
       </div>
+
+      {/* ── Context Menu Overlay ── */}
+      {contextMenu && (
+        <div 
+          className="tab-context-menu"
+          style={{
+            position: 'fixed', // Use fixed to position relative to viewport
+            top: contextMenu.y,
+            left: contextMenu.x,
+            zIndex: 9999
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="tab-context-menu-item" onClick={(e) => handleContextAction('close', e)}>
+            <span>Close</span>
+          </div>
+          <div className="tab-context-menu-item" onClick={(e) => handleContextAction('closeOthers', e)}>
+            <span>Close Others</span>
+          </div>
+          <div className="tab-context-menu-item" onClick={(e) => handleContextAction('closeToRight', e)}>
+            <span>Close to the Right</span>
+          </div>
+          <div className="tab-context-menu-item" onClick={(e) => handleContextAction('closeSaved', e)}>
+            <span>Close Saved</span>
+          </div>
+          <div className="tab-context-menu-item" onClick={(e) => handleContextAction('closeAll', e)}>
+            <span>Close All</span>
+          </div>
+          <div className="tab-context-menu-separator"></div>
+          <div className="tab-context-menu-item" onClick={(e) => handleContextAction('copyPath', e)}>
+            <span>Copy Path</span>
+          </div>
+          <div className="tab-context-menu-item" onClick={(e) => handleContextAction('copyRelativePath', e)}>
+            <span>Copy Relative Path</span>
+          </div>
+        </div>
+      )}
       
       <div className="editor-body">
-        {fileContents[activeFile]?.isLoading ? (
+        {fileContents[activeFile]?.isLoading && (
           <div className="editor-loading">Loading...</div>
-        ) : (
-          <Editor
-            height="100%"
-            path={pathToUri(activeFile)}
-            language={getLanguageFromPath(activeFile)}
-            theme="vs-dark"
-            value={currentValue}
-            onChange={handleEditorChange}
-            onMount={handleEditorDidMount}
-            options={{
-              minimap: { enabled: false },
-              fontSize: 14,
-              fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-              wordWrap: 'on',
-              padding: { top: 16 },
-              scrollBeyondLastLine: false,
-              smoothScrolling: true,
-              cursorBlinking: 'smooth',
-              cursorSmoothCaretAnimation: 'on',
-              formatOnPaste: true,
-            }}
-          />
+        )}
+        
+        {hasActiveAiEdit && (
+          <div className="ai-edit-widget">
+            <span className="ai-edit-widget-text">AI Edit Applied</span>
+            <div className="ai-edit-widget-actions">
+              <button 
+                className="ai-btn-revert" 
+                style={{ color: '#60a5fa', borderColor: '#60a5fa' }} 
+                onClick={() => setShowDiff(!showDiff)}
+              >
+                {showDiff ? 'Hide Diff' : 'View Diff'}
+              </button>
+              <button className="ai-btn-revert" onClick={handleRevertEdit}>Revert</button>
+              <button className="ai-btn-accept" onClick={handleAcceptEdit}>Accept</button>
+            </div>
+          </div>
+        )}
+
+        {!fileContents[activeFile]?.isLoading && (
+          showDiff ? (
+            <DiffEditor
+              height="100%"
+              original={originalText}
+              modified={currentValue}
+              language={getLanguageFromPath(activeFile)}
+              theme="vs-dark"
+              options={{
+                renderSideBySide: true,
+                minimap: { enabled: false },
+                readOnly: true,
+                padding: { top: 16 }
+              }}
+            />
+          ) : (
+            <Editor
+              height="100%"
+              path={pathToUri(activeFile)}
+              language={getLanguageFromPath(activeFile)}
+              theme="vs-dark"
+              value={currentValue}
+              onChange={handleEditorChange}
+              onMount={handleEditorDidMountWrapper}
+              options={{
+                minimap: { enabled: false },
+                fontSize: 14,
+                fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                wordWrap: 'on',
+                padding: { top: 16 },
+                scrollBeyondLastLine: false,
+                smoothScrolling: true,
+                cursorBlinking: 'smooth',
+                cursorSmoothCaretAnimation: 'on',
+                formatOnPaste: true,
+                automaticLayout: true,
+              }}
+            />
+          )
         )}
       </div>
     </div>
