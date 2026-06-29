@@ -879,7 +879,7 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
 
 
       {/* ── Activity Bar (VS Code style) ── */}
-      <ActivityBar />
+      <ActivityBar onShowVisualizer={() => setShowVisualizer(true)} />
 
       {/* ── Sidebar (File Explorer / Extensions / Search / Source Control) ── */}
       <div style={{ display: 'flex', height: '100%', borderRight: '1px solid var(--border-base)' }}>

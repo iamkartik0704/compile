@@ -1,8 +1,8 @@
 import React from 'react'
-import { Files, Search, GitBranch, Blocks, Settings } from 'lucide-react'
+import { Files, Search, GitBranch, Blocks, Settings, Database } from 'lucide-react'
 import { useAppStore } from '../store/appStore'
 
-export function ActivityBar() {
+export function ActivityBar({ onShowVisualizer }) {
   const { activePanel, setActivePanel } = useAppStore()
 
   const panels = [
@@ -18,9 +18,9 @@ export function ActivityBar() {
         {panels.map((panel) => {
           const Icon = panel.icon
           const isActive = activePanel === panel.id
-          
+
           return (
-            <div 
+            <div
               key={panel.id}
               className={`activity-item ${isActive ? 'active' : ''}`}
               title={panel.title}
@@ -33,6 +33,13 @@ export function ActivityBar() {
             </div>
           )
         })}
+        <div
+          className="activity-item"
+          title="Visualize Codebase"
+          onClick={() => onShowVisualizer && onShowVisualizer()}
+        >
+          <Database size={24} strokeWidth={1.5} />
+        </div>
       </div>
       
       <div className="activity-bar-bottom">
