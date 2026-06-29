@@ -2,7 +2,10 @@ import React, { useState, useEffect, useRef } from 'react'
 import Editor, { loader, DiffEditor } from '@monaco-editor/react'
 import * as monaco from 'monaco-editor'
 import { applyDiff } from '../diffUtils'
-import { X, Save, Circle } from 'lucide-react'
+import { X, Save, Circle, Sparkles } from 'lucide-react'
+import { ContextInspector } from './ContextInspector'
+import { useAppStore } from '../store/appStore'
+import { EXTENSIONS } from '../utils/extensionRegistry'
 
 // --- Monaco Workers ---
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
@@ -281,10 +284,10 @@ function registerProvidersForLanguage(monacoLangId) {
       // 2. Build Context
       const startLine = Math.max(1, position.lineNumber - 30)
       const endLine = Math.min(model.getLineCount(), position.lineNumber + 5)
-      
+
       const prefixRange = new monaco.Range(startLine, 1, position.lineNumber, position.column)
       const suffixRange = new monaco.Range(position.lineNumber, position.column, endLine, model.getLineMaxColumn(endLine))
-      
+
       const prefix = model.getValueInRange(prefixRange)
       const suffix = model.getValueInRange(suffixRange)
 
@@ -330,7 +333,7 @@ COMPLETION:`
       // cleanup markdown if the AI ignored instructions
       completionText = completionText.replace(/^```[a-z]*\n?/i, '')
       completionText = completionText.replace(/\n?```$/i, '')
-      
+
       // If there's still conversational text before a markdown block, try to extract just the code
       if (completionText.includes('```')) {
         const match = completionText.match(/```[a-z]*\n([\s\S]*?)```/i)
@@ -352,7 +355,7 @@ COMPLETION:`
         ]
       }
     },
-    freeInlineCompletions: () => {}
+    freeInlineCompletions: () => { }
   })
 
   // Completion
@@ -409,13 +412,13 @@ COMPLETION:`
 }
 
 // ─── Component ─────────────────────────────────────────────────────
-export const CodeEditor = ({ 
+export const CodeEditor = ({
   openFiles,
   setOpenFiles,
-  activeFile, 
-  setActiveFile, 
-  closeFile, 
-  markFileDirty, 
+  activeFile,
+  setActiveFile,
+  closeFile,
+  markFileDirty,
   markFileClean,
   projectRoot,
   aiConfig,
@@ -425,6 +428,7 @@ export const CodeEditor = ({
   const [currentValue, setCurrentValue] = useState('')
   const [draggedTabIdx, setDraggedTabIdx] = useState(null)
   const [contextMenu, setContextMenu] = useState(null)
+  const [showContextInspector, setShowContextInspector] = useState(false)
   const editorRef = useRef(null)
 
 
@@ -457,7 +461,7 @@ export const CodeEditor = ({
     setDraggedTabIdx(idx)
     e.dataTransfer.effectAllowed = 'move'
     // This is required for Firefox, but also good practice
-    e.dataTransfer.setData('text/plain', idx.toString()) 
+    e.dataTransfer.setData('text/plain', idx.toString())
   }
 
   const handleDragOver = (e) => {
@@ -545,7 +549,7 @@ export const CodeEditor = ({
       if (!fileContents[activeFile]) {
         setFileContents(prev => ({ ...prev, [activeFile]: { content: 'Loading...', isLoading: true } }))
         const res = await window.api.getFileContents(activeFile)
-        
+
         if (res.success) {
           setFileContents(prev => ({ ...prev, [activeFile]: { content: res.content, isLoading: false } }))
           setCurrentValue(res.content)
@@ -632,7 +636,7 @@ export const CodeEditor = ({
   const handleSave = async () => {
     if (!activeFile || !editorRef.current) return
     const content = editorRef.current.getValue()
-    
+
     const res = await window.api.saveFileContents(activeFile, content)
     if (res.success) {
       setFileContents(prev => ({
@@ -648,7 +652,7 @@ export const CodeEditor = ({
   // Handle Monaco Mount
   const handleEditorDidMount = (editor, monacoInstance) => {
     editorRef.current = editor
-    
+
     // Set up LSP logic
     const monacoLangId = getLanguageFromPath(activeFile)
     registerProvidersForLanguage(monacoLangId)
@@ -657,11 +661,11 @@ export const CodeEditor = ({
     if (lspKey && lspClients.has(lspKey)) {
       const client = lspClients.get(lspKey)
       const uri = pathToUri(activeFile)
-      
+
       // Update LSP server on type
       editor.onDidChangeModelContent(() => {
         client.didChange(uri, editor.getValue())
-        
+
         // Clear active AI edit if the user starts typing manually
         if (hasActiveAiEdit) {
           setHasActiveAiEdit(false)
@@ -688,14 +692,23 @@ export const CodeEditor = ({
     window.getEditorValue = () => {
       return editor.getValue()
     }
+
+    // Expose save functionality for run command
+    window.saveActiveFile = () => {
+      return handleSave()
+    }
   }
 
   const monacoRef = useRef(null)
   const decorationsCollectionRef = useRef(null)
   const [hasActiveAiEdit, setHasActiveAiEdit] = useState(false)
-  const [showDiff, setShowDiff] = useState(false)
-  const [originalText, setOriginalText] = useState(null)
+  const [isReady, setIsReady] = useState(false)
   
+  // Use global app store for extensions and theme
+  const { extensions, toggleExtension, activeTheme, setActiveTheme } = useAppStore()
+  const monacoTheme = activeTheme === 'light-modern' ? 'vs' : 'vs-dark'
+  const [originalText, setOriginalText] = useState(null)
+
   const [inlineAi, setInlineAi] = useState({
     visible: false,
     top: 0,
@@ -708,42 +721,42 @@ export const CodeEditor = ({
 
   const submitInlineAi = async () => {
     if (!inlineAi.prompt.trim() || !inlineAi.range) return
-    
+
     setInlineAi(prev => ({ ...prev, isLoading: true }))
-    
+
     const instructions = `Edit the following code based on the instructions. Return ONLY the raw modified code without markdown blocks. \n\nCode to edit:\n${inlineAi.selectionText}\n\nInstructions: ${inlineAi.prompt}`
-    
+
     let generatedCode = ''
-    
+
     const handleChunk = (chunk) => {
       generatedCode += chunk
     }
-    
+
     window.api.onInlineAiStreamChunk(handleChunk)
-    
+
     await window.api.sendInlineAiPrompt(instructions, {})
-    
+
     // Stream finished, apply it!
     if (editorRef.current && generatedCode) {
       const cleanedCode = generatedCode.replace(/^```[a-z]*\n/i, '').replace(/\n```$/, '')
-      
+
       const model = editorRef.current.getModel()
       const originalValue = model.getValue()
       setOriginalText(originalValue)
-      
+
       editorRef.current.pushUndoStop()
       editorRef.current.executeEdits("inline-ai", [{
         range: inlineAi.range,
         text: cleanedCode
       }])
       editorRef.current.pushUndoStop()
-      
+
       // Highlight the change
       if (monacoRef.current && decorationsCollectionRef.current) {
         const startLine = inlineAi.range.startLineNumber
         const numLinesAdded = cleanedCode.split('\n').length - 1
         const endLine = startLine + numLinesAdded
-        
+
         const monacoRanges = [{
           range: new monacoRef.current.Range(startLine, 1, endLine, 1),
           options: {
@@ -756,31 +769,36 @@ export const CodeEditor = ({
         setHasActiveAiEdit(true)
       }
     }
-    
+
     setInlineAi({ visible: false, top: 0, left: 0, prompt: '', isLoading: false, range: null, selectionText: '' })
   }
 
   const handleEditorDidMountWrapper = (editor, monacoInstance) => {
     monacoRef.current = monacoInstance
     decorationsCollectionRef.current = editor.createDecorationsCollection([])
-    
+
+    // Command: Run File (Ctrl+Alt+N)
+    editor.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyMod.Alt | monacoInstance.KeyCode.KeyN, () => {
+      window.dispatchEvent(new Event('global-run-file'))
+    })
+
     // Command: Inline AI Edit (Ctrl+K)
     editor.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.KeyK, () => {
       const position = editor.getPosition()
       const selection = editor.getSelection()
-      
+
       let selectionText = ''
       let range = selection
-      
+
       if (!selection.isEmpty()) {
         selectionText = editor.getModel().getValueInRange(selection)
       } else {
         range = new monacoInstance.Range(position.lineNumber, 1, position.lineNumber, editor.getModel().getLineMaxColumn(position.lineNumber))
         selectionText = editor.getModel().getValueInRange(range)
       }
-      
+
       const pixelPos = editor.getScrolledVisiblePosition(position)
-      
+
       setInlineAi({
         visible: true,
         top: pixelPos.top + 20, // slightly below cursor
@@ -833,6 +851,48 @@ export const CodeEditor = ({
     return () => window.removeEventListener('apply-code', handleApplyCode)
   }, [activeFile])
 
+  // Listen for 'force-apply-diff' events to apply code instantly and save
+  useEffect(() => {
+    const handleForceApplyDiff = async (e) => {
+      const { path, body } = e.detail
+      const normalize = (p) => (p || '').replace(/\\/g, '/').toLowerCase()
+      if (normalize(activeFile) === normalize(path) && editorRef.current) {
+        const model = editorRef.current.getModel()
+        let newText = model.getValue()
+
+        const { newText: diffedText, hasChanges } = applyDiff(newText, body)
+
+        if (hasChanges) {
+          const viewState = editorRef.current.saveViewState()
+          editorRef.current.pushUndoStop()
+          editorRef.current.executeEdits("ai-force-diff", [{
+            range: model.getFullModelRange(),
+            text: diffedText
+          }])
+          editorRef.current.pushUndoStop()
+          editorRef.current.restoreViewState(viewState)
+        }
+
+        if (e.detail.autoRun) {
+          window.dispatchEvent(new Event('global-run-file'))
+        } else {
+          // Force save (only if not auto-running, because auto-run saves it already)
+          try {
+            await window.api.saveFileContents(activeFile, diffedText)
+            setIsDirty(false)
+            if (typeof markFileClean === 'function') {
+              markFileClean(activeFile)
+            }
+          } catch (err) {
+            console.error("Force save failed:", err)
+          }
+        }
+      }
+    }
+    window.addEventListener('force-apply-diff', handleForceApplyDiff)
+    return () => window.removeEventListener('force-apply-diff', handleForceApplyDiff)
+  }, [activeFile])
+
   // Listen for 'auto-apply-diff' events from the AI
   useEffect(() => {
     const handleAutoApplyDiff = (e) => {
@@ -841,19 +901,21 @@ export const CodeEditor = ({
       if (normalize(activeFile) === normalize(path) && editorRef.current) {
         const model = editorRef.current.getModel()
         let newText = model.getValue()
-        
+
         const { newText: diffedText, hasChanges, editRanges } = applyDiff(newText, body)
-        
+
         if (hasChanges) {
           setOriginalText(newText)
           newText = diffedText
-          
+
+          const viewState = editorRef.current.saveViewState()
           editorRef.current.pushUndoStop()
           editorRef.current.executeEdits("ai-diff", [{
             range: model.getFullModelRange(),
             text: newText
           }])
           editorRef.current.pushUndoStop()
+          editorRef.current.restoreViewState(viewState)
 
           if (editRanges && editRanges.length > 0 && monacoRef.current && decorationsCollectionRef.current) {
             const monacoRanges = editRanges.map(r => ({
@@ -878,12 +940,12 @@ export const CodeEditor = ({
   const handleEditorChange = (value) => {
     if (!activeFile) return
     setCurrentValue(value)
-    
+
     setFileContents(prev => ({
       ...prev,
       [activeFile]: { ...prev[activeFile], content: value }
     }))
-    
+
     markFileDirty(activeFile)
 
     // Notify the right LSP client
@@ -923,8 +985,8 @@ export const CodeEditor = ({
         {openFiles.map((file, idx) => {
           const isActive = file.path === activeFile
           return (
-            <div 
-              key={file.path} 
+            <div
+              key={file.path}
               className={`editor-tab ${isActive ? 'active' : ''} ${draggedTabIdx === idx ? 'dragging' : ''}`}
               draggable
               onDragStart={(e) => handleDragStart(e, idx)}
@@ -934,7 +996,7 @@ export const CodeEditor = ({
               onContextMenu={(e) => handleContextMenu(e, file, idx)}
             >
               <span className="tab-name">{file.name}</span>
-              <div 
+              <div
                 className="tab-action"
                 onClick={(e) => {
                   e.stopPropagation()
@@ -946,10 +1008,21 @@ export const CodeEditor = ({
             </div>
           )
         })}
-        
-        {/* Run Button Container inside tabs header */}
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', paddingRight: '12px' }}>
-          <button 
+
+        {/* Run & Optimizer Button Container inside tabs header */}
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px', paddingRight: '12px' }}>
+          <button
+            className="action-btn"
+            onClick={(e) => {
+              e.stopPropagation()
+              setShowContextInspector(true)
+            }}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(6, 182, 212, 0.1)', color: '#06b6d4', padding: '4px 12px', border: '1px solid rgba(6, 182, 212, 0.2)', borderRadius: '4px', cursor: 'pointer', fontWeight: 500, fontSize: '0.85rem' }}
+          >
+            <Sparkles size={14} />
+            Compress Context
+          </button>
+          <button
             className="action-btn"
             onClick={(e) => {
               e.stopPropagation()
@@ -964,7 +1037,7 @@ export const CodeEditor = ({
 
       {/* ── Context Menu Overlay ── */}
       {contextMenu && (
-        <div 
+        <div
           className="tab-context-menu"
           style={{
             position: 'fixed', // Use fixed to position relative to viewport
@@ -998,16 +1071,16 @@ export const CodeEditor = ({
           </div>
         </div>
       )}
-      
+
       <div className="editor-body">
         {inlineAi.visible && (
-          <div 
-            className="inline-ai-widget" 
+          <div
+            className="inline-ai-widget"
             style={{ top: inlineAi.top, left: inlineAi.left }}
           >
-            <input 
+            <input
               autoFocus
-              type="text" 
+              type="text"
               placeholder="Ask AI to edit or generate code..."
               value={inlineAi.prompt}
               onChange={(e) => setInlineAi(prev => ({ ...prev, prompt: e.target.value }))}
@@ -1027,14 +1100,14 @@ export const CodeEditor = ({
         {fileContents[activeFile]?.isLoading && (
           <div className="editor-loading">Loading...</div>
         )}
-        
+
         {hasActiveAiEdit && (
           <div className="ai-edit-widget">
             <span className="ai-edit-widget-text">AI Edit Applied</span>
             <div className="ai-edit-widget-actions">
-              <button 
-                className="ai-btn-revert" 
-                style={{ color: '#60a5fa', borderColor: '#60a5fa' }} 
+              <button
+                className="ai-btn-revert"
+                style={{ color: '#60a5fa', borderColor: '#60a5fa' }}
                 onClick={() => setShowDiff(!showDiff)}
               >
                 {showDiff ? 'Hide Diff' : 'View Diff'}
@@ -1045,14 +1118,59 @@ export const CodeEditor = ({
           </div>
         )}
 
-        {!fileContents[activeFile]?.isLoading && (
+        {activeFile && activeFile.startsWith('ext:') ? (
+          (function() {
+            const extId = activeFile.replace('ext:', '')
+            // Use global extensions state
+            const ext = extensions.find(e => e.id === extId)
+            if (!ext) return <div className="editor-loading" style={{ padding: '20px' }}>Extension not found.</div>
+            
+            const handleToggle = () => {
+              const newEnabled = !ext.enabled
+              toggleExtension(extId, ext.category)
+              if (ext.category === 'theme' && newEnabled) {
+                setActiveTheme(extId.replace('theme-', ''))
+              }
+            }
+
+            return (
+              <div style={{ padding: '40px', color: 'var(--text-main)', maxWidth: '800px', margin: '0 auto', overflowY: 'auto', height: '100%' }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '20px', marginBottom: '30px' }}>
+                  <div style={{ width: '80px', height: '80px', backgroundColor: 'var(--bg-elevated)', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border-base)' }}>
+                    <span style={{ fontSize: '32px' }}>🧩</span>
+                  </div>
+                  <div>
+                    <h1 style={{ fontSize: '24px', margin: '0 0 8px 0', color: 'var(--text-primary)' }}>{ext.name}</h1>
+                    <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '16px' }}>
+                      <span style={{ color: 'var(--accent-color)' }}>{ext.author}</span>
+                      <span style={{ margin: '0 8px' }}>•</span>
+                      <span>{ext.category.toUpperCase()}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '10px' }}>
+                      {ext.enabled ? (
+                        <button onClick={handleToggle} style={{ background: 'var(--bg-elevated)', color: 'var(--text-primary)', border: '1px solid var(--border-base)', padding: '6px 16px', borderRadius: '4px', cursor: 'pointer' }}>Manage</button>
+                      ) : (
+                        <button onClick={handleToggle} style={{ background: '#0e639c', color: 'white', border: 'none', padding: '6px 16px', borderRadius: '4px', cursor: 'pointer' }}>Install</button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                
+                <h2 style={{ fontSize: '16px', borderBottom: '1px solid var(--border-base)', paddingBottom: '8px', marginBottom: '16px' }}>Details</h2>
+                <p style={{ fontSize: '14px', lineHeight: '1.6', color: 'var(--text-secondary)' }}>
+                  {ext.longDescription || ext.description}
+                </p>
+              </div>
+            )
+          })()
+        ) : !fileContents[activeFile]?.isLoading && (
           showDiff ? (
             <DiffEditor
               height="100%"
               original={originalText}
               modified={currentValue}
               language={getLanguageFromPath(activeFile)}
-              theme="vs-dark"
+              theme={monacoTheme}
               options={{
                 renderSideBySide: true,
                 minimap: { enabled: false },
@@ -1065,7 +1183,7 @@ export const CodeEditor = ({
               height="100%"
               path={pathToUri(activeFile)}
               language={getLanguageFromPath(activeFile)}
-              theme="vs-dark"
+              theme={monacoTheme}
               value={currentValue}
               onChange={handleEditorChange}
               onMount={handleEditorDidMountWrapper}
@@ -1087,6 +1205,12 @@ export const CodeEditor = ({
           )
         )}
       </div>
+      <ContextInspector 
+        isOpen={showContextInspector} 
+        onClose={() => setShowContextInspector(false)} 
+        originalCode={currentValue}
+        filePath={activeFile}
+      />
     </div>
   )
 }

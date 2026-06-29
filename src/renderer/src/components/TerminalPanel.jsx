@@ -3,13 +3,68 @@ import { Terminal } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
 import 'xterm/css/xterm.css'
 import '../assets/terminal.css'
+import { useAppStore } from '../store/appStore'
+
+const getXtermTheme = (activeTheme) => {
+  if (activeTheme === 'light-modern') {
+    return {
+      background: '#ffffff',
+      foreground: '#333333',
+      cursor: '#007acc',
+      selection: '#007acc40',
+      black: '#000000',
+      red: '#cd3131',
+      green: '#00bc00',
+      yellow: '#949800',
+      blue: '#0451a5',
+      magenta: '#bc05bc',
+      cyan: '#0598bc',
+      white: '#555555',
+    }
+  }
+  
+  if (activeTheme === 'dracula') {
+    return {
+      background: '#282a36',
+      foreground: '#f8f8f2',
+      cursor: '#f8f8f2',
+      selection: '#44475a',
+      black: '#21222c',
+      red: '#ff5555',
+      green: '#50fa7b',
+      yellow: '#f1fa8c',
+      blue: '#bd93f9',
+      magenta: '#ff79c6',
+      cyan: '#8be9fd',
+      white: '#f8f8f2',
+    }
+  }
+  
+  // Default Dark Plus
+  return {
+    background: '#1e1e1e',
+    foreground: '#cccccc',
+    cursor: '#ffffff',
+    selection: '#264f78',
+    black: '#000000',
+    red: '#cd3131',
+    green: '#0dbc79',
+    yellow: '#e5e510',
+    blue: '#2472c8',
+    magenta: '#bc3fbc',
+    cyan: '#11a8cd',
+    white: '#e5e5e5',
+  }
+}
 
 export const TerminalPanel = forwardRef(({ height, cwd, onFixWithAi, hideHeader }, ref) => {
   const terminalRef = useRef(null)
   const terminalInstance = useRef(null)
   const fitAddon = useRef(null)
   const terminalId = useRef(null)
+  const commandQueue = useRef([])
   const [isTerminalReady, setIsTerminalReady] = useState(false)
+  const { activeTheme } = useAppStore()
 
   useEffect(() => {
     // Initialize xterm.js
@@ -17,20 +72,7 @@ export const TerminalPanel = forwardRef(({ height, cwd, onFixWithAi, hideHeader 
       cursorBlink: true,
       fontFamily: '"JetBrains Mono", "Fira Code", monospace',
       fontSize: 14,
-      theme: {
-        background: '#0c0c14',
-        foreground: '#e2e2e2',
-        cursor: '#f4b1ee',
-        selection: '#ffffff40',
-        black: '#1e1e1e',
-        red: '#f48771',
-        green: '#10a37f',
-        yellow: '#f4c371',
-        blue: '#71a3f4',
-        magenta: '#f4b1ee',
-        cyan: '#71f4e2',
-        white: '#e2e2e2',
-      }
+      theme: getXtermTheme(activeTheme)
     })
     
     const fit = new FitAddon()
@@ -62,6 +104,14 @@ export const TerminalPanel = forwardRef(({ height, cwd, onFixWithAi, hideHeader 
         term.write(data)
       })
 
+      // Flush any queued commands
+      if (commandQueue.current.length > 0) {
+        commandQueue.current.forEach(cmd => {
+          window.api.sendTerminalData(id, cmd + '\r')
+        })
+        commandQueue.current = []
+      }
+
       // Listen for data from xterm (user typing) and send to backend pty
       term.onData((data) => {
         window.api.sendTerminalData(id, data)
@@ -92,12 +142,21 @@ export const TerminalPanel = forwardRef(({ height, cwd, onFixWithAi, hideHeader 
       }
       term.dispose()
     }
-  }, [])
+  }, []) // Empty dep array for init
+
+  // Update theme when activeTheme changes
+  useEffect(() => {
+    if (terminalInstance.current) {
+      terminalInstance.current.options.theme = getXtermTheme(activeTheme)
+    }
+  }, [activeTheme])
 
   useImperativeHandle(ref, () => ({
     executeCommand: (cmd) => {
       if (terminalId.current !== null) {
         window.api.sendTerminalData(terminalId.current, cmd + '\r')
+      } else {
+        commandQueue.current.push(cmd)
       }
     },
     getBuffer: () => {

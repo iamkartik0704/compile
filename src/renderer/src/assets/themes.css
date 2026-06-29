@@ -1,0 +1,53 @@
+/* Dark Plus (Default VS Code) */
+body.theme-dark-plus {
+  --bg-deep: #1e1e1e;
+  --bg-activity: #333333;
+  --bg-sidebar: #252526;
+  --bg-surface: #1e1e1e;
+  --bg-elevated: #2d2d2d;
+  --bg-input: #3c3c3c;
+  --border-base: #3c3c3c;
+  --border-subtle: #3c3c3c;
+  --text-primary: #cccccc;
+  --text-secondary: #858585;
+  --text-muted: #858585;
+  --text-bright: #ffffff;
+  --accent-purple: #007acc;
+  --accent-blue: #007acc;
+}
+
+/* Light Modern */
+body.theme-light-modern {
+  --bg-deep: #ffffff;
+  --bg-activity: #f8f8f8; 
+  --bg-sidebar: #f3f3f3;
+  --bg-surface: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-input: #ffffff;
+  --border-base: #e5e5e5;
+  --border-subtle: #e5e5e5;
+  --text-primary: #333333;
+  --text-secondary: #767676;
+  --text-muted: #767676;
+  --text-bright: #000000;
+  --accent-purple: #007acc;
+  --accent-blue: #007acc;
+}
+
+/* Dracula */
+body.theme-dracula {
+  --bg-deep: #282a36;
+  --bg-activity: #191a21;
+  --bg-sidebar: #21222c;
+  --bg-surface: #282a36;
+  --bg-elevated: #44475a;
+  --bg-input: #21222c;
+  --border-base: #44475a;
+  --border-subtle: #44475a;
+  --text-primary: #f8f8f2;
+  --text-secondary: #6272a4;
+  --text-muted: #6272a4;
+  --text-bright: #ffffff;
+  --accent-purple: #bd93f9;
+  --accent-blue: #8be9fd;
+}

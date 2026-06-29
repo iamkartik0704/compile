@@ -9,7 +9,8 @@ import { homedir } from 'os'
  */
 
 // Store active LSP processes
-const lspProcesses = new Map() // language → { process, buffer, initialized }
+const lspProcesses = new Map() // language → { process, buffer, status }
+// Status enum: 'idle', 'installing', 'starting', 'ready', 'crashed'
 
 /**
  * Check if a command exists in PATH
@@ -188,10 +189,21 @@ export const LANGUAGE_METADATA = {
 /**
  * Start a language server process and bridge stdio
  */
-export function startLanguageServer(language, onMessage, onError) {
+export function startLanguageServer(language, onMessage, onError, onStatusChange) {
   // If already running, return existing process
   if (lspProcesses.has(language)) {
-    return { success: true, alreadyRunning: true }
+    const entry = lspProcesses.get(language)
+    if (entry.status === 'starting' || entry.status === 'ready') {
+      return { success: true, alreadyRunning: true, status: entry.status }
+    }
+  }
+
+  const setStatus = (status) => {
+    const entry = lspProcesses.get(language)
+    if (entry) {
+      entry.status = status
+      if (onStatusChange) onStatusChange(status)
+    }
   }
 
   const cmdInfo = getLspCommand(language)
@@ -214,13 +226,14 @@ export function startLanguageServer(language, onMessage, onError) {
       shell: process.platform === 'win32'
     })
 
-    const entry = { process: child, buffer: '', initialized: false }
+    const entry = { process: child, buffer: '', status: 'starting' }
     lspProcesses.set(language, entry)
+    if (onStatusChange) onStatusChange('starting')
 
     // Handle stdout (messages from LSP server)
     child.stdout.on('data', (data) => {
       entry.buffer += data.toString()
-      parseAndForwardMessages(language, entry, onMessage)
+      parseAndForwardMessages(language, entry, onMessage, setStatus)
     })
 
     // Handle stderr
@@ -233,12 +246,14 @@ export function startLanguageServer(language, onMessage, onError) {
     // Handle process exit
     child.on('exit', (code) => {
       console.log(`[LSP ${language}] exited with code ${code}`)
+      setStatus('idle')
       lspProcesses.delete(language)
     })
 
     // Handle process error
     child.on('error', (err) => {
       console.error(`[LSP ${language}] error:`, err)
+      setStatus('crashed')
       lspProcesses.delete(language)
       if (onError) onError(err.message)
     })
@@ -254,7 +269,7 @@ export function startLanguageServer(language, onMessage, onError) {
  * Parse LSP messages from buffer and forward them
  * LSP uses Content-Length header format
  */
-function parseAndForwardMessages(language, entry, onMessage) {
+function parseAndForwardMessages(language, entry, onMessage, setStatus) {
   while (true) {
     const headerMatch = entry.buffer.match(/Content-Length: (\d+)\r\n\r\n/i)
     if (!headerMatch) break
@@ -268,6 +283,12 @@ function parseAndForwardMessages(language, entry, onMessage) {
 
       try {
         const parsed = JSON.parse(message)
+        
+        // Transition to ready if we receive a response to initialize
+        if (parsed.id !== undefined && parsed.result && parsed.result.capabilities) {
+          if (entry.status !== 'ready') setStatus('ready')
+        }
+        
         if (onMessage) onMessage(language, JSON.stringify(parsed))
       } catch (err) {
         console.error(`[LSP ${language}] failed to parse message:`, err)
@@ -298,6 +319,14 @@ export function sendToLanguageServer(language, message) {
     console.error(`[LSP ${language}] failed to send message:`, err)
     return false
   }
+}
+
+/**
+ * Get the current status of an LSP
+ */
+export function getLanguageServerStatusForLanguage(language) {
+  const entry = lspProcesses.get(language)
+  return entry ? entry.status : 'idle'
 }
 
 /**

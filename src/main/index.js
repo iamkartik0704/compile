@@ -3,6 +3,7 @@ import { join } from 'path'
 import { readFileSync, writeFileSync, existsSync, chmodSync, promises as fsPromises } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { terminalManager } from './terminal-manager.js'
+import { startLanguageServer, sendToLanguageServer, getLanguageServerStatusForLanguage, LANGUAGE_METADATA } from './lsp-manager.js'
 
 let currentWatcher = null
 
@@ -46,7 +47,22 @@ const COMPLEX_KEYWORDS = [
 function resolveAutoMode(prompt) {
   const lower = prompt.toLowerCase()
   const isComplex = COMPLEX_KEYWORDS.some((kw) => lower.includes(kw))
-  return isComplex ? 'claude-opus' : 'gemini-flash'
+  const idealModel = isComplex ? 'claude-opus' : 'gemini-flash'
+  
+  // If we have the key for the ideal model, use it
+  if (apiKeyCache[MODEL_CONFIG[idealModel]?.provider]) {
+    return idealModel
+  }
+  
+  // Otherwise, fallback to the first model we have a key for
+  for (const [modelId, config] of Object.entries(MODEL_CONFIG)) {
+    if (apiKeyCache[config.provider]) {
+      return modelId
+    }
+  }
+  
+  // If no keys configured at all, return ideal (will trigger standard no-key error)
+  return idealModel
 }
 
 // ============================================================
@@ -418,6 +434,27 @@ function createWindow() {
     }
   })
 
+  ipcMain.handle('get-project-tree', async (event, dirPath) => {
+    async function walk(dir) {
+      let results = []
+      try {
+        const entries = await fsPromises.readdir(dir, { withFileTypes: true })
+        for (const entry of entries) {
+          if (entry.name === 'node_modules' || entry.name === '.git') continue
+          const fullPath = join(dir, entry.name)
+          if (entry.isDirectory()) {
+            const sub = await walk(fullPath)
+            results = results.concat(sub)
+          } else {
+            results.push(fullPath)
+          }
+        }
+      } catch (err) {}
+      return results
+    }
+    return walk(dirPath)
+  })
+
   ipcMain.handle('create-file', async (event, filePath) => {
     try {
       await fsPromises.writeFile(filePath, '')
@@ -541,213 +578,41 @@ function createWindow() {
   // ============================================================
   // LANGUAGE SERVER PROTOCOL (LSP) — Multi-language
   // ============================================================
-  const { spawn, execSync } = require('child_process')
-  const lspProcesses = new Map() // language → { process, buffer }
 
-  // Detects whether a command exists on the system PATH
-  function commandExists(cmd) {
-    try {
-      execSync(process.platform === 'win32' ? `where ${cmd}` : `which ${cmd}`, { stdio: 'ignore' })
-      return true
-    } catch { return false }
-  }
-
-  // Finds the full path of a binary, checking PATH and common install locations
-  const { existsSync } = require('fs')
-  const homedir = require('os').homedir()
-
-  function findBinary(name) {
-    // 1. Check PATH first
-    if (commandExists(name)) return name
-
-    // 2. Check common Windows install locations
-    if (process.platform === 'win32') {
-      const candidates = [
-        join(homedir, 'AppData', 'Local', 'Microsoft', 'WinGet', 'Links', `${name}.exe`),
-        join(homedir, 'AppData', 'Local', 'Microsoft', 'WinGet', 'Packages', '**', `${name}.exe`),
-        join('C:', 'Program Files', 'LLVM', 'bin', `${name}.exe`),
-        join(homedir, 'AppData', 'Local', 'Programs', 'LLVM', 'bin', `${name}.exe`),
-        join(homedir, 'AppData', 'Local', 'JetBrains', 'Fleet', 'language_server', 'jbclangd', `${name}.exe`),
-        join(homedir, '.cargo', 'bin', `${name}.exe`),
-        join(homedir, 'go', 'bin', `${name}.exe`),
-      ]
-      for (const p of candidates) {
-        if (existsSync(p)) return p
-      }
-    }
-
-    return null
-  }
-
-  // Returns [command, args] for a given language, or null if unavailable
-  function getLspCommand(language) {
-    switch (language) {
-      case 'python': {
-        // Try pyright first (bundled with this IDE)
-        try {
-          const serverPath = join(process.cwd(), 'node_modules', 'pyright', 'langserver.index.js')
-          if (existsSync(serverPath)) {
-            return ['node', [serverPath, '--stdio']]
-          }
-        } catch (e) {}
-
-        // Fallback to pylsp if available
-        if (commandExists('pylsp')) return ['pylsp', []]
-        return null
-      }
-
-      case 'c':
-      case 'cpp': {
-        const clangd = findBinary('clangd')
-        if (clangd) return [clangd, ['--log=error']]
-        return null
-      }
-
-      case 'go': {
-        const gopls = findBinary('gopls')
-        if (gopls) return [gopls, ['serve']]
-        return null
-      }
-
-      case 'rust': {
-        const ra = findBinary('rust-analyzer')
-        if (ra) return [ra, []]
-        return null
-      }
-
-      case 'typescript':
-      case 'javascript': {
-        // Try typescript-language-server (Node.js package)
-        try {
-          const tsLsPath = join(process.cwd(), 'node_modules', 'typescript-language-server', 'lib', 'cli.js')
-          if (existsSync(tsLsPath)) {
-            return ['node', [tsLsPath, '--stdio']]
-          }
-        } catch (e) {}
-
-        // Fallback to vscode-langservers-extracted if available
-        if (commandExists('typescript-language-server')) {
-          return ['typescript-language-server', ['--stdio']]
-        }
-        return null
-      }
-
-      case 'shell':
-      case 'bash': {
-        if (commandExists('bash-language-server')) return ['bash-language-server', ['start']]
-        return null
-      }
-
-      case 'html':
-      case 'css':
-      case 'json': {
-        // These are handled natively by Monaco, no external LSP needed
-        return null
-      }
-
-      case 'java': {
-        // Check for Eclipse JDTLS (Java Debug Language Server)
-        const jdtls = findBinary('jdtls')
-        if (jdtls) return [jdtls, []]
-        return null
-      }
-
-      case 'csharp':
-      case 'cs': {
-        // Check for OmniSharp
-        const omnisharp = findBinary('omnisharp')
-        if (omnisharp) return [omnisharp, ['--loglevel', 'error']]
-        return null
-      }
-
-      default:
-        return null
-    }
-  }
-
-  // Helper: create stdio bridge for an LSP child process
-  function bridgeLspProcess(language, childProcess) {
-    const entry = { process: childProcess, buffer: '' }
-    lspProcesses.set(language, entry)
-
-    childProcess.on('error', (err) => {
-      console.error(`LSP process error [${language}]:`, err)
-    })
-
-    childProcess.stdout.on('data', (data) => {
-      entry.buffer += data.toString()
-
-      while (true) {
-        const match = entry.buffer.match(/Content-Length: (\d+)\r\n\r\n/i)
-        if (!match) break
-
-        const contentLength = parseInt(match[1], 10)
-        const headerLength = match[0].length
-
-        if (entry.buffer.length >= headerLength + contentLength) {
-          const message = entry.buffer.slice(headerLength, headerLength + contentLength)
-          entry.buffer = entry.buffer.slice(headerLength + contentLength)
-
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('lsp-server-message', { language, message })
-          }
-        } else {
-          break
-        }
-      }
-    })
-
-    childProcess.stderr.on('data', (data) => {
-      console.error(`LSP [${language}] stderr: ${data}`)
-    })
-
-    childProcess.on('exit', (code) => {
-      console.log(`LSP [${language}] exited with code ${code}`)
-      lspProcesses.delete(language)
-    })
-  }
 
   ipcMain.handle('start-lsp', async (event, language) => {
-    // If already running for this language, reuse it
-    if (lspProcesses.has(language)) {
-      return { success: true, alreadyRunning: true }
-    }
-
-    const cmdInfo = getLspCommand(language)
-    if (!cmdInfo) {
-      return { success: false, error: `No language server available for "${language}"` }
-    }
-
-    const [cmd, args] = cmdInfo
-    console.log(`Starting LSP for ${language}: ${cmd} ${args.join(' ')}`)
-
-    try {
-      const child = spawn(cmd, args)
-      bridgeLspProcess(language, child)
-      return { success: true }
-    } catch (err) {
-      console.error(`Failed to spawn LSP [${language}]:`, err)
-      return { success: false, error: err.message }
-    }
+    return startLanguageServer(
+      language,
+      // onMessage
+      (lang, message) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('lsp-server-message', { language: lang, message })
+        }
+      },
+      // onError
+      (err) => {
+        console.error(`LSP Manager Error: ${err}`)
+      },
+      // onStatusChange
+      (status) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('lsp-status-change', { language, status })
+        }
+      }
+    )
   })
 
   // List which language servers are available
   ipcMain.handle('list-available-lsp', async () => {
-    const languages = ['python', 'c', 'cpp', 'go', 'rust', 'shell']
     const available = {}
-    for (const lang of languages) {
-      available[lang] = getLspCommand(lang) !== null
+    for (const [lang, meta] of Object.entries(LANGUAGE_METADATA)) {
+      available[lang] = true // Simplified for now since we rely on lsp-manager
     }
     return available
   })
 
   ipcMain.on('lsp-client-message', (event, { language, message }) => {
-    const entry = lspProcesses.get(language)
-    if (entry && entry.process && entry.process.stdin) {
-      const contentLength = Buffer.byteLength(message, 'utf-8')
-      const header = `Content-Length: ${contentLength}\r\n\r\n`
-      entry.process.stdin.write(header + message)
-    }
+    sendToLanguageServer(language, message)
   })
 
   /**
@@ -832,6 +697,25 @@ function createWindow() {
       return { success: true, text: fullResponse }
     } catch (err) {
       console.error('Provider error:', err)
+      return { success: false, error: err.message }
+    }
+  })
+
+  /**
+   * Handler: Stream AI Debugger
+   * Streams responses to the ai-debugger-stream event
+   */
+  ipcMain.handle('stream-ai-debugger', async (event, prompt, config = {}) => {
+    console.log('STREAM AI DEBUGGER TRIGGERED:', prompt.substring(0, 50) + '...')
+    let model = config.model || 'auto'
+    if (model === 'auto') model = resolveAutoMode(prompt)
+    
+    try {
+      await routeToProvider(model, prompt, mainWindow.webContents, { ...config, emitEvent: 'ai-debugger-stream' })
+      return { success: true }
+    } catch (err) {
+      console.error('Provider error:', err)
+      mainWindow.webContents.send('ai-debugger-stream', `\n// ❌ Error: ${err.message}`)
       return { success: false, error: err.message }
     }
   })

@@ -8,9 +8,15 @@ import ReactMarkdown from 'react-markdown'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { applyDiff, unescapeXml } from './diffUtils'
-import { X } from 'lucide-react'
+import { Play, Bug, Maximize2, Minimize2, Trash2, CheckCircle, Circle, RefreshCw, Command, ChevronRight, File, Code, Cpu, Activity, Info, LogOut, ArrowRight, X, Search } from 'lucide-react'
+import { getEnclosingScope } from './utils/astParser'
+import { CodebaseVisualizer } from './components/CodebaseVisualizer'
+import { ActivityBar } from './components/ActivityBar'
+import { ExtensionsPanel } from './components/ExtensionsPanel'
+import { useAppStore } from './store/appStore'
 import './assets/sidebar.css'
 import './assets/editor.css'
+import './assets/themes.css'
 
 const renderMessageParts = (content) => {
   const parts = []
@@ -207,13 +213,14 @@ function App() {
   // ── UI State ──
   const [showExplorer, setShowExplorer] = useState(true)
   const [rightPanel, setRightPanel] = useState(null)
-  
+  const [showVisualizer, setShowVisualizer] = useState(false)
+
   // Custom Provider State
   const [customBaseUrl, setCustomBaseUrl] = useState('https://openrouter.ai/api/v1')
   const [customModelId, setCustomModelId] = useState('qwen/qwen-2.5-coder-32b-instruct')
   const [customName, setCustomName] = useState('')
   const [customConfigLoaded, setCustomConfigLoaded] = useState(false)
-  
+
   useEffect(() => {
     window.api.getCustomConfig().then(config => {
       if (config) {
@@ -224,7 +231,7 @@ function App() {
       setCustomConfigLoaded(true)
     })
   }, [])
-  
+
   useEffect(() => {
     if (customConfigLoaded) {
       window.api.saveCustomConfig({ customBaseUrl, customModelId, customName })
@@ -237,36 +244,46 @@ function App() {
   // ── Editor State ──
   const [openFiles, setOpenFiles] = useState([])
   const [activeFile, setActiveFile] = useState(null)
-  
+
   // ── Terminal State ──
   const [showTerminal, setShowTerminal] = useState(false)
   const [terminalHeight, setTerminalHeight] = useState(250)
 
   // ── Layout State ──
   const terminalPanelRef = useRef(null)
-  const [bottomTab, setBottomTab] = useState('terminal') // 'terminal' | 'ai-debugger'
+  const [bottomTab, setBottomTab] = useState('terminal') // 'terminal' | 'ai-debugger' | 'debugger-history'
   const [aiDebugger, setAiDebugger] = useState({ explanation: '', codeFix: '', loading: false })
+  const [debuggerHistory, setDebuggerHistory] = useState([])
+  const aiDebuggerStreamRef = useRef('')
 
   const [autoCompleteEnabled, setAutoCompleteEnabled] = useState(true)
   const [autoCompleteDelay, setAutoCompleteDelay] = useState(500)
 
-  const handleRunFile = () => {
+  const handleRunFile = async () => {
     if (!activeFile) return
+
+    // Auto-save the file before running so the terminal executes the latest code
+    if (typeof window.getEditorValue === 'function') {
+      const content = window.getEditorValue()
+      await window.api.saveFileContents(activeFile, content)
+      markFileClean(activeFile)
+    }
+
     let cmd = ''
-    
+
     const isWindows = navigator.userAgent.toLowerCase().includes('win')
 
     if (activeFile.endsWith('.js')) cmd = `node "${activeFile}"`
     else if (activeFile.endsWith('.py')) cmd = `python "${activeFile}"`
     else if (activeFile.endsWith('.cpp') || activeFile.endsWith('.c++') || activeFile.endsWith('.c')) {
-      cmd = isWindows 
+      cmd = isWindows
         ? `g++ "${activeFile}" -o out.exe && out.exe`
         : `g++ "${activeFile}" -o out && ./out`
     } else {
       console.log('Unsupported file type for running')
       return
     }
-    
+
     setShowTerminal(true)
     setTimeout(() => {
       if (terminalPanelRef.current) {
@@ -275,45 +292,125 @@ function App() {
     }, 100)
   }
 
-  // Global Keyboard Shortcut: Ctrl+Enter or Cmd+Enter to Run File
+  const runFileRef = useRef(handleRunFile)
+  useEffect(() => {
+    runFileRef.current = handleRunFile
+  })
+
+  // Global Keyboard Shortcut: Ctrl+Alt+N to Run File
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      if ((e.ctrlKey || e.metaKey) && e.altKey && e.key.toLowerCase() === 'n') {
         e.preventDefault()
-        handleRunFile()
+        runFileRef.current()
       }
     }
+    const handleGlobalRun = () => runFileRef.current()
+
     window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [handleRunFile])
+    window.addEventListener('global-run-file', handleGlobalRun)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('global-run-file', handleGlobalRun)
+    }
+  }, [])
 
   const handleFixWithAi = async () => {
     if (!terminalPanelRef.current || !activeFile) return
     const bufferText = terminalPanelRef.current.getBuffer()
-    
+
     // Switch to AI Debugger Tab
     setBottomTab('ai-debugger')
     setAiDebugger({ explanation: '', codeFix: '', loading: true })
-    
+
     let activeFileContent = ''
+    let scopedContext = ''
     try {
-      const fileRes = await window.api.getFileContents(activeFile)
-      activeFileContent = fileRes.content || fileRes || ''
+      if (typeof window.getEditorValue === 'function') {
+        activeFileContent = window.getEditorValue()
+        
+        // AST Optimization
+        if (typeof window.getCursorPosition === 'function') {
+          const pos = window.getCursorPosition()
+          if (pos) {
+            const ext = activeFile.split('.').pop()
+            let lang = 'javascript'
+            if (ext === 'js' || ext === 'jsx') lang = 'javascript'
+            if (ext === 'ts' || ext === 'tsx') lang = 'typescript'
+            if (ext === 'py') lang = 'python'
+            if (ext === 'cpp' || ext === 'hpp') lang = 'cpp'
+            if (ext === 'c' || ext === 'h') lang = 'c'
+            if (ext === 'java') lang = 'java'
+            if (ext === 'go') lang = 'go'
+            if (ext === 'rs') lang = 'rust'
+            
+            const scope = await getEnclosingScope(activeFileContent, pos.lineNumber, lang)
+            if (scope) {
+              scopedContext = `\n\n[AST Optimized] Enclosing Scope (${scope.type} lines ${scope.startLine}-${scope.endLine}):\n${scope.text}`
+              activeFileContent = activeFileContent.substring(0, 500) + '\n... (truncated by AST) ...'
+            }
+          }
+        }
+      } else {
+        const fileRes = await window.api.getFileContents(activeFile)
+        activeFileContent = fileRes.content || fileRes || ''
+      }
     } catch (e) {
       console.error('Could not read active file contents for AI', e)
     }
-    
-const promptText = `The user encountered a terminal error.
+
+    // Load full project tree
+    let allProjectFiles = []
+    let projectTreeText = ''
+    try {
+      if (projectRoot) {
+        allProjectFiles = await window.api.getProjectTree(projectRoot) || []
+        if (allProjectFiles.length > 0) {
+          const relativePaths = allProjectFiles.map(p => p.replace(projectRoot, '').replace(/^[\\/]/, ''))
+          projectTreeText = `\n\nProject Tree:\n${relativePaths.slice(0, 500).join('\n')}`
+        }
+      }
+    } catch (e) { console.error('Failed to get project tree', e) }
+
+    // Scan for multiple files in terminal output
+    const pathRegex = /(?:[a-zA-Z]:\\|\/)[^\s"':<>]+(?:\.[a-zA-Z0-9]+)+/g
+    let matches = [...new Set(bufferText.match(pathRegex) || [])]
+
+    // Resolve relative paths from terminal by matching basenames
+    if (allProjectFiles.length > 0) {
+      const possibleRelFiles = allProjectFiles.filter(p => {
+        const basename = p.split(/[\\/]/).pop()
+        return bufferText.includes(basename)
+      })
+      matches = [...new Set([...matches, ...possibleRelFiles])]
+    }
+
+    const normalizePath = p => (p || '').replace(/\\/g, '/').toLowerCase()
+    const activeNorm = normalizePath(activeFile)
+
+    let multiFileContext = ''
+    for (const match of matches) {
+      if (normalizePath(match) !== activeNorm) {
+        try {
+          const res = await window.api.getFileContents(match)
+          if (res && (res.content || res)) {
+            multiFileContext += `\n\nRelated File in Stack Trace (${match}):\n${(res.content || res).substring(0, 3000)}`
+          }
+        } catch (e) { }
+      }
+    }
+
+    const promptText = `The user encountered a terminal error.
 Terminal Output:
 ${bufferText.substring(Math.max(0, bufferText.length - 2000))}
 
 Active File (${activeFile}):
-${activeFileContent.substring(0, 3000)}
+${activeFileContent.substring(0, 3000)}${scopedContext}${multiFileContext}${projectTreeText}
 
-Analyze the error and provide a fix. Return your response in exactly this format:
+Analyze the error and provide a fix for the file that caused it. Return your response in exactly this format:
 EXPLANATION: <brief explanation of the error in 1-2 short sentences>
 FIX:
-<edit_file path="${activeFile}">
+<edit_file path="FULL_PATH_OF_FILE_TO_FIX">
 <search_replace>
 <search>
 the exact code to be replaced
@@ -323,37 +420,114 @@ the new code
 </replace>
 </search_replace>
 </edit_file>`
-    
+
     try {
-      const res = await window.api.getAiCompletion(promptText, { model: selectedModel, customConfig: { baseURL: customBaseUrl, modelId: customModelId } })
-      if (res && res.success && res.text) {
-        const parts = res.text.split('FIX:')
-        const explanation = parts[0].replace('EXPLANATION:', '').trim()
-        
-        let codeFix = parts[1] ? parts[1].trim() : ''
-        // Strip markdown backticks around XML if the AI included them
-        codeFix = codeFix.replace(/^```[a-zA-Z0-9+#-]*\n/, '').replace(/```$/, '').trim()
-        
-        setAiDebugger({ explanation, codeFix, loading: false })
-      } else {
-        setAiDebugger({ explanation: 'Failed to generate a fix.', codeFix: '', loading: false })
-      }
+      aiDebuggerStreamRef.current = ''
+      await window.api.streamAiDebugger(promptText, { model: selectedModel, customConfig: { baseURL: customBaseUrl, modelId: customModelId } })
+      // Streaming will populate state via useEffect
     } catch (e) {
       setAiDebugger({ explanation: `Error during AI analysis: ${e.message}`, codeFix: '', loading: false })
     }
   }
 
-  const applyAiDebuggerFix = async () => {
+  const handleDebuggerFollowUp = async (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && e.target.value.trim()) {
+      e.preventDefault()
+      const question = e.target.value.trim()
+      e.target.value = ''
+
+      const promptText = `Previous AI Explanation:\n${aiDebugger.explanation}\n\nPrevious AI Code Fix:\n${aiDebugger.codeFix}\n\nUser Follow-up Question:\n${question}\n\nAnalyze the user's follow-up question and provide an updated explanation and fix. Return your response in exactly this format:\nEXPLANATION: <brief explanation of the error in 1-2 short sentences>\nFIX:\n<edit_file path="FULL_PATH_OF_FILE_TO_FIX">\n<search_replace>\n<search>\nthe exact code to be replaced\n</search>\n<replace>\nthe new code\n</replace>\n</search_replace>\n</edit_file>`
+
+      setAiDebugger(prev => ({ ...prev, loading: true }))
+      try {
+        aiDebuggerStreamRef.current = ''
+        await window.api.streamAiDebugger(promptText, { model: selectedModel, customConfig: { baseURL: customBaseUrl, modelId: customModelId } })
+      } catch (err) {
+        setAiDebugger({ explanation: `Error: ${err.message}`, codeFix: '', loading: false })
+      }
+    }
+  }
+
+  const applyAiDebuggerFix = async (forceRun = false) => {
     if (!activeFile || !aiDebugger.codeFix) return
-    window.dispatchEvent(new CustomEvent('auto-apply-diff', {
-      detail: { body: aiDebugger.codeFix, path: activeFile }
-    }))
-    setBottomTab('terminal')
+
+    // Extract target path from the <edit_file> tag if present
+    const regex = /<edit_file\s+path="([^"]+)">([\s\S]*?)<\/edit_file>/i
+    const match = regex.exec(aiDebugger.codeFix)
+    const targetPath = match ? match[1] : activeFile
+    const body = match ? match[2] : aiDebugger.codeFix
+    const normalize = (p) => (p || '').replace(/\\/g, '/').toLowerCase()
+
+    if (forceRun) {
+      // Add to Debugger History
+      const bufferText = terminalPanelRef.current?.getBuffer() || ''
+      setDebuggerHistory(prev => [{
+        timestamp: new Date().toLocaleTimeString(),
+        error: bufferText.substring(Math.max(0, bufferText.length - 800)),
+        explanation: aiDebugger.explanation,
+        codeFix: aiDebugger.codeFix
+      }, ...prev])
+
+      if (normalize(targetPath) === normalize(activeFile)) {
+        window.dispatchEvent(new CustomEvent('force-apply-diff', {
+          detail: { body: aiDebugger.codeFix, path: targetPath, autoRun: true }
+        }))
+      } else {
+        try {
+          let oldContent = ''
+          try {
+            const fileContext = await window.api.getFileContents(targetPath)
+            oldContent = fileContext.content || fileContext || ''
+          } catch (e) { }
+
+          const { newText, hasChanges } = applyDiff(oldContent, body)
+          if (hasChanges) {
+            await window.api.saveFileContents(targetPath, newText)
+            handleOpenFile(targetPath, targetPath.split(/[\\/]/).pop())
+            window.dispatchEvent(new Event('refresh-sidebar'))
+            window.dispatchEvent(new Event('global-run-file'))
+          }
+        } catch (err) {
+          console.error("Failed to apply to background file", err)
+        }
+      }
+      setBottomTab('terminal')
+    } else {
+      if (normalize(targetPath) === normalize(activeFile)) {
+        window.dispatchEvent(new CustomEvent('auto-apply-diff', {
+          detail: { body: aiDebugger.codeFix, path: targetPath }
+        }))
+      } else {
+        try {
+          let oldContent = ''
+          try {
+            const fileContext = await window.api.getFileContents(targetPath)
+            oldContent = fileContext.content || fileContext || ''
+          } catch (e) { }
+
+          const { newText, hasChanges } = applyDiff(oldContent, body)
+          if (hasChanges) {
+            await window.api.saveFileContents(targetPath, newText)
+            handleOpenFile(targetPath, targetPath.split(/[\\/]/).pop())
+            window.dispatchEvent(new Event('refresh-sidebar'))
+          }
+        } catch (err) {
+          console.error("Failed to auto-apply to background file", err)
+        }
+      }
+      setBottomTab('terminal')
+    }
   }
 
   const [sidebarWidth, setSidebarWidth] = useState(260)
+  const { activePanel, activeTheme } = useAppStore()
   const [rightPanelWidth, setRightPanelWidth] = useState(320)
-  
+
+  // ── Apply Theme ──
+  useEffect(() => {
+    document.body.className = `theme-${activeTheme}`
+  }, [activeTheme])
+
   const handleOpenFile = (path, name) => {
     setOpenFiles((prev) => {
       if (!prev.find(f => f.path === path)) {
@@ -399,6 +573,23 @@ the new code
         }
         return updated
       })
+    })
+
+    window.api.onAiDebuggerStream((chunk) => {
+      if (chunk === undefined) return
+      aiDebuggerStreamRef.current += chunk
+
+      const fullText = aiDebuggerStreamRef.current
+      const parts = fullText.split('FIX:')
+      let explanation = parts[0].replace('EXPLANATION:', '').trim()
+
+      // Format <think> tags dynamically so they render in Markdown
+      explanation = explanation.replace(/<think>([\s\S]*?)(?:<\/think>|$)/gi, '> *Thinking...*\n> $1\n\n')
+
+      let codeFix = parts[1] ? parts[1].trim() : ''
+      codeFix = codeFix.replace(/^```[a-zA-Z0-9+#-]*\n/, '').replace(/```$/, '').trim()
+
+      setAiDebugger({ explanation, codeFix, loading: false })
     })
   }, [])
 
@@ -453,12 +644,12 @@ the new code
       { role: 'user', content: trimmed, images: isDirectOverride ? [] : currentAttachments },
       { role: 'assistant', content: '' }
     ])
-    
+
     if (!isDirectOverride) {
       setPrompt('')
       setAttachments([])
     }
-    
+
     setIsStreaming(true)
 
     try {
@@ -486,7 +677,7 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
       if (activeFile) {
         try {
           const fileContent = await window.api.getFileContents(activeFile)
-          
+
           let fileText = fileContent.content || fileContent
           if (typeof window.getEditorValue === 'function') {
             fileText = window.getEditorValue()
@@ -519,7 +710,7 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
           modelId: customModelId.trim()
         } : undefined
       })
-      
+
       // Stream is now fully finished
       setIsStreaming(false)
       const finalMsg = streamRef.current
@@ -528,7 +719,7 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
       while ((match = regex.exec(finalMsg)) !== null) {
         const editPath = match[1]
         const editBody = match[2]
-        
+
         const normalize = (p) => (p || '').replace(/\\/g, '/').toLowerCase()
         if (normalize(activeFile) === normalize(editPath)) {
           window.dispatchEvent(new CustomEvent('auto-apply-diff', {
@@ -543,7 +734,7 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
             } catch (e) {
               // File doesn't exist yet
             }
-            
+
             const { newText, hasChanges } = applyDiff(oldContent, editBody)
             if (hasChanges) {
               await window.api.saveFileContents(editPath, newText)
@@ -596,7 +787,7 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
   const handlePaste = (e) => {
     const items = Array.from(e.clipboardData.items)
     let pastedImage = false
-    
+
     items.forEach(item => {
       if (item.type.indexOf('image/') !== -1) {
         pastedImage = true
@@ -608,7 +799,7 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
         reader.readAsDataURL(file)
       }
     })
-    
+
     // Optional: if we only pasted an image (no text), we can prevent default
     // to avoid weird behaviors, but usually pasting an image into textarea does nothing anyway.
   }
@@ -661,6 +852,12 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
   // ── Get display name for model ──
   const getModelName = (id) => id === 'custom' ? (customName || 'Custom Model') : (MODEL_MAP[id]?.name || id)
 
+  // ── Extension handler ──
+  const handleOpenExtension = (extId) => {
+    // We'll prefix with 'ext:' so CodeEditor knows it's an extension
+    handleOpenFile('ext:' + extId, 'Extension: ' + extId)
+  }
+
   // ── Check if a model's provider has a key ──
   const hasKeyForModel = (modelId) => {
     const model = MODEL_MAP[modelId]
@@ -678,58 +875,63 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
 
   return (
     <div className="ide-layout">
-      {/* ── Activity Bar (left icons) ── */}
-      <aside className="activity-bar">
-        <div className="activity-top">
-          <button
-            className={`activity-btn ${showExplorer ? 'active' : ''}`}
-            onClick={() => setShowExplorer(!showExplorer)}
-            title="File Explorer"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-              <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-            </svg>
-          </button>
-          <button
-            className={`activity-btn ${rightPanel === 'chat' ? 'active' : ''}`}
-            onClick={() => setRightPanel(rightPanel === 'chat' ? null : 'chat')}
-            title="AI Chat"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-              <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
-            </svg>
-          </button>
-          <button
-            className={`activity-btn ${rightPanel === 'settings' ? 'active' : ''}`}
-            onClick={() => setRightPanel(rightPanel === 'settings' ? null : 'settings')}
-            title="API Key Settings"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-              <path d="M12.22 2h-.44a2 2 0 00-2 2v.18a2 2 0 01-1 1.73l-.43.25a2 2 0 01-2 0l-.15-.08a2 2 0 00-2.73.73l-.22.38a2 2 0 00.73 2.73l.15.1a2 2 0 011 1.72v.51a2 2 0 01-1 1.74l-.15.09a2 2 0 00-.73 2.73l.22.38a2 2 0 002.73.73l.15-.08a2 2 0 012 0l.43.25a2 2 0 011 1.73V20a2 2 0 002 2h.44a2 2 0 002-2v-.18a2 2 0 011-1.73l.43-.25a2 2 0 012 0l.15.08a2 2 0 002.73-.73l.22-.39a2 2 0 00-.73-2.73l-.15-.08a2 2 0 01-1-1.74v-.5a2 2 0 011-1.74l.15-.09a2 2 0 00.73-2.73l-.22-.38a2 2 0 00-2.73-.73l-.15.08a2 2 0 01-2 0l-.43-.25a2 2 0 01-1-1.73V4a2 2 0 00-2-2z" />
-              <circle cx="12" cy="12" r="3" />
-            </svg>
-          </button>
-        </div>
-        <div className="activity-bottom">
-          <div className="activity-logo" title="comπle">π</div>
-        </div>
-      </aside>
 
-      {/* ── Sidebar (File Explorer) ── */}
-      {showExplorer && (
-        <>
-          <Sidebar 
-            projectRoot={projectRoot} 
+
+      {/* ── Activity Bar (VS Code style) ── */}
+      <ActivityBar />
+
+      {/* ── Sidebar (File Explorer / Extensions / Search / Source Control) ── */}
+      <div style={{ display: 'flex', height: '100%', borderRight: '1px solid var(--border-base)' }}>
+        {activePanel === 'explorer' && (
+          <Sidebar
+            projectRoot={projectRoot}
             setProjectRoot={setProjectRoot}
             onOpenFile={handleOpenFile}
             width={sidebarWidth}
           />
-          <Resizer 
-            orientation="vertical" 
-            onResize={(x) => setSidebarWidth(Math.max(150, Math.min(x - 48, 600)))} 
+        )}
+        
+        {activePanel === 'extensions' && (
+          <ExtensionsPanel 
+            width={sidebarWidth} 
+            onOpenExtension={handleOpenExtension}
           />
-        </>
-      )}
+        )}
+
+        {activePanel === 'search' && (
+          <aside className="sidebar search-panel" style={{ width: sidebarWidth }}>
+            <div className="sidebar-header">
+              <h2>SEARCH</h2>
+            </div>
+            <div className="extensions-search">
+              <div className="search-input-wrapper">
+                <Search size={14} className="search-icon" />
+                <input 
+                  type="text" 
+                  placeholder="Search..." 
+                />
+              </div>
+            </div>
+            <div className="sidebar-content" style={{ padding: '16px' }}>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Search functionality coming soon...</p>
+            </div>
+          </aside>
+        )}
+
+        {activePanel === 'git' && (
+          <div className="sidebar-panel" style={{ width: sidebarWidth, padding: '16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <h2 className="sidebar-header" style={{ marginBottom: '8px' }}>SOURCE CONTROL</h2>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Git support coming soon...</p>
+          </div>
+        )}
+        
+        {activePanel && (
+          <Resizer
+            orientation="vertical"
+            onResize={(x) => setSidebarWidth(Math.max(150, Math.min(x - 48, 600)))}
+          />
+        )}
+      </div>
 
       {/* ── Main Area ── */}
       <div className="main-area">
@@ -752,11 +954,15 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
                 {MODEL_GROUPS.map((group) => (
                   <optgroup key={group.label} label={group.label}>
                     {group.models.map((m) => (
-                      <option key={m.id} value={m.id}>
+                      <option
+                        key={m.id}
+                        value={m.id}
+                        disabled={m.provider && !providerKeys[m.provider]?.exists}
+                      >
                         {m.id === 'custom' ? (customName || 'Custom Model') : m.name}
                         {m.badge ? ` (${m.badge})` : ''}
                         {m.provider && providerKeys[m.provider]?.exists ? ' ✓' : ''}
-                        {m.provider && !providerKeys[m.provider]?.exists ? ' ⚠' : ''}
+                        {m.provider && !providerKeys[m.provider]?.exists ? ' (Key Required)' : ''}
                       </option>
                     ))}
                   </optgroup>
@@ -766,6 +972,13 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
             </div>
           </div>
           <div className="title-right">
+            <div
+              className={`key-indicator ${rightPanel === 'chat' ? 'key-loaded' : 'key-missing'}`}
+              onClick={() => setRightPanel(rightPanel === 'chat' ? null : 'chat')}
+              title="Toggle AI Chat"
+            >
+              <span className="key-label">AI Chat</span>
+            </div>
             <div
               className={`key-indicator ${keyCount > 0 ? 'key-loaded' : 'key-missing'}`}
               onClick={() => setRightPanel('settings')}
@@ -785,7 +998,7 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
         <div className="content-split">
           <div className="editor-pane" style={{ display: 'flex', flexDirection: 'column' }}>
             <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-              <CodeEditor 
+              <CodeEditor
                 openFiles={openFiles}
                 setOpenFiles={setOpenFiles}
                 activeFile={activeFile}
@@ -794,8 +1007,8 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
                 markFileDirty={markFileDirty}
                 markFileClean={markFileClean}
                 projectRoot={projectRoot}
-                aiConfig={{ 
-                  model: selectedModel, 
+                aiConfig={{
+                  model: selectedModel,
                   customConfig: { baseURL: customBaseUrl, modelId: customModelId },
                   autoCompleteEnabled,
                   autoCompleteDelay
@@ -804,30 +1017,41 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
               />
             </div>
             {showTerminal && (
-              <div className="bottom-panel" style={{ height: terminalHeight, display: 'flex', flexDirection: 'column', background: 'var(--bg-main)', borderTop: '1px solid rgba(255,255,255,0.15)', position: 'relative', boxShadow: '0 -4px 15px rgba(0,0,0,0.3)' }}>
+              <div className="bottom-panel" style={{ height: terminalHeight, display: 'flex', flexDirection: 'column', background: 'var(--bg-deep)', borderTop: '1px solid var(--border-base)', position: 'relative', boxShadow: '0 -4px 15px rgba(0,0,0,0.1)' }}>
                 <div style={{ position: 'absolute', top: -3, left: 0, right: 0, zIndex: 10, display: 'flex', justifyContent: 'center' }}>
                   <div style={{ position: 'absolute', width: '100%', height: '100%' }}>
-                    <Resizer 
-                      orientation="horizontal" 
-                      onResize={(_, y) => setTerminalHeight(Math.max(100, Math.min(window.innerHeight - y - 24, window.innerHeight - 150)))} 
+                    <Resizer
+                      orientation="horizontal"
+                      onResize={(_, y) => setTerminalHeight(Math.max(100, Math.min(window.innerHeight - y - 24, window.innerHeight - 150)))}
                     />
                   </div>
                   <div style={{ width: '40px', height: '4px', background: 'rgba(255,255,255,0.2)', borderRadius: '2px', marginTop: '-2px', pointerEvents: 'none', zIndex: 11 }} />
                 </div>
-                
-                <div className="bottom-tabs" style={{ display: 'flex', padding: '0 16px', background: 'var(--bg-dark)', borderBottom: '1px solid var(--border-light)', alignItems: 'center', height: '35px', gap: '20px' }}>
-                  <button 
+
+                <div className="bottom-tabs" style={{ display: 'flex', padding: '0 16px', background: 'var(--bg-activity)', borderBottom: '1px solid var(--border-base)', alignItems: 'center', height: '35px', gap: '20px' }}>
+                  <button
                     onClick={() => setBottomTab('terminal')}
-                    style={{ background: 'transparent', border: 'none', color: bottomTab === 'terminal' ? 'var(--text-main)' : 'var(--text-muted)', cursor: 'pointer', fontSize: '11px', textTransform: 'uppercase', padding: '0', borderBottom: bottomTab === 'terminal' ? '1px solid var(--accent-color)' : '1px solid transparent', height: '100%', fontWeight: bottomTab === 'terminal' ? 'bold' : 'normal' }}
-                  >Terminal</button>
-                  <button 
+                    style={{ background: bottomTab === 'terminal' ? 'var(--bg-surface)' : 'transparent', color: bottomTab === 'terminal' ? 'var(--text-primary)' : 'var(--text-muted)', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}
+                  >
+                    Terminal
+                  </button>
+                  <button
                     onClick={() => setBottomTab('ai-debugger')}
-                    style={{ background: 'transparent', border: 'none', color: bottomTab === 'ai-debugger' ? 'var(--accent-color)' : 'var(--text-muted)', cursor: 'pointer', fontSize: '11px', textTransform: 'uppercase', padding: '0', borderBottom: bottomTab === 'ai-debugger' ? '1px solid var(--accent-color)' : '1px solid transparent', height: '100%', fontWeight: bottomTab === 'ai-debugger' ? 'bold' : 'normal', display: 'flex', alignItems: 'center', gap: '6px' }}
-                  >✨ AI Debugger</button>
-                  <div style={{ flex: 1 }} />
-                  <button 
-                    onClick={handleFixWithAi} 
-                    style={{ background: 'var(--accent-color)', color: 'var(--bg-main)', border: 'none', padding: '2px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}
+                    style={{ background: bottomTab === 'ai-debugger' ? 'var(--bg-surface)' : 'transparent', color: bottomTab === 'ai-debugger' ? 'var(--text-primary)' : 'var(--text-muted)', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}
+                  >
+                    AI Debugger
+                  </button>
+                  <button
+                    onClick={() => setBottomTab('debugger-history')}
+                    style={{ background: bottomTab === 'debugger-history' ? 'var(--bg-surface)' : 'transparent', color: bottomTab === 'debugger-history' ? 'var(--text-primary)' : 'var(--text-muted)', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}
+                  >
+                    Debugger History
+                  </button>
+                  <div style={{ flex: 1 }}></div>
+                  <button
+                    onClick={handleFixWithAi}
+                    disabled={aiDebugger.loading || isStreaming}
+                    style={{ background: 'var(--accent-purple)', color: '#ffffff', border: 'none', padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}
                   >
                     ✨ Fix with AI
                   </button>
@@ -837,41 +1061,102 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
                   <div style={{ position: 'absolute', inset: 0, opacity: bottomTab === 'terminal' ? 1 : 0, pointerEvents: bottomTab === 'terminal' ? 'auto' : 'none', zIndex: bottomTab === 'terminal' ? 1 : 0 }}>
                     <TerminalPanel ref={terminalPanelRef} key={projectRoot || 'default'} height={terminalHeight - 36} cwd={projectRoot} hideHeader={true} />
                   </div>
-                  
+
                   {bottomTab === 'ai-debugger' && (
-                     <div className="ai-debugger-panel" style={{ position: 'absolute', inset: 0, zIndex: 2, padding: '16px', background: '#0c0c14', display: 'flex', flexDirection: 'column' }}>
-                       {aiDebugger.loading ? (
-                         <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                           <div className="loading-spinner" style={{ marginBottom: '16px', fontSize: '24px' }}>⚙️</div>
-                           Analyzing terminal error...
-                         </div>
-                       ) : (
-                         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', flex: 1, minHeight: 0 }}>
-                           {aiDebugger.explanation && (
-                             <div style={{ background: 'rgba(255,255,255,0.05)', padding: '16px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)' }}>
-                               <strong style={{ display: 'block', marginBottom: '8px', color: '#10a37f' }}>Explanation:</strong>
-                               <p style={{ margin: 0, whiteSpace: 'pre-wrap', color: '#e2e2e2', fontSize: '13px', lineHeight: '1.5' }}>{aiDebugger.explanation}</p>
-                             </div>
-                           )}
-                           {aiDebugger.codeFix && (
-                             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-                               <strong style={{ display: 'block', marginBottom: '8px', color: '#e2e2e2' }}>Proposed Fix:</strong>
-                               <div style={{ flex: 1, overflow: 'auto', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', background: '#1e1e1e' }}>
-                                 <SyntaxHighlighter language="javascript" style={vscDarkPlus} customStyle={{ margin: 0, fontSize: '13px', background: 'transparent' }}>
-                                   {(() => {
-                                      const matches = [...aiDebugger.codeFix.matchAll(/<replace>([\s\S]*?)<\/replace>/g)]
-                                      return matches.length > 0 ? matches.map(m => m[1].trim()).join('\n// ...\n') : aiDebugger.codeFix
-                                   })()}
-                                 </SyntaxHighlighter>
-                               </div>
-                               <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'flex-end' }}>
-                                 <button onClick={applyAiDebuggerFix} style={{ background: 'var(--accent-color)', color: 'var(--bg-main)', border: 'none', padding: '8px 20px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: 'bold' }}>Review in Editor</button>
-                               </div>
-                             </div>
-                           )}
-                         </div>
-                       )}
-                     </div>
+                    <div className="ai-debugger-panel" style={{ position: 'absolute', inset: 0, zIndex: 2, padding: '16px', background: 'var(--bg-deep)', display: 'flex', flexDirection: 'column' }}>
+                      {aiDebugger.loading ? (
+                        <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                          <div className="loading-spinner" style={{ marginBottom: '16px', fontSize: '24px' }}>⚙️</div>
+                          Analyzing terminal error...
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', flex: 1, minHeight: 0 }}>
+                          {aiDebugger.explanation && (
+                            <div style={{ background: 'rgba(255,255,255,0.05)', padding: '16px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', overflowY: 'auto', maxHeight: '200px' }}>
+                              <strong style={{ display: 'block', marginBottom: '8px', color: '#10a37f' }}>Explanation:</strong>
+                              <ReactMarkdown
+                                components={{
+                                  p: ({ node, ...props }) => <p style={{ margin: '0 0 8px 0', color: '#e2e2e2', fontSize: '13px', lineHeight: '1.5' }} {...props} />,
+                                  blockquote: ({ node, ...props }) => <blockquote style={{ margin: '0 0 8px 0', padding: '4px 12px', borderLeft: '4px solid #10a37f', color: '#a0a0a0', fontStyle: 'italic', background: 'rgba(16, 163, 127, 0.1)' }} {...props} />
+                                }}
+                              >
+                                {aiDebugger.explanation}
+                              </ReactMarkdown>
+                            </div>
+                          )}
+                          {aiDebugger.codeFix && (
+                            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+                              <strong style={{ display: 'block', marginBottom: '8px', color: '#e2e2e2' }}>Proposed Fix:</strong>
+                              <div style={{ flex: 1, overflow: 'auto', border: '1px solid var(--border-base)', borderRadius: '8px', background: 'var(--bg-elevated)', marginBottom: '12px' }}>
+                                <SyntaxHighlighter language="javascript" style={vscDarkPlus} customStyle={{ margin: 0, fontSize: '13px', background: 'transparent' }}>
+                                  {(() => {
+                                    const matches = [...aiDebugger.codeFix.matchAll(/<replace>([\s\S]*?)<\/replace>/g)]
+                                    return matches.length > 0 ? matches.map(m => m[1].trim()).join('\n// ...\n') : aiDebugger.codeFix
+                                  })()}
+                                </SyntaxHighlighter>
+                              </div>
+
+                              <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                                <textarea
+                                  placeholder="Ask a follow up question (Shift+Enter for new line)..."
+                                  onKeyDown={handleDebuggerFollowUp}
+                                  disabled={aiDebugger.loading}
+                                  rows={1}
+                                  style={{
+                                    flex: 1,
+                                    background: 'rgba(255,255,255,0.05)',
+                                    color: 'white',
+                                    border: '1px solid rgba(255,255,255,0.1)',
+                                    padding: '8px 12px',
+                                    borderRadius: '6px',
+                                    fontSize: '13px',
+                                    outline: 'none',
+                                    resize: 'none',
+                                    minHeight: '36px',
+                                    fontFamily: 'inherit'
+                                  }}
+                                />
+                              </div>
+
+                              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+                                <button onClick={() => applyAiDebuggerFix(false)} style={{ background: 'var(--bg-light)', color: 'var(--text-main)', border: '1px solid rgba(255,255,255,0.1)', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}>Review in Editor</button>
+                                <button onClick={() => applyAiDebuggerFix(true)} style={{ background: 'var(--accent-color)', color: 'var(--bg-main)', border: 'none', padding: '8px 20px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: 'bold' }}>Apply & Re-run</button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {bottomTab === 'debugger-history' && (
+                    <div className="debugger-history-panel" style={{ position: 'absolute', inset: 0, zIndex: 2, padding: '16px', background: 'var(--bg-deep)', overflowY: 'auto' }}>
+                      {debuggerHistory.length === 0 ? (
+                        <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                          <p>No automated fixes applied yet.</p>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                          {debuggerHistory.map((item, idx) => (
+                            <div key={idx} style={{ background: 'rgba(255,255,255,0.05)', padding: '16px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                                <strong style={{ color: '#10a37f' }}>Fix Applied</strong>
+                                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{item.timestamp}</span>
+                              </div>
+                              <p style={{ margin: '0 0 12px 0', whiteSpace: 'pre-wrap', color: '#e2e2e2', fontSize: '13px' }}>{item.explanation}</p>
+                              <details>
+                                <summary style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: '12px', marginBottom: '8px' }}>Show Details (Terminal Error & Code Diff)</summary>
+                                <div style={{ marginTop: '8px', padding: '12px', background: 'var(--bg-elevated)', borderRadius: '6px', border: '1px solid var(--border-base)', fontSize: '12px', color: 'var(--text-secondary)', overflowX: 'auto', whiteSpace: 'pre' }}>
+                                  <strong>Error:</strong><br />{item.error}
+                                  <hr style={{ borderColor: 'var(--border-subtle)', margin: '12px 0' }} />
+                                  <strong>Fix:</strong><br />{item.codeFix}
+                                </div>
+                              </details>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>
@@ -880,499 +1165,499 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
 
           {rightPanel && (
             <>
-              <Resizer 
-                orientation="vertical" 
-                onResize={(x) => setRightPanelWidth(Math.max(200, Math.min(window.innerWidth - x, 800)))} 
+              <Resizer
+                orientation="vertical"
+                onResize={(x) => setRightPanelWidth(Math.max(200, Math.min(window.innerWidth - x, 800)))}
               />
               <div className="right-pane" style={{ width: `${rightPanelWidth}px` }}>
                 {/* ── Chat Panel ── */}
-              {rightPanel === 'chat' && (
-                <div className="chat-panel">
-            {/* ── Message List ── */}
-            <div className="message-list">
-              {messages.length === 0 && (
-                <div className="empty-state">
-                  <div className="empty-icon">π</div>
-                  <h2>comπle AI</h2>
-                  <p>Send a prompt to start a conversation.</p>
-                  <p className="empty-hint">
-                    Try: &quot;Write a function to sort an array&quot; or &quot;Fix this bug in my auth logic&quot;
-                  </p>
-                </div>
-              )}
-              {messages.map((msg, i) => (
-                <div key={i} className={`message message-${msg.role}`}>
-                  <div className="message-avatar">
-                    {msg.role === 'user' ? (
-                      <span className="avatar-user">U</span>
-                    ) : (
-                      <span className="avatar-ai">π</span>
-                    )}
-                  </div>
-                  <div className="message-body">
-                    <div className="message-header">
-                      <span className="message-sender">
-                        {msg.role === 'user' ? 'You' : getModelName(resolvedModel || selectedModel)}
-                      </span>
-                      {msg.role === 'assistant' && resolvedModel && selectedModel === 'auto' && (
-                        <span className="auto-badge">Auto → {getModelName(resolvedModel)}</span>
+                {rightPanel === 'chat' && (
+                  <div className="chat-panel">
+                    {/* ── Message List ── */}
+                    <div className="message-list">
+                      {messages.length === 0 && (
+                        <div className="empty-state">
+                          <div className="empty-icon">π</div>
+                          <h2>comπle AI</h2>
+                          <p>Send a prompt to start a conversation.</p>
+                          <p className="empty-hint">
+                            Try: &quot;Write a function to sort an array&quot; or &quot;Fix this bug in my auth logic&quot;
+                          </p>
+                        </div>
                       )}
-                    </div>
-                    <div className="message-content" style={{ overflowX: 'auto' }}>
-                      {msg.role === 'assistant' ? (
-                        renderMessageParts(msg.content + (isStreaming && i === messages.length - 1 ? ' ▌' : '')).map((part, idx) => (
-                          part.type === 'text' ? (
-                            <ReactMarkdown
-                              key={idx}
-                              components={{
-                                code({ node, inline, className, children, ...props }) {
-                                  const match = /language-(\w+)/.exec(className || '')
-                                  return !inline && match ? (
-                                    <div className="code-block-wrapper" style={{ position: 'relative', marginTop: '10px', marginBottom: '10px' }}>
-                                      <button
-                                        className="apply-code-btn"
-                                        title="Apply to Editor"
-                                        onClick={() => {
-                                          if (activeFile) {
-                                            window.dispatchEvent(new CustomEvent('apply-code', {
-                                              detail: {
-                                                code: String(children).replace(/\n$/, ''),
-                                                path: activeFile
-                                              }
-                                            }))
-                                          }
-                                        }}
-                                        style={{
-                                          position: 'absolute',
-                                          top: '8px',
-                                          right: '8px',
-                                          background: 'var(--bg-accent)',
-                                          color: 'var(--text-main)',
-                                          border: '1px solid var(--border-light)',
-                                          borderRadius: '4px',
-                                          padding: '4px 8px',
-                                          fontSize: '12px',
-                                          cursor: 'pointer',
-                                          zIndex: 10
-                                        }}
-                                      >
-                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14" style={{ verticalAlign: 'middle', marginRight: '4px' }}>
-                                          <path d="M5 13l4 4L19 7" />
-                                        </svg>
-                                        Apply
-                                      </button>
-                                      <SyntaxHighlighter
-                                        {...props}
-                                        children={String(children).replace(/\n$/, '')}
-                                        style={vscDarkPlus}
-                                        language={match[1]}
-                                        PreTag="div"
-                                        customStyle={{ margin: 0, borderRadius: '6px' }}
-                                      />
-                                    </div>
+                      {messages.map((msg, i) => (
+                        <div key={i} className={`message message-${msg.role}`}>
+                          <div className="message-avatar">
+                            {msg.role === 'user' ? (
+                              <span className="avatar-user">U</span>
+                            ) : (
+                              <span className="avatar-ai">π</span>
+                            )}
+                          </div>
+                          <div className="message-body">
+                            <div className="message-header">
+                              <span className="message-sender">
+                                {msg.role === 'user' ? 'You' : getModelName(resolvedModel || selectedModel)}
+                              </span>
+                              {msg.role === 'assistant' && resolvedModel && selectedModel === 'auto' && (
+                                <span className="auto-badge">Auto → {getModelName(resolvedModel)}</span>
+                              )}
+                            </div>
+                            <div className="message-content" style={{ overflowX: 'auto' }}>
+                              {msg.role === 'assistant' ? (
+                                renderMessageParts(msg.content + (isStreaming && i === messages.length - 1 ? ' ▌' : '')).map((part, idx) => (
+                                  part.type === 'text' ? (
+                                    <ReactMarkdown
+                                      key={idx}
+                                      components={{
+                                        code({ node, inline, className, children, ...props }) {
+                                          const match = /language-(\w+)/.exec(className || '')
+                                          return !inline && match ? (
+                                            <div className="code-block-wrapper" style={{ position: 'relative', marginTop: '10px', marginBottom: '10px' }}>
+                                              <button
+                                                className="apply-code-btn"
+                                                title="Apply to Editor"
+                                                onClick={() => {
+                                                  if (activeFile) {
+                                                    window.dispatchEvent(new CustomEvent('apply-code', {
+                                                      detail: {
+                                                        code: String(children).replace(/\n$/, ''),
+                                                        path: activeFile
+                                                      }
+                                                    }))
+                                                  }
+                                                }}
+                                                style={{
+                                                  position: 'absolute',
+                                                  top: '8px',
+                                                  right: '8px',
+                                                  background: 'var(--bg-accent)',
+                                                  color: 'var(--text-main)',
+                                                  border: '1px solid var(--border-light)',
+                                                  borderRadius: '4px',
+                                                  padding: '4px 8px',
+                                                  fontSize: '12px',
+                                                  cursor: 'pointer',
+                                                  zIndex: 10
+                                                }}
+                                              >
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14" style={{ verticalAlign: 'middle', marginRight: '4px' }}>
+                                                  <path d="M5 13l4 4L19 7" />
+                                                </svg>
+                                                Apply
+                                              </button>
+                                              <SyntaxHighlighter
+                                                {...props}
+                                                children={String(children).replace(/\n$/, '')}
+                                                style={vscDarkPlus}
+                                                language={match[1]}
+                                                PreTag="div"
+                                                customStyle={{ margin: 0, borderRadius: '6px' }}
+                                              />
+                                            </div>
+                                          ) : (
+                                            <code {...props} className={className} style={{ background: 'var(--bg-light)', padding: '2px 4px', borderRadius: '4px', fontFamily: 'monospace' }}>
+                                              {children}
+                                            </code>
+                                          )
+                                        }
+                                      }}
+                                    >
+                                      {part.content}
+                                    </ReactMarkdown>
                                   ) : (
-                                    <code {...props} className={className} style={{ background: 'var(--bg-light)', padding: '2px 4px', borderRadius: '4px', fontFamily: 'monospace' }}>
-                                      {children}
-                                    </code>
+                                    <div key={idx} className="edit-block-ui" style={{ margin: '10px 0', padding: '10px', background: 'var(--bg-light)', borderRadius: '6px', border: '1px solid var(--border-light)' }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-main)', fontSize: '13px', marginBottom: '8px', flexWrap: 'wrap' }}>
+                                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none" style={{ flexShrink: 0 }}><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+                                        <strong style={{ flexShrink: 0 }}>Agent Edit:</strong> <span style={{ wordBreak: 'break-all', flex: '1 1 auto' }}>{part.path}</span>
+                                        <span style={{ marginLeft: 'auto', fontSize: '12px', color: 'var(--text-muted)', flexShrink: 0 }}>Auto-applied ✨</span>
+                                      </div>
+                                      <details>
+                                        <summary style={{ cursor: 'pointer', outline: 'none', padding: '4px', background: 'var(--bg-dark)', borderRadius: '4px', border: '1px solid var(--border-light)' }}>
+                                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>View Changes (if auto-apply failed)</span>
+                                        </summary>
+                                        <pre style={{ marginTop: '8px', padding: '10px', background: 'var(--bg-dark)', borderRadius: '4px', overflowX: 'auto', fontSize: '13px' }}>
+                                          {unescapeXml(part.body)}
+                                        </pre>
+                                      </details>
+                                    </div>
                                   )
-                                }
-                              }}
-                            >
-                              {part.content}
-                            </ReactMarkdown>
-                          ) : (
-                            <div key={idx} className="edit-block-ui" style={{ margin: '10px 0', padding: '10px', background: 'var(--bg-light)', borderRadius: '6px', border: '1px solid var(--border-light)' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-main)', fontSize: '13px', marginBottom: '8px', flexWrap: 'wrap' }}>
-                                <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none" style={{ flexShrink: 0 }}><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
-                                <strong style={{ flexShrink: 0 }}>Agent Edit:</strong> <span style={{ wordBreak: 'break-all', flex: '1 1 auto' }}>{part.path}</span>
-                                <span style={{ marginLeft: 'auto', fontSize: '12px', color: 'var(--text-muted)', flexShrink: 0 }}>Auto-applied ✨</span>
-                              </div>
-                              <details>
-                                <summary style={{ cursor: 'pointer', outline: 'none', padding: '4px', background: 'var(--bg-dark)', borderRadius: '4px', border: '1px solid var(--border-light)' }}>
-                                  <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>View Changes (if auto-apply failed)</span>
-                                </summary>
-                                <pre style={{ marginTop: '8px', padding: '10px', background: 'var(--bg-dark)', borderRadius: '4px', overflowX: 'auto', fontSize: '13px' }}>
-                                  {unescapeXml(part.body)}
-                                </pre>
-                              </details>
-                            </div>
-                          )
-                        ))
-                      ) : (
-                        <>
-                          {msg.images && msg.images.length > 0 && (
-                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
-                              {msg.images.map((img, i) => (
-                                <img key={i} src={img} alt="attachment" style={{ maxWidth: '200px', maxHeight: '200px', borderRadius: '4px', objectFit: 'contain' }} />
-                              ))}
-                            </div>
-                          )}
-                          <p>{msg.content}</p>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
-              <div ref={chatEndRef} />
-            </div>
-
-            {/* ── Input Bar ── */}
-            <div className="input-bar">
-              {attachments.length > 0 && (
-                <div style={{ display: 'flex', gap: '8px', padding: '8px', background: 'var(--bg-dark)', borderBottom: '1px solid var(--border-color)', flexWrap: 'wrap' }}>
-                  {attachments.map((src, idx) => (
-                    <div key={idx} style={{ position: 'relative' }}>
-                      <img src={src} alt="preview" style={{ width: '60px', height: '60px', objectFit: 'cover', borderRadius: '4px', border: '1px solid var(--border-light)' }} />
-                      <button 
-                        onClick={() => removeAttachment(idx)}
-                        style={{ position: 'absolute', top: '-6px', right: '-6px', background: 'var(--bg-light)', color: 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '50%', width: '20px', height: '20px', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <div className="input-wrapper">
-                <input 
-                  type="file" 
-                  accept="image/*" 
-                  multiple 
-                  ref={fileInputRef} 
-                  onChange={handleFileChange} 
-                  style={{ display: 'none' }} 
-                />
-                <button 
-                  className="attachment-btn"
-                  onClick={() => fileInputRef.current?.click()}
-                  title="Attach Image"
-                  disabled={isStreaming}
-                  style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '0 8px' }}
-                >
-                  <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" strokeWidth="2" fill="none"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
-                </button>
-                <textarea
-                  id="prompt-input"
-                  className="prompt-input"
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  onPaste={handlePaste}
-                  placeholder="Send a message... (Paste images here)"
-                  rows={1}
-                  disabled={isStreaming}
-                />
-                <button
-                  id="send-btn"
-                  className={`send-btn ${isStreaming ? 'streaming' : ''}`}
-                  onClick={handleSend}
-                  disabled={isStreaming || !prompt.trim()}
-                  title="Send (Enter)"
-                >
-                  {isStreaming ? (
-                    <span className="send-loader"></span>
-                  ) : (
-                    <svg viewBox="0 0 24 24" fill="currentColor">
-                      <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
-                    </svg>
-                  )}
-                </button>
-              </div>
-              <div className="input-meta">
-                <span className="meta-model">
-                  {getModelName(selectedModel)}
-                  {selectedModel === 'auto' && resolvedModel && ` → ${getModelName(resolvedModel)}`}
-                  {selectedModel !== 'auto' && (
-                    <span className={`meta-key-status ${hasKeyForModel(selectedModel) ? 'has-key' : 'no-key'}`}>
-                      {hasKeyForModel(selectedModel) ? ' ✓' : ' ⚠ no key'}
-                    </span>
-                  )}
-                </span>
-                <span className="meta-hint">Enter to send · Shift+Enter for new line</span>
-              </div>
-            </div>
-              </div>
-            )}
-
-            {/* ── Settings Panel ── */}
-            {rightPanel === 'settings' && (
-              <div className="settings-panel">
-            <div className="settings-content">
-              <h2 className="settings-title">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="settings-icon">
-                  <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 11-7.778 7.778 5.5 5.5 0 017.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
-                </svg>
-                API Key Management
-              </h2>
-              <p className="settings-description">
-                Add API keys for each provider you use. Keys are encrypted using your operating system&apos;s
-                credential manager (Windows DPAPI / macOS Keychain / Linux Secret Service) and stored
-                securely on disk. The raw key never leaves the Node.js process.
-              </p>
-
-              {/* ── Configured Keys Overview ── */}
-              <div className="keys-overview-section">
-                <h3 className="section-label">
-                  Configured Keys
-                  <span className="key-count-badge">{keyCount}</span>
-                </h3>
-
-                {configuredProviders.length === 0 ? (
-                  <div className="no-keys-message">
-                    <span className="no-keys-icon">🔑</span>
-                    <p>No API keys configured yet. Add one below to get started.</p>
-                  </div>
-                ) : (
-                  <div className="provider-keys-grid">
-                    {configuredProviders.map((p) => (
-                      <div
-                        key={p.id}
-                        className={`provider-key-card ${deletingProvider === p.id ? 'deleting' : ''}`}
-                        style={{ '--provider-color': PROVIDERS[p.id]?.color || '#888' }}
-                      >
-                        <div className="provider-key-main">
-                          <div className="provider-key-info">
-                            <span className="provider-key-emoji">{PROVIDERS[p.id]?.emoji || '🔑'}</span>
-                            <div>
-                              <span className="provider-key-name">{PROVIDERS[p.id]?.name || p.id}</span>
-                              <span className="provider-key-hint">{p.hint}</span>
+                                ))
+                              ) : (
+                                <>
+                                  {msg.images && msg.images.length > 0 && (
+                                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                                      {msg.images.map((img, i) => (
+                                        <img key={i} src={img} alt="attachment" style={{ maxWidth: '200px', maxHeight: '200px', borderRadius: '4px', objectFit: 'contain' }} />
+                                      ))}
+                                    </div>
+                                  )}
+                                  <p>{msg.content}</p>
+                                </>
+                              )}
                             </div>
                           </div>
-                          <button
-                            className="provider-delete-btn"
-                            onClick={() => setDeletingProvider(p.id)}
-                            title={`Delete ${PROVIDERS[p.id]?.name || p.id} key`}
-                          >
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <polyline points="3 6 5 6 21 6" />
-                              <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
-                              <line x1="10" y1="11" x2="10" y2="17" />
-                              <line x1="14" y1="11" x2="14" y2="17" />
-                            </svg>
-                          </button>
                         </div>
+                      ))}
+                      <div ref={chatEndRef} />
+                    </div>
 
-                        {/* ── Delete Confirmation ── */}
-                        {deletingProvider === p.id && (
-                          <div className="confirm-delete-row">
-                            <span className="confirm-delete-text">Delete this key?</span>
-                            <div className="confirm-delete-actions">
+                    {/* ── Input Bar ── */}
+                    <div className="input-bar">
+                      {attachments.length > 0 && (
+                        <div style={{ display: 'flex', gap: '8px', padding: '8px', background: 'var(--bg-dark)', borderBottom: '1px solid var(--border-color)', flexWrap: 'wrap' }}>
+                          {attachments.map((src, idx) => (
+                            <div key={idx} style={{ position: 'relative' }}>
+                              <img src={src} alt="preview" style={{ width: '60px', height: '60px', objectFit: 'cover', borderRadius: '4px', border: '1px solid var(--border-light)' }} />
                               <button
-                                className="confirm-delete-yes"
-                                onClick={() => handleDeleteKey(p.id)}
+                                onClick={() => removeAttachment(idx)}
+                                style={{ position: 'absolute', top: '-6px', right: '-6px', background: 'var(--bg-light)', color: 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '50%', width: '20px', height: '20px', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                               >
-                                Delete
-                              </button>
-                              <button
-                                className="confirm-delete-no"
-                                onClick={() => setDeletingProvider(null)}
-                              >
-                                Cancel
+                                ×
                               </button>
                             </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="input-wrapper">
+                        <input
+                          type="file"
+                          accept="image/*"
+                          multiple
+                          ref={fileInputRef}
+                          onChange={handleFileChange}
+                          style={{ display: 'none' }}
+                        />
+                        <button
+                          className="attachment-btn"
+                          onClick={() => fileInputRef.current?.click()}
+                          title="Attach Image"
+                          disabled={isStreaming}
+                          style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '0 8px' }}
+                        >
+                          <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" strokeWidth="2" fill="none"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+                        </button>
+                        <textarea
+                          id="prompt-input"
+                          className="prompt-input"
+                          value={prompt}
+                          onChange={(e) => setPrompt(e.target.value)}
+                          onKeyDown={handleKeyDown}
+                          onPaste={handlePaste}
+                          placeholder="Send a message... (Paste images here)"
+                          rows={1}
+                          disabled={isStreaming}
+                        />
+                        <button
+                          id="send-btn"
+                          className={`send-btn ${isStreaming ? 'streaming' : ''}`}
+                          onClick={handleSend}
+                          disabled={isStreaming || !prompt.trim()}
+                          title="Send (Enter)"
+                        >
+                          {isStreaming ? (
+                            <span className="send-loader"></span>
+                          ) : (
+                            <svg viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+                            </svg>
+                          )}
+                        </button>
+                      </div>
+                      <div className="input-meta">
+                        <span className="meta-model">
+                          {getModelName(selectedModel)}
+                          {selectedModel === 'auto' && resolvedModel && ` → ${getModelName(resolvedModel)}`}
+                          {selectedModel !== 'auto' && (
+                            <span className={`meta-key-status ${hasKeyForModel(selectedModel) ? 'has-key' : 'no-key'}`}>
+                              {hasKeyForModel(selectedModel) ? ' ✓' : ' ⚠ no key'}
+                            </span>
+                          )}
+                        </span>
+                        <span className="meta-hint">Enter to send · Shift+Enter for new line</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Settings Panel ── */}
+                {rightPanel === 'settings' && (
+                  <div className="settings-panel">
+                    <div className="settings-content">
+                      <h2 className="settings-title">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="settings-icon">
+                          <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 11-7.778 7.778 5.5 5.5 0 017.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
+                        </svg>
+                        API Key Management
+                      </h2>
+                      <p className="settings-description">
+                        Add API keys for each provider you use. Keys are encrypted using your operating system&apos;s
+                        credential manager (Windows DPAPI / macOS Keychain / Linux Secret Service) and stored
+                        securely on disk. The raw key never leaves the Node.js process.
+                      </p>
+
+                      {/* ── Configured Keys Overview ── */}
+                      <div className="keys-overview-section">
+                        <h3 className="section-label">
+                          Configured Keys
+                          <span className="key-count-badge">{keyCount}</span>
+                        </h3>
+
+                        {configuredProviders.length === 0 ? (
+                          <div className="no-keys-message">
+                            <span className="no-keys-icon">🔑</span>
+                            <p>No API keys configured yet. Add one below to get started.</p>
+                          </div>
+                        ) : (
+                          <div className="provider-keys-grid">
+                            {configuredProviders.map((p) => (
+                              <div
+                                key={p.id}
+                                className={`provider-key-card ${deletingProvider === p.id ? 'deleting' : ''}`}
+                                style={{ '--provider-color': PROVIDERS[p.id]?.color || '#888' }}
+                              >
+                                <div className="provider-key-main">
+                                  <div className="provider-key-info">
+                                    <span className="provider-key-emoji">{PROVIDERS[p.id]?.emoji || '🔑'}</span>
+                                    <div>
+                                      <span className="provider-key-name">{PROVIDERS[p.id]?.name || p.id}</span>
+                                      <span className="provider-key-hint">{p.hint}</span>
+                                    </div>
+                                  </div>
+                                  <button
+                                    className="provider-delete-btn"
+                                    onClick={() => setDeletingProvider(p.id)}
+                                    title={`Delete ${PROVIDERS[p.id]?.name || p.id} key`}
+                                  >
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                      <polyline points="3 6 5 6 21 6" />
+                                      <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+                                      <line x1="10" y1="11" x2="10" y2="17" />
+                                      <line x1="14" y1="11" x2="14" y2="17" />
+                                    </svg>
+                                  </button>
+                                </div>
+
+                                {/* ── Delete Confirmation ── */}
+                                {deletingProvider === p.id && (
+                                  <div className="confirm-delete-row">
+                                    <span className="confirm-delete-text">Delete this key?</span>
+                                    <div className="confirm-delete-actions">
+                                      <button
+                                        className="confirm-delete-yes"
+                                        onClick={() => handleDeleteKey(p.id)}
+                                      >
+                                        Delete
+                                      </button>
+                                      <button
+                                        className="confirm-delete-no"
+                                        onClick={() => setDeletingProvider(null)}
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            ))}
                           </div>
                         )}
                       </div>
-                    ))}
-                  </div>
-                )}
-              </div>
 
-              {/* ── Add New Key ── */}
-              <div className="key-input-section">
-                <label className="key-label" htmlFor="provider-selector">
-                  Add API Key
-                </label>
+                      {/* ── Add New Key ── */}
+                      <div className="key-input-section">
+                        <label className="key-label" htmlFor="provider-selector">
+                          Add API Key
+                        </label>
 
-                {/* Provider Selector */}
-                <div className="provider-selector-row">
-                  <div className="provider-selector-wrapper">
-                    <select
-                      id="provider-selector"
-                      className="provider-selector"
-                      value={selectedProvider}
-                      onChange={(e) => setSelectedProvider(e.target.value)}
-                    >
-                      {PROVIDER_LIST.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.emoji} {p.name}
-                          {providerKeys[p.id]?.exists ? ' (configured)' : ''}
-                        </option>
-                      ))}
-                    </select>
-                    <span className="selector-chevron">▾</span>
-                  </div>
+                        {/* Provider Selector */}
+                        <div className="provider-selector-row">
+                          <div className="provider-selector-wrapper">
+                            <select
+                              id="provider-selector"
+                              className="provider-selector"
+                              value={selectedProvider}
+                              onChange={(e) => setSelectedProvider(e.target.value)}
+                            >
+                              {PROVIDER_LIST.map((p) => (
+                                <option key={p.id} value={p.id}>
+                                  {p.emoji} {p.name}
+                                  {providerKeys[p.id]?.exists ? ' (configured)' : ''}
+                                </option>
+                              ))}
+                            </select>
+                            <span className="selector-chevron">▾</span>
+                          </div>
 
-                  {autoDetectedProvider && (
-                    <span className="auto-detect-badge">
-                      ✨ Auto-detected: {PROVIDERS[autoDetectedProvider]?.name}
-                    </span>
-                  )}
-                </div>
+                          {autoDetectedProvider && (
+                            <span className="auto-detect-badge">
+                              ✨ Auto-detected: {PROVIDERS[autoDetectedProvider]?.name}
+                            </span>
+                          )}
+                        </div>
 
-                {selectedProvider === 'custom' && (
-                  <div className="custom-provider-config" style={{ marginTop: '12px', marginBottom: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    <label className="key-label" style={{ fontSize: '0.8rem', opacity: 0.8 }}>Base URL</label>
-                    <select 
-                      className="key-input" 
-                      style={{ padding: '8px', cursor: 'pointer', appearance: 'auto', border: '1px solid var(--border-color)' }}
-                      value={
-                        ['https://openrouter.ai/api/v1', 'https://api.together.xyz/v1', 'http://localhost:1234/v1', 'http://localhost:11434/v1'].includes(customBaseUrl) ? customBaseUrl : 'other'
-                      }
-                      onChange={e => {
-                        if (e.target.value === 'other') setCustomBaseUrl('')
-                        else setCustomBaseUrl(e.target.value)
-                      }}
-                    >
-                      <option value="https://openrouter.ai/api/v1">OpenRouter (https://openrouter.ai/api/v1)</option>
-                      <option value="https://api.together.xyz/v1">Together AI (https://api.together.xyz/v1)</option>
-                      <option value="http://localhost:1234/v1">LM Studio (Local)</option>
-                      <option value="http://localhost:11434/v1">Ollama (Local)</option>
-                      <option value="https://api.groq.com/openai/v1">Groq</option>
-                      <option value="other">Other (Manual Entry)</option>
-                    </select>
-                    {!['https://openrouter.ai/api/v1', 'https://api.together.xyz/v1', 'http://localhost:1234/v1', 'http://localhost:11434/v1', 'https://api.groq.com/openai/v1'].includes(customBaseUrl) && (
-                      <input 
-                        type="text" 
-                        className="key-input" 
-                        value={customBaseUrl} 
-                        onChange={e => setCustomBaseUrl(e.target.value)} 
-                        placeholder="https://api.yourprovider.com/v1"
-                        style={{ marginTop: '4px' }}
-                      />
-                    )}
-                    <label className="key-label" style={{ fontSize: '0.8rem', opacity: 0.8 }}>Provider Name (Optional)</label>
-                    <input 
-                      type="text" 
-                      className="key-input" 
-                      value={customName} 
-                      onChange={e => setCustomName(e.target.value)} 
-                      placeholder="e.g. My OpenRouter"
-                    />
-                    <label className="key-label" style={{ fontSize: '0.8rem', opacity: 0.8 }}>Model ID</label>
-                    <input 
-                      type="text" 
-                      className="key-input" 
-                      value={customModelId} 
-                      onChange={e => setCustomModelId(e.target.value)} 
-                      placeholder="llama3-70b-8192"
-                    />
-                  </div>
-                )}
+                        {selectedProvider === 'custom' && (
+                          <div className="custom-provider-config" style={{ marginTop: '12px', marginBottom: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <label className="key-label" style={{ fontSize: '0.8rem', opacity: 0.8 }}>Base URL</label>
+                            <select
+                              className="key-input"
+                              style={{ padding: '8px', cursor: 'pointer', appearance: 'auto', border: '1px solid var(--border-color)' }}
+                              value={
+                                ['https://openrouter.ai/api/v1', 'https://api.together.xyz/v1', 'http://localhost:1234/v1', 'http://localhost:11434/v1'].includes(customBaseUrl) ? customBaseUrl : 'other'
+                              }
+                              onChange={e => {
+                                if (e.target.value === 'other') setCustomBaseUrl('')
+                                else setCustomBaseUrl(e.target.value)
+                              }}
+                            >
+                              <option value="https://openrouter.ai/api/v1">OpenRouter (https://openrouter.ai/api/v1)</option>
+                              <option value="https://api.together.xyz/v1">Together AI (https://api.together.xyz/v1)</option>
+                              <option value="http://localhost:1234/v1">LM Studio (Local)</option>
+                              <option value="http://localhost:11434/v1">Ollama (Local)</option>
+                              <option value="https://api.groq.com/openai/v1">Groq</option>
+                              <option value="other">Other (Manual Entry)</option>
+                            </select>
+                            {!['https://openrouter.ai/api/v1', 'https://api.together.xyz/v1', 'http://localhost:1234/v1', 'http://localhost:11434/v1', 'https://api.groq.com/openai/v1'].includes(customBaseUrl) && (
+                              <input
+                                type="text"
+                                className="key-input"
+                                value={customBaseUrl}
+                                onChange={e => setCustomBaseUrl(e.target.value)}
+                                placeholder="https://api.yourprovider.com/v1"
+                                style={{ marginTop: '4px' }}
+                              />
+                            )}
+                            <label className="key-label" style={{ fontSize: '0.8rem', opacity: 0.8 }}>Provider Name (Optional)</label>
+                            <input
+                              type="text"
+                              className="key-input"
+                              value={customName}
+                              onChange={e => setCustomName(e.target.value)}
+                              placeholder="e.g. My OpenRouter"
+                            />
+                            <label className="key-label" style={{ fontSize: '0.8rem', opacity: 0.8 }}>Model ID</label>
+                            <input
+                              type="text"
+                              className="key-input"
+                              value={customModelId}
+                              onChange={e => setCustomModelId(e.target.value)}
+                              placeholder="llama3-70b-8192"
+                            />
+                          </div>
+                        )}
 
-                {/* Key Input + Save */}
-                <div className="key-input-row">
-                  <input
-                    id="api-key-input"
-                    type="password"
-                    className={`key-input ${autoDetectedProvider ? 'auto-detected' : ''}`}
-                    value={apiKeyInput}
-                    onChange={(e) => setApiKeyInput(e.target.value)}
-                    placeholder={PROVIDERS[selectedProvider]?.placeholder || 'your-api-key-here'}
-                    disabled={keySaving}
-                    onKeyDown={(e) => e.key === 'Enter' && handleSaveKey()}
-                  />
-                  <button
-                    id="save-key-btn"
-                    className="key-save-btn"
-                    onClick={handleSaveKey}
-                    disabled={keySaving || !apiKeyInput.trim()}
-                  >
-                    {keySaving ? (
-                      <span className="save-loader"></span>
-                    ) : (
-                      <>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="save-icon">
-                          <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                          <polyline points="17 21 17 13 7 13 7 21" />
-                          <polyline points="7 3 7 8 15 8" />
-                        </svg>
-                        Save
-                      </>
-                    )}
-                  </button>
-                </div>
+                        {/* Key Input + Save */}
+                        <div className="key-input-row">
+                          <input
+                            id="api-key-input"
+                            type="password"
+                            className={`key-input ${autoDetectedProvider ? 'auto-detected' : ''}`}
+                            value={apiKeyInput}
+                            onChange={(e) => setApiKeyInput(e.target.value)}
+                            placeholder={PROVIDERS[selectedProvider]?.placeholder || 'your-api-key-here'}
+                            disabled={keySaving}
+                            onKeyDown={(e) => e.key === 'Enter' && handleSaveKey()}
+                          />
+                          <button
+                            id="save-key-btn"
+                            className="key-save-btn"
+                            onClick={handleSaveKey}
+                            disabled={keySaving || !apiKeyInput.trim()}
+                          >
+                            {keySaving ? (
+                              <span className="save-loader"></span>
+                            ) : (
+                              <>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="save-icon">
+                                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                                  <polyline points="17 21 17 13 7 13 7 21" />
+                                  <polyline points="7 3 7 8 15 8" />
+                                </svg>
+                                Save
+                              </>
+                            )}
+                          </button>
+                        </div>
 
-                {providerKeys[selectedProvider]?.exists && (
-                  <p className="key-replace-hint">
-                    ⚠ {PROVIDERS[selectedProvider]?.name} already has a key configured. Saving will replace it.
-                  </p>
-                )}
+                        {providerKeys[selectedProvider]?.exists && (
+                          <p className="key-replace-hint">
+                            ⚠ {PROVIDERS[selectedProvider]?.name} already has a key configured. Saving will replace it.
+                          </p>
+                        )}
 
-                {keyMessage && (
-                  <p className={`key-message ${keyMessage.includes('Error') ? 'error' : 'success'}`}>
-                    {keyMessage}
-                  </p>
-                )}
-              </div>
+                        {keyMessage && (
+                          <p className={`key-message ${keyMessage.includes('Error') ? 'error' : 'success'}`}>
+                            {keyMessage}
+                          </p>
+                        )}
+                      </div>
 
-              {/* ── Security Info ── */}
-              <div className="security-info">
-                <h3>Security Architecture</h3>
-                <div className="security-grid">
-                  <div className="security-item">
-                    <span className="security-badge">🔐</span>
-                    <div>
-                      <strong>Encrypted at Rest</strong>
-                      <p>safeStorage.encryptString() → OS credential manager</p>
+                      {/* ── Security Info ── */}
+                      <div className="security-info">
+                        <h3>Security Architecture</h3>
+                        <div className="security-grid">
+                          <div className="security-item">
+                            <span className="security-badge">🔐</span>
+                            <div>
+                              <strong>Encrypted at Rest</strong>
+                              <p>safeStorage.encryptString() → OS credential manager</p>
+                            </div>
+                          </div>
+                          <div className="security-item">
+                            <span className="security-badge">🛡️</span>
+                            <div>
+                              <strong>Isolated from Renderer</strong>
+                              <p>Key never crosses the contextBridge — stays in Node.js memory</p>
+                            </div>
+                          </div>
+                          <div className="security-item">
+                            <span className="security-badge">🔒</span>
+                            <div>
+                              <strong>Context Isolation</strong>
+                              <p>contextIsolation: true · nodeIntegration: false</p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* ── AI Auto-Complete Settings ── */}
+                      <div className="security-info" style={{ marginTop: '24px' }}>
+                        <h3>✨ AI Auto-Complete</h3>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '12px' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                            <input
+                              type="checkbox"
+                              checked={autoCompleteEnabled}
+                              onChange={e => setAutoCompleteEnabled(e.target.checked)}
+                            />
+                            Enable Inline Auto-Complete (Ghost Text)
+                          </label>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <label style={{ fontSize: '0.9rem', display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)' }}>
+                              <span>Trigger Delay (Speed)</span>
+                              <span>{autoCompleteDelay}ms</span>
+                            </label>
+                            <input
+                              type="range"
+                              min="100"
+                              max="2000"
+                              step="100"
+                              value={autoCompleteDelay}
+                              onChange={e => setAutoCompleteDelay(Number(e.target.value))}
+                              style={{ cursor: 'pointer' }}
+                            />
+                            <small style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Lower delay = faster suggestions (uses more API calls)</small>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                  <div className="security-item">
-                    <span className="security-badge">🛡️</span>
-                    <div>
-                      <strong>Isolated from Renderer</strong>
-                      <p>Key never crosses the contextBridge — stays in Node.js memory</p>
-                    </div>
-                  </div>
-                  <div className="security-item">
-                    <span className="security-badge">🔒</span>
-                    <div>
-                      <strong>Context Isolation</strong>
-                      <p>contextIsolation: true · nodeIntegration: false</p>
-                    </div>
-                  </div>
-                </div>
+                )}
               </div>
+            </>
+          )}
+        </div>
 
-              {/* ── AI Auto-Complete Settings ── */}
-              <div className="security-info" style={{ marginTop: '24px' }}>
-                <h3>✨ AI Auto-Complete</h3>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '12px' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                    <input 
-                      type="checkbox" 
-                      checked={autoCompleteEnabled} 
-                      onChange={e => setAutoCompleteEnabled(e.target.checked)} 
-                    />
-                    Enable Inline Auto-Complete (Ghost Text)
-                  </label>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    <label style={{ fontSize: '0.9rem', display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)' }}>
-                      <span>Trigger Delay (Speed)</span>
-                      <span>{autoCompleteDelay}ms</span>
-                    </label>
-                    <input 
-                      type="range" 
-                      min="100" 
-                      max="2000" 
-                      step="100" 
-                      value={autoCompleteDelay} 
-                      onChange={e => setAutoCompleteDelay(Number(e.target.value))} 
-                      style={{ cursor: 'pointer' }}
-                    />
-                    <small style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Lower delay = faster suggestions (uses more API calls)</small>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    </>
-  )}
-</div>
-      
 
 
         {/* ── Status Bar ── */}
@@ -1390,16 +1675,16 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
             </span>
           </div>
           <div className="status-right">
-            <span 
-              className="status-item" 
+            <span
+              className="status-item"
               style={{ cursor: 'pointer', padding: '0 8px', borderLeft: '1px solid var(--border-light)' }}
               onClick={() => setAutoCompleteEnabled(!autoCompleteEnabled)}
               title="Toggle AI Autocomplete"
             >
               πlot Autocomplete: {autoCompleteEnabled ? <span style={{ color: '#10a37f' }}>On</span> : <span style={{ color: 'var(--text-muted)' }}>Off</span>}
             </span>
-            <span 
-              className="status-item" 
+            <span
+              className="status-item"
               style={{ cursor: 'pointer', padding: '0 8px', borderLeft: '1px solid var(--border-light)' }}
               onClick={() => setShowTerminal(!showTerminal)}
               title="Toggle Terminal (Ctrl+Shift+`)"
@@ -1419,6 +1704,17 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
           </div>
         </footer>
       </div>
+
+      {showVisualizer && (
+        <CodebaseVisualizer 
+          projectRoot={projectRoot} 
+          onClose={() => setShowVisualizer(false)}
+          onFileSelect={(path, name) => {
+            setShowVisualizer(false)
+            handleOpenFile(path, name)
+          }}
+        />
+      )}
     </div>
   )
 }

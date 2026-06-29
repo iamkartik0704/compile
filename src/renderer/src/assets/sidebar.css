@@ -204,3 +204,113 @@
   font-size: 0.85rem;
   padding: 2rem 1rem;
 }
+
+ /* Activity Bar */
+.activity-bar {
+  width: 48px;
+  background: var(--bg-activity);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  height: 100vh;
+  flex-shrink: 0;
+  z-index: 10;
+}
+
+.activity-bar-top, .activity-bar-bottom {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0;
+}
+
+.activity-item {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.1s;
+  position: relative;
+}
+
+.activity-item:hover {
+  color: var(--text-primary);
+}
+
+.activity-item.active {
+  color: var(--text-primary);
+}
+
+.activity-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background-color: var(--accent-blue, #007acc);
+}
+
+/* Badge for Source Control */
+.activity-badge {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  background-color: var(--accent-blue, #007acc);
+  color: #fff;
+  font-size: 9px;
+  font-weight: bold;
+  height: 16px;
+  min-width: 16px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+}
+
+.extensions-search {
+  padding: 10px;
+  background: var(--bg-sidebar);
+  border-bottom: 1px solid var(--border-light);
+}
+
+.search-input-wrapper {
+  display: flex;
+  align-items: center;
+  background: var(--bg-input);
+  border: 1px solid var(--border-base);
+  border-radius: 4px;
+  padding: 4px 8px;
+  color: var(--text-primary);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.search-input-wrapper:focus-within {
+  border-color: var(--accent-purple);
+  box-shadow: 0 0 0 1px var(--accent-purple);
+}
+
+.search-input-wrapper .search-icon {
+  color: var(--text-muted);
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+
+.search-input-wrapper input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+}
+
+.search-input-wrapper input::placeholder {
+  color: var(--text-muted);
+}

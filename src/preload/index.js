@@ -13,6 +13,7 @@ const api = {
   // File Explorer
   selectFolder: () => ipcRenderer.invoke('select-folder'),
   readDirectory: (path) => ipcRenderer.invoke('read-directory', path),
+  getProjectTree: (path) => ipcRenderer.invoke('get-project-tree', path),
   createFile: (path) => ipcRenderer.invoke('create-file', path),
   createFolder: (path) => ipcRenderer.invoke('create-folder', path),
   watchProject: (path) => ipcRenderer.invoke('watch-project', path),
@@ -35,6 +36,10 @@ const api = {
   onLspMessage: (callback) => {
     ipcRenderer.removeAllListeners('lsp-server-message')
     ipcRenderer.on('lsp-server-message', (_event, { language, message }) => callback(language, message))
+  },
+  onLspStatusChange: (callback) => {
+    ipcRenderer.removeAllListeners('lsp-status-change')
+    ipcRenderer.on('lsp-status-change', (_event, { language, status }) => callback(language, status))
   },
 
   // ── AI Communication ──
@@ -66,6 +71,11 @@ const api = {
     ipcRenderer.on('inline-ai-stream-chunk', (_event, chunk) => callback(chunk))
   },
   getAiCompletion: (prompt, config) => ipcRenderer.invoke('get-ai-completion', prompt, config),
+  streamAiDebugger: (prompt, config) => ipcRenderer.invoke('stream-ai-debugger', prompt, config),
+  onAiDebuggerStream: (callback) => {
+    ipcRenderer.removeAllListeners('ai-debugger-stream')
+    ipcRenderer.on('ai-debugger-stream', (_event, chunk) => callback(chunk))
+  },
 
   /**
    * Model Resolution Listener — Push model (Main → Renderer).
