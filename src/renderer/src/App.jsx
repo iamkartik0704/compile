@@ -9,11 +9,16 @@ import ReactMarkdown from 'react-markdown'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { applyDiff, unescapeXml } from './diffUtils'
-import { Play, Bug, Maximize2, Minimize2, Trash2, CheckCircle, Circle, RefreshCw, Command, ChevronRight, File, Code, Cpu, Activity, Info, LogOut, ArrowRight, X, Search } from 'lucide-react'
+import { Play, Bug, Maximize2, Minimize2, Trash2, CheckCircle, Circle, RefreshCw, Command, ChevronRight, File, Code, Cpu, Activity, Info, LogOut, ArrowRight, X, Search, Settings, User, LayoutGrid, PanelLeft, PanelBottom, PanelRight, Square, Minus } from 'lucide-react'
 import { getEnclosingScope } from './utils/astParser'
 import { CodebaseVisualizer } from './components/CodebaseVisualizer'
 import { ActivityBar } from './components/ActivityBar'
+
+import { SourceControlPanel } from './components/SourceControlPanel'
 import { ExtensionsPanel } from './components/ExtensionsPanel'
+import { DockerPanel } from './components/DockerPanel'
+import { KubernetesPanel } from './components/KubernetesPanel'
+import { ProjectManagerPanel } from './components/ProjectManagerPanel'
 import { useAppStore } from './store/appStore'
 import './assets/sidebar.css'
 import './assets/editor.css'
@@ -215,6 +220,40 @@ function App() {
   const [showExplorer, setShowExplorer] = useState(true)
   const [rightPanel, setRightPanel] = useState(null)
   const [showVisualizer, setShowVisualizer] = useState(false)
+  
+  // ── Live Server State ──
+  const [isLiveServerRunning, setIsLiveServerRunning] = useState(false)
+  const [liveServerUrl, setLiveServerUrl] = useState(null)
+  
+  const handleToggleLiveServer = async () => {
+    let openPath = ''
+    if (activeFile && activeFile.startsWith(projectRoot)) {
+      openPath = activeFile.substring(projectRoot.length).replace(/^[\\/]/, '')
+    }
+
+    if (isLiveServerRunning && liveServerUrl) {
+      const targetUrl = openPath ? `${liveServerUrl}/${openPath.replace(/\\/g, '/')}` : liveServerUrl
+      window.api.openUrl(targetUrl)
+    } else {
+      if (!projectRoot) return
+      const res = await window.api.startLiveServer(projectRoot, openPath)
+      if (res.success) {
+        setIsLiveServerRunning(true)
+        setLiveServerUrl(res.baseUrl || res.url)
+      } else {
+        console.error('Failed to start Live Server:', res.error)
+      }
+    }
+  }
+
+  const handleStopLiveServer = async (e) => {
+    e.stopPropagation()
+    if (isLiveServerRunning) {
+      await window.api.stopLiveServer()
+      setIsLiveServerRunning(false)
+      setLiveServerUrl(null)
+    }
+  }
 
   // Custom Provider State
   const [customBaseUrl, setCustomBaseUrl] = useState('https://openrouter.ai/api/v1')
@@ -521,7 +560,8 @@ the new code
   }
 
   const [sidebarWidth, setSidebarWidth] = useState(260)
-  const { activePanel, activeTheme } = useAppStore()
+  const { activePanel, setActivePanel, activeTheme, extensions } = useAppStore()
+  const isLiveServerEnabled = extensions?.find(e => e.id === 'ext-prod-liveserver')?.enabled
   const [rightPanelWidth, setRightPanelWidth] = useState(320)
 
   // ── Apply Theme ──
@@ -529,10 +569,26 @@ the new code
     document.body.className = `theme-${activeTheme}`
   }, [activeTheme])
 
-  const handleOpenFile = (path, name) => {
+  const handleOpenFile = async (path, name, options = {}) => {
+    let gitOriginal = null
+    if (options.diff) {
+      let relPath = options.relPath
+      if (!relPath && path.startsWith(projectRoot)) {
+        relPath = path.substring(projectRoot.length).replace(/^[\\/]/, '')
+      }
+      const res = await window.api.gitAction(projectRoot, 'show-head', relPath || path)
+      if (res && res.stdout) {
+        gitOriginal = res.stdout
+      }
+    }
+
     setOpenFiles((prev) => {
-      if (!prev.find(f => f.path === path)) {
-        return [...prev, { path, name, isDirty: false }]
+      const existing = prev.find(f => f.path === path)
+      if (!existing) {
+        return [...prev, { path, name, isDirty: false, gitOriginal }]
+      } else if (gitOriginal !== null) {
+        // Update existing with git diff if requested again
+        return prev.map(f => f.path === path ? { ...f, gitOriginal } : f)
       }
       return prev
     })
@@ -875,11 +931,101 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
     .map(([provider, data]) => ({ ...PROVIDERS[provider], ...data, id: provider }))
 
   return (
-    <div className="ide-layout">
+    <div className="ide-root" style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: 'var(--bg-main)', color: 'var(--text-main)' }}>
+      {/* ── Global Header ── */}
+      <header className="global-title-bar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 16px', height: '40px', background: 'var(--bg-activity)', borderBottom: '1px solid var(--border-base)', flexShrink: 0, userSelect: 'none', WebkitAppRegion: 'drag' }}>
+        
+        {/* Left Section */}
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '24px', WebkitAppRegion: 'no-drag' }}>
+          <span style={{ fontSize: '14px', fontWeight: 'bold', color: '#f1e05a', letterSpacing: '0.5px' }}>comπle</span>
+          <div style={{ display: 'flex', gap: '16px', fontSize: '13px', color: 'var(--text-muted)' }}>
+            <span style={{ cursor: 'pointer', WebkitAppRegion: 'no-drag' }} className="menu-item">File</span>
+            <span style={{ cursor: 'pointer', WebkitAppRegion: 'no-drag' }} className="menu-item">Edit</span>
+            <span style={{ cursor: 'pointer', WebkitAppRegion: 'no-drag' }} className="menu-item">Selection</span>
+            <span style={{ cursor: 'pointer', WebkitAppRegion: 'no-drag' }} className="menu-item">View</span>
+            <span style={{ cursor: 'pointer', WebkitAppRegion: 'no-drag' }} className="menu-item">Go</span>
+            <span style={{ cursor: 'pointer', WebkitAppRegion: 'no-drag' }} className="menu-item">Run</span>
+            <span style={{ cursor: 'pointer', WebkitAppRegion: 'no-drag' }} className="menu-item">Terminal</span>
+            <span style={{ cursor: 'pointer', WebkitAppRegion: 'no-drag' }} className="menu-item">Help</span>
+          </div>
+        </div>
 
+        {/* Center Section */}
+        <div style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '16px', WebkitAppRegion: 'no-drag' }}>
+          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>COMPILE-PROJECT App.jsx</span>
+          <div style={{ display: 'flex', gap: '4px', color: 'var(--text-muted)' }}>
+            <div onClick={() => setActivePanel(activePanel === 'explorer' ? null : 'explorer')} style={{ padding: '4px', borderRadius: '4px', cursor: 'pointer', display: 'flex', background: activePanel === 'explorer' ? 'var(--bg-dark)' : 'transparent' }} title="Toggle Sidebar"><PanelLeft size={14} /></div>
+            <div onClick={() => setShowTerminal(!showTerminal)} style={{ padding: '4px', borderRadius: '4px', cursor: 'pointer', display: 'flex', background: showTerminal ? 'var(--bg-dark)' : 'transparent' }} title="Toggle Terminal"><PanelBottom size={14} /></div>
+            <div onClick={() => setRightPanel(rightPanel === 'chat' ? null : 'chat')} style={{ padding: '4px', borderRadius: '4px', cursor: 'pointer', display: 'flex', background: rightPanel === 'chat' ? 'var(--bg-dark)' : 'transparent' }} title="Toggle AI Agent"><PanelRight size={14} /></div>
+          </div>
+        </div>
+
+        {/* Right Section */}
+        <div style={{ flex: 1, display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '12px', WebkitAppRegion: 'no-drag' }}>
+          <div className="model-selector-wrapper" style={{ marginRight: '8px' }}>
+              <select
+                id="model-selector"
+                className="model-selector"
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                disabled={isStreaming}
+                style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', fontSize: '11px', outline: 'none', cursor: 'pointer', maxWidth: '120px', textOverflow: 'ellipsis' }}
+                title="Select Model"
+              >
+                {MODEL_GROUPS.map((group) => (
+                  <optgroup key={group.label} label={group.label}>
+                    {group.models.map((m) => (
+                      <option
+                        key={m.id}
+                        value={m.id}
+                        disabled={m.provider && !providerKeys[m.provider]?.exists}
+                      >
+                        {m.id === 'custom' ? (customName || 'Custom') : m.name}
+                        {m.badge ? ` (${m.badge})` : ''}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+          </div>
+
+          <div style={{ display: 'flex', gap: '16px', color: 'var(--text-muted)', alignItems: 'center' }}>
+            <Settings size={16} style={{ cursor: 'pointer' }} onClick={() => setRightPanel('settings')} title="Settings" />
+            <User size={16} style={{ cursor: 'pointer' }} />
+          </div>
+          
+          <button 
+            onClick={() => setRightPanel(rightPanel === 'chat' ? null : 'chat')} 
+            style={{ 
+              display: 'flex', alignItems: 'center', gap: '6px', 
+              background: rightPanel === 'chat' ? 'var(--bg-dark)' : 'transparent', 
+              color: rightPanel === 'chat' ? '#f1e05a' : 'var(--text-muted)', 
+              border: `1px solid ${rightPanel === 'chat' ? '#f1e05a' : 'var(--border-base)'}`, 
+              padding: '4px 10px', borderRadius: '6px', fontSize: '11px', 
+              fontWeight: '500', cursor: 'pointer', WebkitAppRegion: 'no-drag',
+              transition: 'all 0.2s'
+            }} 
+            title="Toggle AI Agent"
+          >
+            <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: rightPanel === 'chat' ? '#f1e05a' : 'var(--text-muted)' }} />
+            AI Agent
+          </button>
+          
+          <div style={{ display: 'flex', gap: '12px', color: 'var(--text-muted)', alignItems: 'center', marginLeft: '12px', WebkitAppRegion: 'no-drag' }}>
+            <div style={{ padding: '4px 8px', cursor: 'pointer', display: 'flex', borderRadius: '4px', transition: 'all 0.1s' }} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(128, 128, 128, 0.2)'} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'} onClick={() => window.api?.minimizeWindow?.()} title="Minimize"><Minus size={16} /></div>
+            <div style={{ padding: '4px 8px', cursor: 'pointer', display: 'flex', borderRadius: '4px', transition: 'all 0.1s' }} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(128, 128, 128, 0.2)'} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'} onClick={() => window.api?.maximizeWindow?.()} title="Maximize"><Square size={14} /></div>
+            <div style={{ padding: '4px 8px', cursor: 'pointer', display: 'flex', borderRadius: '4px', transition: 'all 0.1s', color: 'inherit' }} onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#e81123'; e.currentTarget.style.color = '#fff' }} onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'inherit' }} onClick={() => window.api?.closeWindow?.()} title="Close"><X size={16} /></div>
+          </div>
+        </div>
+      </header>
+
+      <div className="ide-layout" style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
 
       {/* ── Activity Bar (VS Code style) ── */}
-      <ActivityBar onShowVisualizer={() => setShowVisualizer(true)} />
+      <ActivityBar 
+        onShowVisualizer={() => setShowVisualizer(true)} 
+        onOpenFile={handleOpenFile}
+      />
 
       {/* ── Sidebar (File Explorer / Extensions / Search / Source Control) ── */}
       <div style={{ display: 'flex', height: '100%', borderRight: '1px solid var(--border-base)' }}>
@@ -898,6 +1044,26 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
             width={sidebarWidth} 
             onOpenExtension={handleOpenExtension}
           />
+        )}
+
+        {activePanel === 'git' && (
+          <SourceControlPanel 
+            projectRoot={projectRoot}
+            width={sidebarWidth}
+            onOpenFile={handleOpenFile}
+          />
+        )}
+
+        {activePanel === 'docker' && (
+          <DockerPanel width={sidebarWidth} />
+        )}
+
+        {activePanel === 'k8s' && (
+          <KubernetesPanel width={sidebarWidth} />
+        )}
+
+        {activePanel === 'projects' && (
+          <ProjectManagerPanel width={sidebarWidth} />
         )}
 
         {activePanel === 'search' && (
@@ -920,12 +1086,7 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
           </aside>
         )}
 
-        {activePanel === 'git' && (
-          <div className="sidebar-panel" style={{ width: sidebarWidth, padding: '16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <h2 className="sidebar-header" style={{ marginBottom: '8px' }}>SOURCE CONTROL</h2>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Git support coming soon...</p>
-          </div>
-        )}
+
         
         {activePanel && (
           <Resizer
@@ -937,64 +1098,6 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
 
       {/* ── Main Area ── */}
       <div className="main-area">
-        {/* ── Title Bar ── */}
-        <header className="title-bar">
-          <div className="title-left">
-            <span className="title-name">comπle</span>
-            <span className="title-sep">—</span>
-            <span className="title-context">AI Assistant</span>
-          </div>
-          <div className="title-center">
-            <div className="model-selector-wrapper">
-              <select
-                id="model-selector"
-                className="model-selector"
-                value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
-                disabled={isStreaming}
-              >
-                {MODEL_GROUPS.map((group) => (
-                  <optgroup key={group.label} label={group.label}>
-                    {group.models.map((m) => (
-                      <option
-                        key={m.id}
-                        value={m.id}
-                        disabled={m.provider && !providerKeys[m.provider]?.exists}
-                      >
-                        {m.id === 'custom' ? (customName || 'Custom Model') : m.name}
-                        {m.badge ? ` (${m.badge})` : ''}
-                        {m.provider && providerKeys[m.provider]?.exists ? ' ✓' : ''}
-                        {m.provider && !providerKeys[m.provider]?.exists ? ' (Key Required)' : ''}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
-              <span className="selector-chevron">▾</span>
-            </div>
-          </div>
-          <div className="title-right">
-            <div
-              className={`key-indicator ${rightPanel === 'chat' ? 'key-loaded' : 'key-missing'}`}
-              onClick={() => setRightPanel(rightPanel === 'chat' ? null : 'chat')}
-              title="Toggle AI Chat"
-            >
-              <span className="key-label">AI Chat</span>
-            </div>
-            <div
-              className={`key-indicator ${keyCount > 0 ? 'key-loaded' : 'key-missing'}`}
-              onClick={() => setRightPanel('settings')}
-              title={keyCount > 0 ? `${keyCount} API key(s) configured` : 'No API keys set'}
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="key-icon">
-                <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 11-7.778 7.778 5.5 5.5 0 017.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
-              </svg>
-              <span className="key-label">
-                {keyCount > 0 ? `${keyCount} key${keyCount > 1 ? 's' : ''}` : 'No Keys'}
-              </span>
-            </div>
-          </div>
-        </header>
 
         {/* ── Content Split Area ── */}
         <div className="content-split">
@@ -1695,6 +1798,28 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
             >
               Terminal {showTerminal ? '▾' : '▴'}
             </span>
+            {isLiveServerEnabled && (
+              <span style={{ display: 'flex', alignItems: 'center' }}>
+                <span
+                  className="status-item"
+                  style={{ cursor: 'pointer', padding: '0 8px', borderLeft: '1px solid var(--border-light)', display: 'flex', alignItems: 'center', gap: '4px', color: isLiveServerRunning ? '#10a37f' : 'inherit' }}
+                  onClick={handleToggleLiveServer}
+                  title={isLiveServerRunning ? `Server running at ${liveServerUrl}. Click to open active file in browser.` : "Start Live Server and open active file"}
+                >
+                  {isLiveServerRunning ? <><CheckCircle size={12} /> Port 3000</> : <><RefreshCw size={12} /> Go Live</>}
+                </span>
+                {isLiveServerRunning && (
+                  <span
+                    className="status-item"
+                    style={{ cursor: 'pointer', padding: '0 8px', borderLeft: '1px solid var(--border-light)', display: 'flex', alignItems: 'center', color: 'var(--error-color)' }}
+                    onClick={handleStopLiveServer}
+                    title="Stop Live Server"
+                  >
+                    <X size={14} />
+                  </span>
+                )}
+              </span>
+            )}
             <span className="status-item">
               {keyCount > 0 ? (
                 <span className="status-key-ok">🔑 {keyCount} key{keyCount > 1 ? 's' : ''}</span>
@@ -1719,6 +1844,7 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
           }}
         />
       )}
+      </div>
     </div>
   )
 }

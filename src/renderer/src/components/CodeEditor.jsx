@@ -4,8 +4,11 @@ import * as monaco from 'monaco-editor'
 import { applyDiff } from '../diffUtils'
 import { X, Save, Circle, Sparkles, ChevronRight } from 'lucide-react'
 import { ContextInspector } from './ContextInspector'
+import { GitGraph } from './GitGraph'
+import { PostmanView } from './PostmanView'
 import { useAppStore } from '../store/appStore'
 import { EXTENSIONS } from '../utils/extensionRegistry'
+import { diffLines } from 'diff'
 
 // --- Monaco Workers ---
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
@@ -543,7 +546,7 @@ export const CodeEditor = ({
 
   // Load file content when active file changes
   useEffect(() => {
-    if (!activeFile) return
+    if (!activeFile || activeFile.startsWith('ext:') || activeFile.startsWith('git-graph:')) return
 
     const loadContent = async () => {
       if (!fileContents[activeFile]) {
@@ -701,14 +704,29 @@ export const CodeEditor = ({
 
   const monacoRef = useRef(null)
   const decorationsCollectionRef = useRef(null)
+  const gitDecorationsCollectionRef = useRef(null)
+  const gitLensWidgetRef = useRef(null)
   const [hasActiveAiEdit, setHasActiveAiEdit] = useState(false)
   const [isReady, setIsReady] = useState(false)
   
   // Use global app store for extensions and theme
   const { extensions, toggleExtension, activeTheme, setActiveTheme } = useAppStore()
+  
+  const isGitLensEnabled = extensions.some(ext => ext.id === 'ext-git-lens' && ext.enabled)
+  const isGitLensEnabledRef = useRef(isGitLensEnabled)
+  useEffect(() => {
+    isGitLensEnabledRef.current = isGitLensEnabled
+  }, [isGitLensEnabled])
+  const [cursorLine, setCursorLine] = useState(null)
   const monacoTheme = activeTheme === 'light-modern' ? 'vs' : 'vs-dark'
   const [originalText, setOriginalText] = useState(null)
   const [showDiff, setShowDiff] = useState(false)
+  const [gutterOriginalTexts, setGutterOriginalTexts] = useState({})
+  
+  const activeFileObj = openFiles.find(f => f.path === activeFile)
+  const isGitDiff = activeFileObj && activeFileObj.gitOriginal != null
+  const effectiveShowDiff = showDiff || isGitDiff
+  const effectiveOriginalText = isGitDiff ? activeFileObj.gitOriginal : originalText
 
   const [inlineAi, setInlineAi] = useState({
     visible: false,
@@ -777,6 +795,21 @@ export const CodeEditor = ({
   const handleEditorDidMountWrapper = (editor, monacoInstance) => {
     monacoRef.current = monacoInstance
     decorationsCollectionRef.current = editor.createDecorationsCollection([])
+    gitDecorationsCollectionRef.current = editor.createDecorationsCollection([])
+    // We don't use decorations for git lens anymore due to Monaco after-injection bugs
+
+    let blameTimeout
+    editor.onDidChangeCursorPosition((e) => {
+      if (blameTimeout) clearTimeout(blameTimeout)
+      if (gitLensWidgetRef.current && editorRef.current) {
+        editorRef.current.removeContentWidget(gitLensWidgetRef.current)
+        gitLensWidgetRef.current = null
+      }
+      const line = e.position.lineNumber
+      blameTimeout = setTimeout(() => {
+        setCursorLine(line)
+      }, 300)
+    })
 
     // Command: Run File (Ctrl+Alt+N)
     editor.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyMod.Alt | monacoInstance.KeyCode.KeyN, () => {
@@ -814,6 +847,13 @@ export const CodeEditor = ({
     handleEditorDidMount(editor, monacoInstance)
   }
 
+  const handleDiffEditorMountWrapper = (editor, monacoInstance) => {
+    const modifiedEditor = editor.getModifiedEditor()
+    modifiedEditor.onDidChangeModelContent(() => {
+      handleEditorChange(modifiedEditor.getValue())
+    })
+  }
+
   const handleRevertEdit = () => {
     if (editorRef.current) {
       editorRef.current.trigger('keyboard', 'undo', null)
@@ -825,6 +865,192 @@ export const CodeEditor = ({
       decorationsCollectionRef.current.clear()
     }
   }
+
+  // ── Fetch Git Original for Gutter ──
+  useEffect(() => {
+    if (!activeFile || !projectRoot) return
+    const fetchOriginal = async () => {
+      let relPath = activeFile
+      if (activeFile.startsWith(projectRoot)) {
+        relPath = activeFile.substring(projectRoot.length).replace(/^[\\/]/, '')
+      }
+      try {
+        const res = await window.api.gitAction(projectRoot, 'show-head', relPath)
+        if (res && res.stdout) {
+          setGutterOriginalTexts(prev => ({ ...prev, [activeFile]: res.stdout }))
+        } else {
+          setGutterOriginalTexts(prev => ({ ...prev, [activeFile]: null }))
+        }
+      } catch (e) {
+        setGutterOriginalTexts(prev => ({ ...prev, [activeFile]: null }))
+      }
+    }
+    fetchOriginal()
+  }, [activeFile, projectRoot])
+
+  const [gitLensDebugInfo, setGitLensDebugInfo] = useState('')
+
+  // ── Git Lens Effect ──
+  useEffect(() => {
+    if (!isGitLensEnabled || !cursorLine || !activeFile || !projectRoot || effectiveShowDiff || !monacoRef.current || !editorRef.current) {
+      if (gitLensWidgetRef.current && editorRef.current) {
+        editorRef.current.removeContentWidget(gitLensWidgetRef.current)
+        gitLensWidgetRef.current = null
+      }
+      return
+    }
+
+    const fetchBlame = async () => {
+      try {
+        let relPath = activeFile
+        if (activeFile.startsWith(projectRoot)) {
+          relPath = activeFile.substring(projectRoot.length).replace(/^\\|^\\/, '').replace(/^[/\\]/, '')
+        }
+        const res = await window.api.gitAction(projectRoot, 'blame', relPath, cursorLine)
+        if (res.error) return
+
+        // Parse git blame --porcelain output
+        // e.g. 
+        // c4f90... 1 1 1
+        // author Name
+        // ...
+        // summary message
+        
+        let author = 'Unknown'
+        let time = ''
+        let summary = ''
+        const lines = res.stdout.split('\n')
+        
+        for (const line of lines) {
+          if (line.startsWith('author ')) author = line.substring(7)
+          if (line.startsWith('author-time ')) {
+            const timestamp = parseInt(line.substring(12), 10)
+            const date = new Date(timestamp * 1000)
+            const diffDays = Math.floor((new Date() - date) / (1000 * 60 * 60 * 24))
+            if (diffDays === 0) time = 'today'
+            else if (diffDays === 1) time = 'yesterday'
+            else if (diffDays < 30) time = `${diffDays} days ago`
+            else if (diffDays < 365) time = `${Math.floor(diffDays/30)} months ago`
+            else time = `${Math.floor(diffDays/365)} years ago`
+          }
+          if (line.startsWith('summary ')) summary = line.substring(8)
+        }
+
+        // clean up old widget if exists
+        if (gitLensWidgetRef.current && editorRef.current) {
+          editorRef.current.removeContentWidget(gitLensWidgetRef.current)
+          gitLensWidgetRef.current = null
+        }
+
+        if (summary) {
+          if (editorRef.current) {
+            const model = editorRef.current.getModel()
+            const maxCol = model ? model.getLineMaxColumn(cursorLine) : 1
+            
+            const widget = {
+              getId: () => 'git-lens-widget',
+              getDomNode: () => {
+                const domNode = document.createElement('div')
+                domNode.className = 'git-lens-ghost-text'
+                domNode.style.display = 'inline-block'
+                domNode.style.paddingLeft = '20px'
+                domNode.style.opacity = '0.6'
+                domNode.style.fontStyle = 'italic'
+                domNode.style.color = 'var(--text-muted)'
+                domNode.style.pointerEvents = 'none'
+                domNode.style.whiteSpace = 'nowrap'
+                
+                // Show Uncommitted differently if needed, but summary handles it
+                domNode.innerText = `\u2014 ${author}, ${time} • ${summary}`
+                return domNode
+              },
+              getPosition: () => {
+                return {
+                  position: { lineNumber: cursorLine, column: maxCol },
+                  preference: [0] // EXACT
+                }
+              }
+            }
+            editorRef.current.addContentWidget(widget)
+            gitLensWidgetRef.current = widget
+          }
+        }
+      } catch (e) {
+        console.error('Git lens error:', e)
+      }
+    }
+    fetchBlame()
+  }, [cursorLine, activeFile, projectRoot, isGitLensEnabled, effectiveShowDiff])
+
+  // ── Git Gutter Effect ──
+  useEffect(() => {
+    if (!gitDecorationsCollectionRef.current || !monacoRef.current || !editorRef.current) return
+
+    const originalTextForGutter = gutterOriginalTexts[activeFile]
+    if (effectiveShowDiff || !originalTextForGutter) {
+      gitDecorationsCollectionRef.current.clear()
+      return
+    }
+
+    try {
+      const normalizedOriginal = originalTextForGutter.replace(/\r\n/g, '\n')
+      const normalizedCurrent = currentValue.replace(/\r\n/g, '\n')
+      const changes = diffLines(normalizedOriginal, normalizedCurrent)
+      const decorations = []
+      let currentLineNumber = 1
+
+      for (let i = 0; i < changes.length; i++) {
+        const change = changes[i]
+        
+        if (change.removed) {
+          // Check if the next change is an addition (this means it's a modification)
+          if (i + 1 < changes.length && changes[i + 1].added) {
+            const addedChange = changes[i + 1]
+            const startLine = currentLineNumber
+            const endLine = currentLineNumber + addedChange.count - 1
+            decorations.push({
+              range: new monacoRef.current.Range(startLine, 1, endLine, 1),
+              options: {
+                isWholeLine: true,
+                linesDecorationsClassName: 'git-gutter-modify'
+              }
+            })
+            currentLineNumber += addedChange.count
+            i++ // skip the added block since we processed it
+          } else {
+            // Just a pure deletion
+            const targetLine = Math.max(1, currentLineNumber - 1)
+            decorations.push({
+              range: new monacoRef.current.Range(targetLine, 1, targetLine, 1),
+              options: {
+                isWholeLine: false,
+                linesDecorationsClassName: 'git-gutter-delete'
+              }
+            })
+          }
+        } else if (change.added) {
+          // Pure addition
+          const startLine = currentLineNumber
+          const endLine = currentLineNumber + change.count - 1
+          decorations.push({
+            range: new monacoRef.current.Range(startLine, 1, endLine, 1),
+            options: {
+              isWholeLine: false,
+              linesDecorationsClassName: 'git-gutter-add'
+            }
+          })
+          currentLineNumber += change.count
+        } else {
+          // Unchanged lines
+          currentLineNumber += change.count
+        }
+      }
+
+      gitDecorationsCollectionRef.current.set(decorations)
+    } catch (e) {
+      console.error('Error computing git diff:', e)
+    }
+  }, [currentValue, gutterOriginalTexts, activeFile, effectiveShowDiff])
 
   const handleAcceptEdit = () => {
     setHasActiveAiEdit(false)
@@ -1073,7 +1299,7 @@ export const CodeEditor = ({
         </div>
       )}
 
-      {activeFile && !activeFile.startsWith('ext:') && (() => {
+      {activeFile && !activeFile.startsWith('ext:') && !activeFile.startsWith('git-graph:') && (() => {
         const relPath = projectRoot && activeFile.startsWith(projectRoot)
           ? activeFile.substring(projectRoot.length).replace(/^[\\/]/, '')
           : activeFile
@@ -1136,7 +1362,11 @@ export const CodeEditor = ({
           </div>
         )}
 
-        {activeFile && activeFile.startsWith('ext:') ? (
+        {activeFile && activeFile.startsWith('git-graph:') ? (
+          <GitGraph projectRoot={projectRoot} />
+        ) : activeFile === 'postman:main' ? (
+          <PostmanView />
+        ) : activeFile && activeFile.startsWith('ext:') ? (
           (function() {
             const extId = activeFile.replace('ext:', '')
             // Use global extensions state
@@ -1173,7 +1403,6 @@ export const CodeEditor = ({
                     </div>
                   </div>
                 </div>
-                
                 <h2 style={{ fontSize: '16px', borderBottom: '1px solid var(--border-base)', paddingBottom: '8px', marginBottom: '16px' }}>Details</h2>
                 <p style={{ fontSize: '14px', lineHeight: '1.6', color: 'var(--text-secondary)' }}>
                   {ext.longDescription || ext.description}
@@ -1182,18 +1411,21 @@ export const CodeEditor = ({
             )
           })()
         ) : !fileContents[activeFile]?.isLoading && (
-          showDiff ? (
+          effectiveShowDiff ? (
             <DiffEditor
               height="100%"
-              original={originalText}
+              original={effectiveOriginalText}
               modified={currentValue}
               language={getLanguageFromPath(activeFile)}
               theme={monacoTheme}
+              onMount={handleDiffEditorMountWrapper}
               options={{
                 renderSideBySide: true,
                 minimap: { enabled: false },
-                readOnly: true,
-                padding: { top: 16 }
+                readOnly: !isGitDiff,
+                padding: { top: 16 },
+                glyphMargin: false,
+                lineDecorationsWidth: 16
               }}
             />
           ) : (
@@ -1218,11 +1450,14 @@ export const CodeEditor = ({
                 formatOnPaste: true,
                 automaticLayout: true,
                 inlineSuggest: { enabled: true },
+                glyphMargin: false,
+                lineDecorationsWidth: 16
               }}
             />
           )
         )}
       </div>
+      
       <ContextInspector 
         isOpen={showContextInspector} 
         onClose={() => setShowContextInspector(false)} 

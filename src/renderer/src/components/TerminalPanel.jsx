@@ -134,6 +134,57 @@ export const TerminalPanel = forwardRef(({ height, cwd, onFixWithAi, hideHeader 
         window.api.sendTerminalData(id, data)
       })
 
+      let lastPasteTime = 0
+      
+      // Handle Ctrl+V for paste and Ctrl+C for copy (if selection exists)
+      term.attachCustomKeyEventHandler((e) => {
+        if (e.ctrlKey && e.type === 'keydown') {
+          if (e.key === 'c' && term.hasSelection()) {
+            navigator.clipboard.writeText(term.getSelection())
+            term.clearSelection()
+            return false // prevent sending SIGINT
+          }
+          if (e.key === 'v') {
+            e.preventDefault()
+            e.stopPropagation()
+            const now = Date.now()
+            if (now - lastPasteTime > 100) {
+              lastPasteTime = now
+              navigator.clipboard.readText().then(text => {
+                if (text) {
+                  window.api.sendTerminalData(id, text)
+                }
+              }).catch(err => console.error('Failed to read clipboard', err))
+            }
+            return false // prevent xterm from sending ^V
+          }
+        }
+        return true
+      })
+
+      // Listen for right-click to paste or copy
+      const handleContextMenu = async (e) => {
+        e.preventDefault()
+        try {
+          if (term.hasSelection()) {
+            await navigator.clipboard.writeText(term.getSelection())
+            term.clearSelection()
+          } else {
+            const now = Date.now()
+            if (now - lastPasteTime > 100) {
+              lastPasteTime = now
+              const text = await navigator.clipboard.readText()
+              if (text) {
+                window.api.sendTerminalData(id, text)
+              }
+            }
+          }
+        } catch (err) {
+          console.error('Failed to access clipboard', err)
+        }
+      }
+      term.element.addEventListener('contextmenu', handleContextMenu)
+
       // Handle resize events
       term.onResize(({ cols, rows }) => {
         window.api.resizeTerminal(id, cols, rows)

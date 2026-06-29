@@ -8,6 +8,11 @@ import { electronAPI } from '@electron-toolkit/preload'
 // or any Node.js / Electron module directly.
 // ============================================================
 const api = {
+  // ── Window Controls ──
+  minimizeWindow: () => ipcRenderer.invoke('window-minimize'),
+  maximizeWindow: () => ipcRenderer.invoke('window-maximize-toggle'),
+  closeWindow: () => ipcRenderer.invoke('window-close'),
+
   // ── File Operations ──
 
   // File Explorer
@@ -28,6 +33,10 @@ const api = {
    */
   getFileContents: (filePath) => ipcRenderer.invoke('get-file-contents', filePath),
   saveFileContents: (filePath, content) => ipcRenderer.invoke('save-file-contents', filePath, content),
+
+  // ── Git Operations ──
+  gitStatus: (cwd) => ipcRenderer.invoke('git-status', cwd),
+  gitAction: (cwd, action, ...args) => ipcRenderer.invoke('git-action', cwd, action, ...args),
 
   // ── Language Server Protocol (LSP) — Multi-language ──
   startLanguageServer: (language) => ipcRenderer.invoke('start-lsp', language),
@@ -129,7 +138,13 @@ const api = {
     const channel = `terminal-exit-${id}`
     ipcRenderer.removeAllListeners(channel)
     ipcRenderer.on(channel, (_event, data) => callback(data))
-  }
+  },
+
+  // ── Extension Commands ──
+  runCommand: (command, cwd) => ipcRenderer.invoke('run-command', command, cwd),
+  startLiveServer: (rootPath, openPath) => ipcRenderer.invoke('start-live-server', rootPath, openPath),
+  stopLiveServer: () => ipcRenderer.invoke('stop-live-server'),
+  openUrl: (url) => ipcRenderer.invoke('open-url', url)
 }
 
 // ============================================================

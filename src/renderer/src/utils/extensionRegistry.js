@@ -1,176 +1,147 @@
 // Global extension registry
 export const EXTENSIONS = [
-  // LSPs
+  // 1. Core language LSPs, dependencies and debugging
   { 
-    id: 'ext-lsp-typescript', 
-    name: 'TypeScript Language Features', 
-    category: 'lsp', 
+    id: 'ext-lsp-typescript', name: 'TypeScript Language Features', category: 'language', 
     description: 'Provides rich language support for JavaScript and TypeScript.', 
-    longDescription: 'TypeScript Language Features provides comprehensive support for JavaScript and TypeScript development. It includes IntelliSense, hover information, signature help, code formatting, refactoring capabilities, and inline error highlighting. Powered by the official Microsoft TypeScript compiler.',
-    author: 'IDE Core', 
-    installed: true, 
-    enabled: true 
+    longDescription: 'TypeScript Language Features provides comprehensive support for JavaScript and TypeScript development.',
+    author: 'IDE Core', installed: true, enabled: true 
   },
   { 
-    id: 'ext-lsp-python', 
-    name: 'Python (Pyright)', 
-    category: 'lsp', 
+    id: 'ext-lsp-python', name: 'Python (Pyright)', category: 'language', 
     description: 'IntelliSense, linting, and refactoring for Python.', 
-    longDescription: 'A static type checker and language server for Python, developed by Microsoft. Pyright provides incredibly fast and accurate IntelliSense, type checking, auto-imports, and code navigation for your Python projects.',
-    author: 'IDE Core', 
-    installed: true, 
-    enabled: true 
+    longDescription: 'A static type checker and language server for Python, developed by Microsoft.',
+    author: 'IDE Core', installed: true, enabled: true 
   },
   { 
-    id: 'ext-lsp-cpp', 
-    name: 'C/C++ (clangd)', 
-    category: 'lsp', 
-    description: 'C/C++ IntelliSense, debugging, and code browsing.', 
-    longDescription: 'Clangd understands your C++ code and adds smart features to your editor: code completion, compile errors, go-to-definition and more. It leverages the powerful Clang compiler front-end.',
-    author: 'IDE Core', 
-    installed: false, 
-    enabled: false 
+    id: 'ext-lsp-java', name: 'Language Support for Java', category: 'language', 
+    description: 'Java Linting, IntelliSense, formatting, refactoring.', 
+    longDescription: 'Provides Java support for your IDE using the Eclipse JDT Language Server.',
+    author: 'IDE Core', installed: false, enabled: false 
+  },
+  { 
+    id: 'ext-dbg-chrome', name: 'Debugger for Chrome', category: 'debugging', 
+    description: 'Debug your JavaScript code in the Chrome browser.', 
+    longDescription: 'Debug your JavaScript code running in Google Chrome from your IDE.',
+    author: 'IDE Core', installed: false, enabled: false 
   },
   
-  // Formatters & Linters
+  // 2. Code formatting and linting
   { 
-    id: 'ext-fmt-prettier', 
-    name: 'Prettier - Code formatter', 
-    category: 'formatter', 
+    id: 'ext-fmt-prettier', name: 'Prettier - Code formatter', category: 'linters', 
     description: 'Code formatter using prettier.', 
-    longDescription: 'Prettier is an opinionated code formatter. It enforces a consistent style by parsing your code and re-printing it with its own rules that take the maximum line length into account, wrapping code when necessary.',
-    author: 'IDE Core', 
-    installed: false, 
-    enabled: false 
+    longDescription: 'Prettier is an opinionated code formatter. It enforces a consistent style by parsing your code.',
+    author: 'IDE Core', installed: true, enabled: true 
   },
   { 
-    id: 'ext-fmt-eslint', 
-    name: 'ESLint', 
-    category: 'formatter', 
+    id: 'ext-fmt-eslint', name: 'ESLint', category: 'linters', 
     description: 'Integrates ESLint JavaScript into the IDE.', 
-    longDescription: 'The ESLint extension statically analyzes your code to quickly find problems. It is built into most text editors and you can run ESLint as part of your continuous integration pipeline.',
-    author: 'IDE Core', 
-    installed: false, 
-    enabled: false 
+    longDescription: 'The ESLint extension statically analyzes your code to quickly find problems.',
+    author: 'IDE Core', installed: false, enabled: false 
   },
   { 
-    id: 'ext-fmt-errorlens', 
-    name: 'Error Lens', 
-    category: 'formatter', 
+    id: 'ext-fmt-biome', name: 'Biome', category: 'linters', 
+    description: 'Toolchain of the web. Formatter and Linter.', 
+    longDescription: 'Biome is a fast formatter for JavaScript, TypeScript, JSX, and JSON that scores 97% compatibility with Prettier.',
+    author: 'Community', installed: false, enabled: false 
+  },
+  { 
+    id: 'ext-fmt-sonarlint', name: 'SonarLint', category: 'linters', 
+    description: 'Detect bugs and vulnerabilities as you write code.', 
+    longDescription: 'SonarLint is a Free IDE extension that lets you fix coding issues before they exist.',
+    author: 'Community', installed: false, enabled: false 
+  },
+  { 
+    id: 'ext-fmt-errorlens', name: 'Error Lens', category: 'linters', 
     description: 'Improve highlighting of errors, warnings and other language diagnostics.', 
-    longDescription: 'ErrorLens turbos charges language diagnostic features by making diagnostics stand out more prominently, highlighting the entire line wherever a diagnostic is generated by the language and also prints the message inline.',
-    author: 'Community', 
-    installed: false, 
-    enabled: false 
+    longDescription: 'ErrorLens turbos charges language diagnostic features by making diagnostics stand out more prominently.',
+    author: 'Community', installed: false, enabled: false 
   },
   
-  // Git & Version Control
+  // 3. Git and version control
   { 
-    id: 'ext-git-lens', 
-    name: 'GitLens — Git supercharged', 
-    category: 'git', 
+    id: 'ext-git-lens', name: 'GitLens — Git supercharged', category: 'git', 
     description: 'Supercharge Git within your IDE.', 
-    longDescription: 'GitLens supercharges Git inside your editor. It helps you to visualize code authorship at a glance via Git blame annotations and CodeLens, seamlessly navigate and explore Git repositories, and gain valuable insights via powerful comparison commands.',
-    author: 'Community', 
-    installed: false, 
-    enabled: false 
+    longDescription: 'GitLens supercharges Git inside your editor. It helps you to visualize code authorship at a glance.',
+    author: 'Community', installed: false, enabled: false 
   },
   { 
-    id: 'ext-git-graph', 
-    name: 'Git Graph', 
-    category: 'git', 
-    description: 'View a Git Graph of your repository, and perform Git actions from the graph.', 
-    longDescription: 'View a Git Graph of your repository, and easily perform Git actions from the graph. Highly configurable to match your workflow.',
-    author: 'Community', 
-    installed: false, 
-    enabled: false 
+    id: 'ext-git-graph', name: 'Git Graph', category: 'git', 
+    description: 'View a Git Graph of your repository.', 
+    longDescription: 'View a Git Graph of your repository, and easily perform Git actions from the graph.',
+    author: 'Community', installed: false, enabled: false 
   },
-  
-  // Productivity
+  // 4. Productivity and dev experience
   { 
-    id: 'ext-prod-docker', 
-    name: 'Docker', 
-    category: 'productivity', 
-    description: 'Makes it easy to create, manage, and debug containerized applications.', 
-    longDescription: 'The Docker extension makes it easy to build, manage, and deploy containerized applications. It provides a rich UI to view your containers, images, volumes, and networks.',
-    author: 'IDE Core', 
-    installed: false, 
-    enabled: false 
+    id: 'ext-prod-docker', name: 'Docker', category: 'productivity', 
+    description: 'Create, manage, and debug containerized applications.', 
+    longDescription: 'The Docker extension makes it easy to build, manage, and deploy containerized applications.',
+    author: 'IDE Core', installed: false, enabled: false 
   },
   { 
-    id: 'ext-prod-postman', 
-    name: 'Postman', 
-    category: 'productivity', 
+    id: 'ext-prod-k8s', name: 'Kubernetes', category: 'productivity', 
+    description: 'Develop, deploy and debug Kubernetes applications.', 
+    longDescription: 'Develop, deploy and debug Kubernetes applications. View logs, shell into pods, and manage clusters.',
+    author: 'IDE Core', installed: false, enabled: false 
+  },
+  { 
+    id: 'ext-prod-postman', name: 'Postman', category: 'productivity', 
     description: 'API client for testing and development.', 
-    longDescription: 'The Postman extension enables you to develop, test, and document your APIs directly from your editor. Send HTTP requests and view the responses seamlessly.',
-    author: 'Community', 
-    installed: false, 
-    enabled: false 
+    longDescription: 'The Postman extension enables you to develop, test, and document your APIs directly from your editor.',
+    author: 'Community', installed: false, enabled: false 
+  },
+  { 
+    id: 'ext-prod-liveserver', name: 'Live Server', category: 'productivity', 
+    description: 'Launch a local development server with live reload feature.', 
+    longDescription: 'Launch a local development server with live reload feature for static & dynamic pages.',
+    author: 'Community', installed: false, enabled: false 
+  },
+  { 
+    id: 'ext-prod-projmgr', name: 'Project Manager', category: 'productivity', 
+    description: 'Easily switch between projects.', 
+    longDescription: 'Project Manager helps you to easily access your projects, no matter where they are located.',
+    author: 'Community', installed: false, enabled: false 
   },
   
-  // Remote Dev
+  // 5. Remote development
   { 
-    id: 'ext-rem-ssh', 
-    name: 'Remote - SSH', 
-    category: 'remote', 
+    id: 'ext-rem-ssh', name: 'Remote - SSH', category: 'remote', 
     description: 'Open any folder on a remote machine using SSH.', 
-    longDescription: 'The Remote - SSH extension lets you use any remote machine with a SSH server as your development environment. This can greatly simplify development and troubleshooting in a wide variety of situations.',
-    author: 'IDE Core', 
-    installed: false, 
-    enabled: false 
+    longDescription: 'The Remote - SSH extension lets you use any remote machine with a SSH server as your development environment.',
+    author: 'IDE Core', installed: false, enabled: false 
   },
   { 
-    id: 'ext-rem-containers', 
-    name: 'Dev Containers', 
-    category: 'remote', 
+    id: 'ext-rem-containers', name: 'Dev Containers', category: 'remote', 
     description: 'Open any folder inside (or mounted into) a container.', 
-    longDescription: 'The Dev Containers extension lets you use a Docker container as a full-featured development environment. It allows you to open any folder inside a container and take advantage of all features.',
-    author: 'IDE Core', 
-    installed: false, 
-    enabled: false 
+    longDescription: 'The Dev Containers extension lets you use a Docker container as a full-featured development environment.',
+    author: 'IDE Core', installed: false, enabled: false 
   },
   
   // Themes
   {
-    id: 'theme-compile-dark',
-    name: 'comπle Dark Theme',
+    id: 'theme-compile-dark', name: 'comπle Dark Theme', category: 'theme',
     description: 'The original comπle editor dark theme.',
-    longDescription: 'The official dark theme of comπle Editor, featuring a dark olive/gray background and elegant cream accents for an undistracted coding experience.',
-    author: 'IDE Core',
-    category: 'theme',
-    installed: true,
-    enabled: true,
+    longDescription: 'The official dark theme of comπle Editor, featuring a dark olive/gray background.',
+    author: 'IDE Core', installed: true, enabled: true,
   },
   {
-    id: 'theme-dark-plus',
-    name: 'Dark Plus Theme',
+    id: 'theme-dark-plus', name: 'Dark Plus Theme', category: 'theme',
     description: 'Default dark theme based on standard IDEs.',
-    longDescription: 'A familiar, high-contrast dark theme that closely matches the default look of popular code editors like VS Code.',
-    author: 'IDE Core',
-    category: 'theme',
-    installed: false,
-    enabled: false,
+    longDescription: 'A familiar, high-contrast dark theme that closely matches the default look of popular code editors.',
+    author: 'IDE Core', installed: false, enabled: false,
   },
   { 
-    id: 'theme-light-modern', 
-    name: 'Light Modern Theme', 
-    category: 'theme', 
+    id: 'theme-light-modern', name: 'Light Modern Theme', category: 'theme', 
     description: 'Clean, modern light theme.', 
-    longDescription: 'A bright, low-contrast modern light theme designed to reduce eye strain in brightly lit environments. Features elegant typography and subtle accents.',
-    author: 'IDE Core', 
-    installed: true, 
-    enabled: false 
+    longDescription: 'A bright, low-contrast modern light theme designed to reduce eye strain.',
+    author: 'IDE Core', installed: true, enabled: false 
   },
   { 
-    id: 'theme-dracula', 
-    name: 'Dracula Official', 
-    category: 'theme', 
+    id: 'theme-dracula', name: 'Dracula Official', category: 'theme', 
     description: 'Dark theme for many editors, shells, and more.', 
-    longDescription: 'Dracula is a color scheme and UI theme tailored for code editors and terminal emulators. It uses high-contrast pastel colors on a dark background for exceptional readability.',
-    author: 'Community', 
-    installed: true, 
-    enabled: false 
-  },
+    longDescription: 'Dracula is a color scheme and UI theme tailored for code editors and terminal emulators.',
+    author: 'Community', installed: true, enabled: false 
+  }
 ]
 
 export function getExtensionsByCategory() {

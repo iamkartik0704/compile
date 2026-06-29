@@ -1,4 +1,4 @@
-﻿.editor-container {
+.editor-container {
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -122,6 +122,17 @@
   color: var(--text-muted);
   min-height: 28px;
   user-select: none;
+}
+
+.git-lens-ghost-text {
+  color: var(--text-muted) !important;
+  font-style: italic !important;
+  padding-left: 20px !important;
+  opacity: 0.6 !important;
+}
+
+.git-lens-test-bg {
+  background-color: rgba(255, 255, 0, 0.2) !important;
 }
 
 .breadcrumb-segment {

@@ -1,9 +1,13 @@
 import { app, shell, BrowserWindow, ipcMain, safeStorage, dialog, nativeTheme } from 'electron'
 import { join } from 'path'
 import { readFileSync, writeFileSync, existsSync, chmodSync, promises as fsPromises } from 'fs'
+import { exec as execCallback } from 'child_process'
+import { promisify } from 'util'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { terminalManager } from './terminal-manager.js'
 import { startLanguageServer, sendToLanguageServer, getLanguageServerStatusForLanguage, LANGUAGE_METADATA } from './lsp-manager.js'
+
+const exec = promisify(execCallback)
 
 let currentWatcher = null
 
@@ -508,7 +512,8 @@ function createWindow() {
     show: false,
     autoHideMenuBar: true,
     backgroundColor: '#0c0c14',
-    titleBarStyle: 'hiddenInset',
+    titleBarStyle: 'hidden',
+    trafficLightPosition: { x: 12, y: 12 },
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       // ── SECURITY: These two settings are NON-NEGOTIABLE ──
@@ -520,6 +525,17 @@ function createWindow() {
       nodeIntegration: false
     }
   })
+
+  // ── Window control IPC (for custom title bar) ──
+  ipcMain.handle('window-minimize', () => mainWindow.minimize())
+  ipcMain.handle('window-maximize-toggle', () => {
+    if (mainWindow.isMaximized()) mainWindow.unmaximize()
+    else mainWindow.maximize()
+  })
+  ipcMain.handle('window-close', () => mainWindow.close())
+  ipcMain.handle('window-is-maximized', () => mainWindow.isMaximized())
+  mainWindow.on('maximize', () => mainWindow.webContents.send('window-maximized-changed', true))
+  mainWindow.on('unmaximize', () => mainWindow.webContents.send('window-maximized-changed', false))
 
   // Force dark theme so native inputs (like <select> dropdown popups) render correctly
   nativeTheme.themeSource = 'dark'
@@ -578,6 +594,49 @@ function createWindow() {
   // ============================================================
   // LANGUAGE SERVER PROTOCOL (LSP) — Multi-language
   // ============================================================
+
+  // ── Git Operations ──
+  ipcMain.handle('git-status', async (event, cwd) => {
+    try {
+      if (!existsSync(join(cwd, '.git'))) return { error: 'Not a git repository' }
+      const { stdout } = await exec('git status --porcelain', { cwd })
+      return { status: stdout }
+    } catch (e) {
+      return { error: e.message }
+    }
+  })
+
+  ipcMain.handle('git-action', async (event, cwd, action, ...args) => {
+    try {
+      let command = ''
+      if (action === 'add') command = `git add "${args[0]}"`
+      else if (action === 'unstage') command = `git restore --staged "${args[0]}"`
+      else if (action === 'commit') {
+        const msg = args[0].replace(/"/g, '\\"')
+        command = `git commit -m "${msg}"`
+      }
+      else if (action === 'push') command = `git push`
+      else if (action === 'pull') command = `git pull`
+      else if (action === 'show-head') {
+        const filepath = args[0].replace(/\\/g, '/')
+        command = `git show HEAD:"${filepath}"`
+      }
+      else if (action === 'blame') {
+        const filepath = args[0].replace(/\\/g, '/')
+        const line = args[1]
+        command = `git blame -L ${line},${line} --porcelain "${filepath}"`
+      }
+      else if (action === 'log') {
+        command = `git log --graph --pretty=format:"%h|||%an|||%ar|||%s" --all -n 100`
+      }
+      else return { error: 'Unknown action' }
+
+      const { stdout, stderr } = await exec(command, { cwd })
+      return { success: true, stdout, stderr }
+    } catch (e) {
+      return { error: e.message }
+    }
+  })
 
 
   ipcMain.handle('start-lsp', async (event, language) => {
@@ -895,6 +954,64 @@ function createWindow() {
       console.error('Failed to delete API key:', err)
       return { success: false, error: err.message }
     }
+  })
+
+  // ============================================================
+  // EXTENSION COMMANDS (PRODUCTIVITY)
+  // ============================================================
+  
+  ipcMain.handle('run-command', async (event, command, cwd) => {
+    return new Promise((resolve) => {
+      execCallback(command, { cwd }, (error, stdout, stderr) => {
+        resolve({ 
+          error: error ? error.message : null, 
+          stdout, 
+          stderr 
+        })
+      })
+    })
+  })
+
+  ipcMain.handle('open-url', async (event, url) => {
+    const { shell } = require('electron')
+    await shell.openExternal(url)
+    return { success: true }
+  })
+
+  let liveServerProcess = null
+
+  ipcMain.handle('start-live-server', async (event, rootPath, openPath = '') => {
+    if (liveServerProcess) {
+      return { success: false, error: 'Server already running' }
+    }
+    return new Promise((resolve) => {
+      // Spawn npx http-server
+      const { spawn } = require('child_process')
+      liveServerProcess = spawn('npx', ['http-server', './', '-c-1', '-p', '3000'], {
+        cwd: rootPath,
+        shell: true
+      })
+      
+      // Wait a moment for it to start
+      setTimeout(() => {
+        const targetUrl = `http://localhost:3000/${openPath.replace(/\\/g, '/')}`
+        const { shell } = require('electron')
+        shell.openExternal(targetUrl)
+        resolve({ success: true, url: targetUrl, baseUrl: 'http://localhost:3000' })
+      }, 1500)
+
+      liveServerProcess.on('exit', () => {
+        liveServerProcess = null
+      })
+    })
+  })
+
+  ipcMain.handle('stop-live-server', async () => {
+    if (liveServerProcess) {
+      liveServerProcess.kill()
+      liveServerProcess = null
+    }
+    return { success: true }
   })
 }
 

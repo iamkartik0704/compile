@@ -5,11 +5,15 @@ import { useAppStore } from '../store/appStore'
 
 export function ExtensionsPanel({ width, onOpenExtension }) {
   const [searchQuery, setSearchQuery] = useState('')
+  const [activeTab, setActiveTab] = useState('installed') // 'installed' or 'explore'
   const { extensions, toggleExtension, setActiveTheme } = useAppStore()
 
   // We need to re-group using the current global extensions state
   const grouped = {}
   extensions.forEach(ext => {
+    // Filter based on active tab
+    if (activeTab === 'installed' && !ext.enabled) return
+    
     if (!grouped[ext.category]) grouped[ext.category] = []
     grouped[ext.category].push(ext)
   })
@@ -32,19 +36,34 @@ export function ExtensionsPanel({ width, onOpenExtension }) {
         <h2>EXTENSIONS</h2>
       </div>
 
+      <div className="extensions-tabs" style={{ display: 'flex', borderBottom: '1px solid var(--border-base)', marginBottom: '10px' }}>
+        <button 
+          onClick={() => setActiveTab('installed')}
+          style={{ flex: 1, background: 'none', border: 'none', padding: '10px 0', cursor: 'pointer', color: activeTab === 'installed' ? 'var(--text-primary)' : 'var(--text-muted)', borderBottom: activeTab === 'installed' ? '2px solid var(--accent-color)' : '2px solid transparent', fontWeight: activeTab === 'installed' ? 'bold' : 'normal', fontSize: '12px' }}
+        >
+          INSTALLED
+        </button>
+        <button 
+          onClick={() => setActiveTab('explore')}
+          style={{ flex: 1, background: 'none', border: 'none', padding: '10px 0', cursor: 'pointer', color: activeTab === 'explore' ? 'var(--text-primary)' : 'var(--text-muted)', borderBottom: activeTab === 'explore' ? '2px solid var(--accent-color)' : '2px solid transparent', fontWeight: activeTab === 'explore' ? 'bold' : 'normal', fontSize: '12px' }}
+        >
+          EXPLORE
+        </button>
+      </div>
+
       <div className="extensions-search">
         <div className="search-input-wrapper">
           <Search size={14} className="search-icon" />
           <input 
             type="text" 
-            placeholder="Search Extensions in Marketplace"
+            placeholder={activeTab === 'installed' ? "Search Installed..." : "Search Extensions in Marketplace"}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
         </div>
       </div>
 
-      <div className="sidebar-content extensions-list" style={{ padding: '0 10px', overflowY: 'auto' }}>
+      <div className="sidebar-content extensions-list" style={{ padding: '0 10px 20px 10px', overflowY: 'auto', flex: 1 }}>
         {Object.entries(grouped).map(([category, exts]) => {
           const filtered = exts.filter(e => e.name.toLowerCase().includes(searchQuery.toLowerCase()))
           if (filtered.length === 0) return null

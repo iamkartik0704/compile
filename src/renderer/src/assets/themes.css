@@ -1,4 +1,4 @@
-﻿/* Dark Plus (Default VS Code) */
+/* Dark Plus (Default VS Code) */
 body.theme-dark-plus {
   --bg-deep: #1e1e1e;
   --bg-activity: #333333;
@@ -16,6 +16,7 @@ body.theme-dark-plus {
   --accent-blue: #ebd79e;
   --accent-color: #ebd79e;
   --accent-text: #111111;
+  --git-modify-color: #ebd79e;
 }
 
 /* Light Modern */
@@ -36,6 +37,7 @@ body.theme-light-modern {
   --accent-blue: #007acc;
   --accent-color: #007acc;
   --accent-text: #ffffff;
+  --git-modify-color: #b59b58; /* slightly darker beige for light theme visibility */
 }
 
 /* Dracula */
@@ -56,6 +58,7 @@ body.theme-dracula {
   --accent-blue: #8be9fd;
   --accent-color: #bd93f9;
   --accent-text: #282a36;
+  --git-modify-color: #ebd79e;
 }
 
 /* comple Dark */
@@ -76,4 +79,5 @@ body.theme-compile-dark {
   --accent-blue: #ebd79e;
   --accent-color: #ebd79e;
   --accent-text: #111111;
+  --git-modify-color: #ebd79e;
 }

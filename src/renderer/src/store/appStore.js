@@ -1,29 +1,55 @@
-﻿import { create } from 'zustand'
+import { create } from 'zustand'
+import { persist, createJSONStorage } from 'zustand/middleware'
 import { EXTENSIONS } from '../utils/extensionRegistry'
 
-export const useAppStore = create((set) => ({
-  activePanel: 'explorer', // 'explorer', 'search', 'git', 'extensions', 'settings'
-  activeTheme: 'compile-dark', // 'compile-dark', 'dark-plus', 'light-modern', 'dracula'
-  extensions: EXTENSIONS,
-  
-  setActivePanel: (panel) => set({ activePanel: panel }),
-  setActiveTheme: (theme) => set({ activeTheme: theme }),
-  
-  toggleExtension: (id, category) => set((state) => ({
-    extensions: state.extensions.map(ext => {
-      if (ext.id === id) {
-        const newEnabled = !ext.enabled
-        // If it's a theme, activate it instantly via side-effect (handled in App.jsx or below)
-        // We just update the state here.
-        return { ...ext, enabled: newEnabled, installed: newEnabled ? true : ext.installed }
-      }
+export const useAppStore = create(
+  persist(
+    (set) => ({
+      activePanel: 'explorer', // 'explorer', 'search', 'git', 'extensions', 'settings'
+      activeTheme: 'compile-dark', // 'compile-dark', 'dark-plus', 'light-modern', 'dracula'
+      extensions: EXTENSIONS,
       
-      // If we just enabled a theme, disable other themes
-      if (category === 'theme' && ext.category === 'theme') {
-        return { ...ext, enabled: false }
-      }
+      setActivePanel: (panel) => set({ activePanel: panel }),
+      setActiveTheme: (theme) => set({ activeTheme: theme }),
       
-      return ext
-    })
-  }))
-}))
+      toggleExtension: (id, category) => set((state) => ({
+        extensions: state.extensions.map(ext => {
+          if (ext.id === id) {
+            const newEnabled = !ext.enabled
+            return { ...ext, enabled: newEnabled, installed: newEnabled ? true : ext.installed }
+          }
+          if (category === 'theme' && ext.category === 'theme') {
+            return { ...ext, enabled: false }
+          }
+          return ext
+        })
+      }))
+    }),
+    {
+      name: 'app-storage',
+      partialize: (state) => ({
+        activeTheme: state.activeTheme,
+        enabledExtensions: state.extensions.filter(e => e.enabled).map(e => e.id)
+      }),
+      merge: (persistedState, currentState) => {
+        const mergedExtensions = currentState.extensions.map(ext => {
+          // If enabledExtensions is undefined, we use the default ext.enabled
+          const isEnabled = persistedState.enabledExtensions 
+            ? persistedState.enabledExtensions.includes(ext.id) 
+            : ext.enabled
+            
+          return {
+            ...ext,
+            enabled: isEnabled,
+            installed: isEnabled ? true : ext.installed
+          }
+        })
+        return {
+          ...currentState,
+          activeTheme: persistedState.activeTheme || currentState.activeTheme,
+          extensions: mergedExtensions
+        }
+      }
+    }
+  )
+)
