@@ -1,4 +1,4 @@
-/* Dark Plus (Default VS Code) */
+﻿/* Dark Plus (Default VS Code) */
 body.theme-dark-plus {
   --bg-deep: #1e1e1e;
   --bg-activity: #333333;
@@ -12,8 +12,10 @@ body.theme-dark-plus {
   --text-secondary: #858585;
   --text-muted: #858585;
   --text-bright: #ffffff;
-  --accent-purple: #007acc;
-  --accent-blue: #007acc;
+  --accent-purple: #ebd79e;
+  --accent-blue: #ebd79e;
+  --accent-color: #ebd79e;
+  --accent-text: #111111;
 }
 
 /* Light Modern */
@@ -32,6 +34,8 @@ body.theme-light-modern {
   --text-bright: #000000;
   --accent-purple: #007acc;
   --accent-blue: #007acc;
+  --accent-color: #007acc;
+  --accent-text: #ffffff;
 }
 
 /* Dracula */
@@ -50,4 +54,26 @@ body.theme-dracula {
   --text-bright: #ffffff;
   --accent-purple: #bd93f9;
   --accent-blue: #8be9fd;
+  --accent-color: #bd93f9;
+  --accent-text: #282a36;
+}
+
+/* comple Dark */
+body.theme-compile-dark {
+  --bg-deep: #111111;
+  --bg-activity: #181818;
+  --bg-sidebar: #151515;
+  --bg-surface: #111111;
+  --bg-elevated: #222222;
+  --bg-input: #222222;
+  --border-base: #2a2a2a;
+  --border-subtle: #2a2a2a;
+  --text-primary: #e0e0e0;
+  --text-secondary: #858585;
+  --text-muted: #858585;
+  --text-bright: #ffffff;
+  --accent-purple: #ebd79e;
+  --accent-blue: #ebd79e;
+  --accent-color: #ebd79e;
+  --accent-text: #111111;
 }

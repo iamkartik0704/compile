@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { Sidebar } from './components/Sidebar'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { CodeEditor } from './components/CodeEditor'
 import { TerminalPanel } from './components/TerminalPanel'
 import { Resizer } from './components/Resizer'
@@ -888,6 +889,7 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
             setProjectRoot={setProjectRoot}
             onOpenFile={handleOpenFile}
             width={sidebarWidth}
+            setShowVisualizer={setShowVisualizer}
           />
         )}
         
@@ -998,7 +1000,8 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
         <div className="content-split">
           <div className="editor-pane" style={{ display: 'flex', flexDirection: 'column' }}>
             <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-              <CodeEditor
+              <ErrorBoundary>
+<CodeEditor
                 openFiles={openFiles}
                 setOpenFiles={setOpenFiles}
                 activeFile={activeFile}
@@ -1015,6 +1018,7 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
                 }}
                 onRun={handleRunFile}
               />
+</ErrorBoundary>
             </div>
             {showTerminal && (
               <div className="bottom-panel" style={{ height: terminalHeight, display: 'flex', flexDirection: 'column', background: 'var(--bg-deep)', borderTop: '1px solid var(--border-base)', position: 'relative', boxShadow: '0 -4px 15px rgba(0,0,0,0.1)' }}>

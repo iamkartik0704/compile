@@ -84,7 +84,7 @@ export function ExtensionsPanel({ width, onOpenExtension }) {
                       ) : (
                         <button 
                           onClick={(e) => { e.stopPropagation(); handleToggle(ext.id, ext.category); }}
-                          style={{ background: '#0e639c', color: 'white', border: 'none', padding: '4px 10px', borderRadius: '4px', fontSize: '11px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                          style={{ background: 'var(--accent-color)', color: 'var(--accent-text)', border: 'none', padding: '4px 10px', borderRadius: '4px', fontSize: '11px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
                         >
                           <Download size={12} /> Install
                         </button>

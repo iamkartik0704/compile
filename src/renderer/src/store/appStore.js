@@ -1,9 +1,9 @@
-import { create } from 'zustand'
+﻿import { create } from 'zustand'
 import { EXTENSIONS } from '../utils/extensionRegistry'
 
 export const useAppStore = create((set) => ({
   activePanel: 'explorer', // 'explorer', 'search', 'git', 'extensions', 'settings'
-  activeTheme: 'dark-plus', // 'dark-plus', 'light-modern', 'dracula'
+  activeTheme: 'compile-dark', // 'compile-dark', 'dark-plus', 'light-modern', 'dracula'
   extensions: EXTENSIONS,
   
   setActivePanel: (panel) => set({ activePanel: panel }),

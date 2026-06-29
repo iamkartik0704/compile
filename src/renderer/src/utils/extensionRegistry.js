@@ -131,15 +131,25 @@ export const EXTENSIONS = [
   },
   
   // Themes
-  { 
-    id: 'theme-dark-plus', 
-    name: 'Dark Plus Theme', 
-    category: 'theme', 
-    description: 'Default dark theme based on standard IDEs.', 
-    longDescription: 'The classic Dark Plus theme that provides a familiar, high-contrast dark mode environment tailored for late-night coding sessions. Provides carefully calibrated syntax highlighting colors.',
-    author: 'IDE Core', 
-    installed: true, 
-    enabled: true 
+  {
+    id: 'theme-compile-dark',
+    name: 'comπle Dark Theme',
+    description: 'The original comπle editor dark theme.',
+    longDescription: 'The official dark theme of comπle Editor, featuring a dark olive/gray background and elegant cream accents for an undistracted coding experience.',
+    author: 'IDE Core',
+    category: 'theme',
+    installed: true,
+    enabled: true,
+  },
+  {
+    id: 'theme-dark-plus',
+    name: 'Dark Plus Theme',
+    description: 'Default dark theme based on standard IDEs.',
+    longDescription: 'A familiar, high-contrast dark theme that closely matches the default look of popular code editors like VS Code.',
+    author: 'IDE Core',
+    category: 'theme',
+    installed: false,
+    enabled: false,
   },
   { 
     id: 'theme-light-modern', 

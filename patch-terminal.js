@@ -1,48 +1,32 @@
-const fs = require('fs');
-const file = 'src/renderer/src/components/TerminalPanel.jsx';
-let content = fs.readFileSync(file, 'utf8');
+﻿const fs = require('fs');
 
-// 1. Change to forwardRef
-content = content.replace(
-  "import React, { useEffect, useRef, useState } from 'react'",
-  "import React, { useEffect, useRef, useState, forwardRef, useImperativeHandle } from 'react'"
-);
+let term = fs.readFileSync('src/renderer/src/components/TerminalPanel.jsx', 'utf8');
 
-content = content.replace(
-  "export const TerminalPanel = ({ height, cwd }) => {",
-  "export const TerminalPanel = forwardRef(({ height, cwd }, ref) => {"
-);
-
-// 2. Add useImperativeHandle before return
-const imperativeHandleCode = `  useImperativeHandle(ref, () => ({
-    executeCommand: (cmd) => {
-      if (terminalId.current !== null) {
-        window.api.sendTerminalData(terminalId.current, cmd + '\\r')
-      }
-    },
-    getBuffer: () => {
-      if (terminalInstance.current) {
-        const buffer = terminalInstance.current.buffer.active
-        const length = buffer.length
-        let text = ''
-        // Get the last 100 lines max
-        const start = Math.max(0, length - 100)
-        for (let i = start; i < length; i++) {
-          const line = buffer.getLine(i)
-          if (line) text += line.translateToString(true) + '\\n'
-        }
-        return text
-      }
-      return ''
+// 1. Add compile-dark theme to getXtermTheme
+if (!term.includes("if (activeTheme === 'compile-dark')")) {
+  const compileDarkTheme = 
+  if (activeTheme === 'compile-dark') {
+    return {
+      background: '#111111',
+      foreground: '#d4d4d4',
+      cursor: '#ebd79e',
+      selection: 'rgba(235, 215, 158, 0.3)',
+      black: '#000000',
+      red: '#cd3131',
+      green: '#0dbc79',
+      yellow: '#e5e510',
+      blue: '#2472c8',
+      magenta: '#bc3fbc',
+      cyan: '#11a8cd',
+      white: '#e5e5e5',
     }
-  }))
+  }
+;
+  term = term.replace("const getXtermTheme = (activeTheme) => {", "const getXtermTheme = (activeTheme) => {" + compileDarkTheme);
+}
 
-  return (`;
+// 2. Fix the Fix with AI button text color
+term = term.replace("background: 'var(--accent-color)', color: 'var(--bg-main)'", "background: 'var(--accent-color)', color: 'var(--accent-text)'");
 
-content = content.replace("  return (", imperativeHandleCode);
-
-// 3. Fix the closing brace
-content += "})\n";
-
-fs.writeFileSync(file, content);
-console.log('TerminalPanel refactored');
+fs.writeFileSync('src/renderer/src/components/TerminalPanel.jsx', term, 'utf8');
+console.log('TerminalPanel.jsx updated successfully!');

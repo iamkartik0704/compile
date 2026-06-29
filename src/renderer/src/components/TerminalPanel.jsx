@@ -6,6 +6,23 @@ import '../assets/terminal.css'
 import { useAppStore } from '../store/appStore'
 
 const getXtermTheme = (activeTheme) => {
+  if (activeTheme === 'compile-dark') {
+    return {
+      background: '#111111',
+      foreground: '#d4d4d4',
+      cursor: '#ebd79e',
+      selection: 'rgba(235, 215, 158, 0.3)',
+      black: '#000000',
+      red: '#cd3131',
+      green: '#0dbc79',
+      yellow: '#e5e510',
+      blue: '#2472c8',
+      magenta: '#bc3fbc',
+      cyan: '#11a8cd',
+      white: '#e5e5e5',
+    }
+  }
+
   if (activeTheme === 'light-modern') {
     return {
       background: '#ffffff',
@@ -190,7 +207,7 @@ export const TerminalPanel = forwardRef(({ height, cwd, onFixWithAi, hideHeader 
           {onFixWithAi && (
             <button 
               onClick={onFixWithAi} 
-              style={{ background: 'var(--accent-color)', color: 'var(--bg-main)', border: 'none', padding: '2px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}
+              style={{ background: 'var(--accent-color)', color: 'var(--accent-text)', border: 'none', padding: '2px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}
             >
               ✨ Fix with AI
             </button>
@@ -201,3 +218,5 @@ export const TerminalPanel = forwardRef(({ height, cwd, onFixWithAi, hideHeader 
     </div>
   )
 })
+
+// force hmr 2

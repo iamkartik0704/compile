@@ -708,6 +708,7 @@ export const CodeEditor = ({
   const { extensions, toggleExtension, activeTheme, setActiveTheme } = useAppStore()
   const monacoTheme = activeTheme === 'light-modern' ? 'vs' : 'vs-dark'
   const [originalText, setOriginalText] = useState(null)
+  const [showDiff, setShowDiff] = useState(false)
 
   const [inlineAi, setInlineAi] = useState({
     visible: false,
@@ -1150,7 +1151,7 @@ export const CodeEditor = ({
                       {ext.enabled ? (
                         <button onClick={handleToggle} style={{ background: 'var(--bg-elevated)', color: 'var(--text-primary)', border: '1px solid var(--border-base)', padding: '6px 16px', borderRadius: '4px', cursor: 'pointer' }}>Manage</button>
                       ) : (
-                        <button onClick={handleToggle} style={{ background: '#0e639c', color: 'white', border: 'none', padding: '6px 16px', borderRadius: '4px', cursor: 'pointer' }}>Install</button>
+                        <button onClick={handleToggle} style={{ background: 'var(--accent-color)', color: 'var(--accent-text)', border: 'none', padding: '6px 16px', borderRadius: '4px', cursor: 'pointer' }}>Install</button>
                       )}
                     </div>
                   </div>

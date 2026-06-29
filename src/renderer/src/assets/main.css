@@ -388,7 +388,7 @@ body {
 .empty-icon {
   font-size: 48px;
   font-weight: 800;
-  background: var(--gradient-primary);
+  background: var(--accent-color);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -455,8 +455,8 @@ body {
 }
 
 .avatar-ai {
-  background: var(--gradient-primary);
-  color: white;
+  background: var(--accent-color);
+  color: var(--accent-text);
   font-size: 14px;
   font-weight: 800;
 }
@@ -574,10 +574,10 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--gradient-primary);
+  background: var(--accent-color);
   border: none;
   border-radius: var(--radius-sm);
-  color: white;
+  color: var(--accent-text);
   cursor: pointer;
   flex-shrink: 0;
   transition: all var(--duration-fast) var(--ease);
