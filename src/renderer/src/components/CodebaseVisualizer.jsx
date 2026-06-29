@@ -126,13 +126,13 @@ const CustomNode = ({ data }) => {
   const Icon = config.icon
 
   return (
-    <div 
-      style={{ 
-        background: 'rgba(20, 21, 23, 0.85)', 
+    <div
+      style={{
+        background: 'var(--bg-surface)',
         backdropFilter: 'blur(12px)',
-        border: `1px solid ${config.color}55`, 
-        borderRadius: '12px', 
-        color: 'var(--text-main)', 
+        border: `1px solid ${config.color}55`,
+        borderRadius: '12px',
+        color: 'var(--text-primary)',
         width: '260px',
         boxShadow: `0 8px 32px 0 rgba(0, 0, 0, 0.3), inset 0 0 0 1px ${config.color}22`,
         overflow: 'hidden',
@@ -149,16 +149,16 @@ const CustomNode = ({ data }) => {
         e.currentTarget.style.boxShadow = `0 8px 32px 0 rgba(0, 0, 0, 0.3), inset 0 0 0 1px ${config.color}22`
       }}
     >
-      <Handle type="target" position={Position.Top} style={{ background: config.color, width: '12px', height: '12px', top: '-6px', border: '2px solid #1a1b1e' }} />
-      
+      <Handle type="target" position={Position.Top} style={{ background: config.color, width: '12px', height: '12px', top: '-6px', border: '2px solid var(--bg-deep)' }} />
+
       {/* Header */}
-      <div style={{ 
-        display: 'flex', 
-        alignItems: 'center', 
-        gap: '10px', 
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: '10px',
         padding: '12px 16px',
         background: `linear-gradient(90deg, ${config.bg} 0%, transparent 100%)`,
-        borderBottom: '1px solid rgba(255,255,255,0.05)'
+        borderBottom: '1px solid var(--border-base)'
       }}>
         <div style={{ 
           width: '32px', height: '32px', borderRadius: '8px', 
@@ -190,9 +190,9 @@ const CustomNode = ({ data }) => {
         {exports && exports.length > 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             {exports.map((ex, i) => (
-              <div key={i} style={{ 
-                fontSize: '12px', 
-                color: 'var(--text-main)',
+              <div key={i} style={{
+                fontSize: '12px',
+                color: 'var(--text-primary)',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '6px'
@@ -209,7 +209,7 @@ const CustomNode = ({ data }) => {
         )}
       </div>
 
-      <Handle type="source" position={Position.Bottom} style={{ background: config.color, width: '12px', height: '12px', bottom: '-6px', border: '2px solid #1a1b1e' }} />
+      <Handle type="source" position={Position.Bottom} style={{ background: config.color, width: '12px', height: '12px', bottom: '-6px', border: '2px solid var(--bg-deep)' }} />
     </div>
   )
 }
@@ -219,8 +219,8 @@ const FolderGroupNode = ({ data, selected }) => {
     <div style={{
       width: data.width,
       height: data.height,
-      background: 'rgba(79, 70, 229, 0.05)',
-      border: `1px solid ${selected ? 'rgba(6, 182, 212, 0.8)' : 'rgba(79, 70, 229, 0.3)'}`,
+      background: 'var(--bg-elevated)',
+      border: `1px solid ${selected ? 'var(--accent-color)' : 'var(--border-base)'}`,
       borderRadius: '8px',
       transition: 'all 0.2s ease',
       display: 'flex',
@@ -228,24 +228,24 @@ const FolderGroupNode = ({ data, selected }) => {
       position: 'relative'
     }}>
       <div style={{
-        background: 'rgba(79, 70, 229, 0.15)',
+        background: 'var(--bg-activity)',
         padding: '8px 12px',
-        borderBottom: '1px solid rgba(79, 70, 229, 0.3)',
+        borderBottom: '1px solid var(--border-base)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between'
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#fff', fontSize: '13px', fontWeight: '600' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-bright)', fontSize: '13px', fontWeight: '600' }}>
           <Folder size={16} color="var(--accent-color)" />
           {data.label}
         </div>
-        <button 
+        <button
           onClick={(e) => {
             e.stopPropagation();
             data.onToggle();
           }}
-          style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', padding: '4px', borderRadius: '4px' }}
-          onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+          style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', cursor: 'pointer', padding: '4px', borderRadius: '4px' }}
+          onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-input)'}
           onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
         >
           {data.collapsed ? <ChevronDown size={16}/> : <ChevronUp size={16}/>}
@@ -488,34 +488,34 @@ function VisualizerFlow({ projectRoot, onClose, onFileSelect }) {
   }, [setEdges])
 
   return (
-    <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, background: '#0a0a0c', zIndex: 100, display: 'flex', flexDirection: 'column', fontFamily: 'Inter, sans-serif' }}>
-      <div style={{ 
-        padding: '16px 24px', 
-        background: 'rgba(20, 21, 23, 0.7)',
+    <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, background: 'var(--bg-deep)', zIndex: 100, display: 'flex', flexDirection: 'column', fontFamily: 'Inter, sans-serif' }}>
+      <div style={{
+        padding: '16px 24px',
+        background: 'var(--bg-activity)',
         backdropFilter: 'blur(20px)',
-        borderBottom: '1px solid rgba(255,255,255,0.05)', 
-        display: 'flex', 
-        justifyContent: 'space-between', 
+        borderBottom: '1px solid var(--border-base)',
+        display: 'flex',
+        justifyContent: 'space-between',
         alignItems: 'center',
         zIndex: 10
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <Database color="var(--accent-color)" size={22} />
-          <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '600', background: 'linear-gradient(90deg, #fff, #aaa)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+          <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '600', background: 'linear-gradient(90deg, var(--text-bright), var(--text-muted))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
             Codebase Visualizer
           </h2>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           {/* Search Bar */}
-          <input 
+          <input
             type="text"
             placeholder="Find file..."
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             style={{
-              background: 'rgba(0,0,0,0.4)',
-              border: '1px solid rgba(255,255,255,0.1)',
-              color: '#fff',
+              background: 'var(--bg-input)',
+              border: '1px solid var(--border-base)',
+              color: 'var(--text-primary)',
               padding: '6px 12px',
               borderRadius: '6px',
               fontSize: '13px',
@@ -523,12 +523,12 @@ function VisualizerFlow({ projectRoot, onClose, onFileSelect }) {
               width: '180px'
             }}
           />
-          <div style={{ display: 'flex', background: 'rgba(0,0,0,0.4)', borderRadius: '6px', padding: '4px', gap: '4px', border: '1px solid rgba(255,255,255,0.05)' }}>
+          <div style={{ display: 'flex', background: 'var(--bg-input)', borderRadius: '6px', padding: '4px', gap: '4px', border: '1px solid var(--border-base)' }}>
             <button
               onClick={() => setHideOrphans(v => !v)}
               style={{
-                background: hideOrphans ? 'rgba(6, 182, 212, 0.2)' : 'transparent',
-                color: hideOrphans ? '#06b6d4' : 'var(--text-muted)',
+                background: hideOrphans ? 'var(--accent-color)' : 'transparent',
+                color: hideOrphans ? 'var(--accent-text)' : 'var(--text-muted)',
                 border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: '500', transition: 'all 0.2s'
               }}
             >
@@ -537,20 +537,20 @@ function VisualizerFlow({ projectRoot, onClose, onFileSelect }) {
             <button
               onClick={() => setHideNonCode(v => !v)}
               style={{
-                background: hideNonCode ? 'rgba(6, 182, 212, 0.2)' : 'transparent',
-                color: hideNonCode ? '#06b6d4' : 'var(--text-muted)',
+                background: hideNonCode ? 'var(--accent-color)' : 'transparent',
+                color: hideNonCode ? 'var(--accent-text)' : 'var(--text-muted)',
                 border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: '500', transition: 'all 0.2s'
               }}
             >
               Code Only
             </button>
           </div>
-          <div style={{ display: 'flex', background: 'rgba(0,0,0,0.4)', borderRadius: '6px', padding: '4px', gap: '4px', border: '1px solid rgba(255,255,255,0.05)' }}>
+          <div style={{ display: 'flex', background: 'var(--bg-input)', borderRadius: '6px', padding: '4px', gap: '4px', border: '1px solid var(--border-base)' }}>
             <button
               onClick={() => setLayoutMode('folder')}
               style={{
-                background: layoutMode === 'folder' ? 'rgba(255,255,255,0.1)' : 'transparent',
-                color: layoutMode === 'folder' ? '#fff' : 'var(--text-muted)',
+                background: layoutMode === 'folder' ? 'var(--bg-elevated)' : 'transparent',
+                color: layoutMode === 'folder' ? 'var(--text-bright)' : 'var(--text-muted)',
                 border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: '500', transition: 'all 0.2s'
               }}
             >
@@ -559,30 +559,29 @@ function VisualizerFlow({ projectRoot, onClose, onFileSelect }) {
             <button
               onClick={() => setLayoutMode('dagre')}
               style={{
-                background: layoutMode === 'dagre' ? 'rgba(255,255,255,0.1)' : 'transparent',
-
-                color: layoutMode === 'dagre' ? '#fff' : 'var(--text-muted)',
+                background: layoutMode === 'dagre' ? 'var(--bg-elevated)' : 'transparent',
+                color: layoutMode === 'dagre' ? 'var(--text-bright)' : 'var(--text-muted)',
                 border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: '500', transition: 'all 0.2s'
               }}
             >
               Dependency Flow
             </button>
           </div>
-          <button 
-            onClick={onClose} 
-            style={{ 
-              background: 'rgba(255,255,255,0.05)', 
-              border: '1px solid rgba(255,255,255,0.1)', 
-              color: 'var(--text-main)', 
-              padding: '8px 16px', 
-              borderRadius: '6px', 
+          <button
+            onClick={onClose}
+            style={{
+              background: 'var(--bg-elevated)',
+              border: '1px solid var(--border-base)',
+              color: 'var(--text-primary)',
+              padding: '8px 16px',
+              borderRadius: '6px',
               cursor: 'pointer',
               fontSize: '13px',
               fontWeight: '500',
               transition: 'background 0.2s'
             }}
-            onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
-            onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
+            onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-input)'}
+            onMouseLeave={e => e.currentTarget.style.background = 'var(--bg-elevated)'}
           >
             Close Diagram
           </button>
@@ -592,15 +591,15 @@ function VisualizerFlow({ projectRoot, onClose, onFileSelect }) {
       <div style={{ flex: 1, position: 'relative' }}>
         {loading ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)' }}>
-            <div style={{ width: '40px', height: '40px', border: '3px solid rgba(255,255,255,0.1)', borderTopColor: 'var(--accent-color)', borderRadius: '50%', animation: 'spin 1s linear infinite', marginBottom: '16px' }} />
+            <div style={{ width: '40px', height: '40px', border: '3px solid var(--border-base)', borderTopColor: 'var(--accent-color)', borderRadius: '50%', animation: 'spin 1s linear infinite', marginBottom: '16px' }} />
             <span style={{ fontSize: '15px', letterSpacing: '0.5px' }}>Mapping Project Dependencies...</span>
             <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
           </div>
         ) : (
-          <ReactFlow 
-            nodes={displayNodes} 
-            edges={edges} 
-            onNodesChange={onNodesChange} 
+          <ReactFlow
+            nodes={displayNodes}
+            edges={edges}
+            onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             nodeTypes={nodeTypes}
             onNodeClick={(e, node) => {
@@ -613,18 +612,49 @@ function VisualizerFlow({ projectRoot, onClose, onFileSelect }) {
             defaultViewport={{ x: 0, y: 0, zoom: 0.8 }}
             minZoom={0.05}
             maxZoom={2}
+            proOptions={{ hideAttribution: true }}
           >
-            <Background color="#ffffff" variant="dots" gap={20} size={1} opacity={0.05} />
+            <Background color="var(--text-muted)" variant="dots" gap={20} size={1} opacity={0.15} />
             <Controls style={{ display: 'flex', flexDirection: 'row', gap: '4px' }} position="bottom-center" />
-            <MiniMap 
+            <MiniMap
               pannable
               zoomable
               nodeColor={(node) => getLanguageConfig(node.data.ext, node.data.type).color}
               maskColor="rgba(0, 0, 0, 0.7)"
-              style={{ background: 'rgba(20, 21, 23, 0.9)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', overflow: 'hidden' }}
+              style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-base)', borderRadius: '8px', overflow: 'hidden' }}
             />
           </ReactFlow>
         )}
+        <style>{`
+          .react-flow__controls {
+            background: var(--bg-activity) !important;
+            border: 1px solid var(--border-base) !important;
+            border-radius: 8px !important;
+            overflow: hidden;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25) !important;
+          }
+          .react-flow__controls-button {
+            background: var(--bg-activity) !important;
+            border: none !important;
+            border-right: 1px solid var(--border-base) !important;
+            color: var(--text-primary) !important;
+            width: 32px !important;
+            height: 32px !important;
+            transition: background 0.15s ease, color 0.15s ease;
+          }
+          .react-flow__controls-button:last-child {
+            border-right: none !important;
+          }
+          .react-flow__controls-button:hover {
+            background: var(--bg-elevated) !important;
+            color: var(--accent-color) !important;
+          }
+          .react-flow__controls-button svg {
+            fill: currentColor !important;
+            max-width: 16px;
+            max-height: 16px;
+          }
+        `}</style>
       </div>
     </div>
   )
