@@ -159,7 +159,8 @@ export const Sidebar = ({
   projectRoot,
   setProjectRoot,
   onOpenFile,
-  width
+  width,
+  setShowVisualizer
 }) => {
   const [rootChildren, setRootChildren] = useState([])
   

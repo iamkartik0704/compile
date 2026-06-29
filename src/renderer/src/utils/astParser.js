@@ -33,7 +33,15 @@ export async function initTreeSitter(languageName) {
     'c': 'tree-sitter-cpp.wasm',
     'java': 'tree-sitter-java.wasm',
     'go': 'tree-sitter-go.wasm',
-    'rust': 'tree-sitter-rust.wasm'
+    'rust': 'tree-sitter-rust.wasm',
+    'csharp': 'tree-sitter-c-sharp.wasm',
+    'c-sharp': 'tree-sitter-c-sharp.wasm',
+    'php': 'tree-sitter-php.wasm',
+    'ruby': 'tree-sitter-ruby.wasm',
+    'bash': 'tree-sitter-bash.wasm',
+    'shell': 'tree-sitter-bash.wasm',
+    'powershell': 'tree-sitter-powershell.wasm',
+    'css': 'tree-sitter-css.wasm'
   }
 
   const wasmFile = langMap[normLang]
@@ -113,35 +121,51 @@ export async function skeletonizeCode(code, language) {
     
     const replaceRanges = []
 
-    // Types of nodes that typically represent the body of a function/method
-    const blockTypes = new Set(['statement_block', 'block', 'compound_statement'])
-    
-    // Types of nodes that represent a function or method
-    const funcTypes = new Set([
-      'function_declaration', 'method_definition', 'arrow_function',
-      'function_definition', 'method_declaration', 'function_item'
-    ])
+    // Body-node types across supported languages (used as a fallback when
+    // childForFieldName('body') doesn't return anything for this grammar)
+    const blockTypes = new Set(['statement_block', 'block', 'compound_statement', 'function_body'])
 
-    let nodesWalked = 0;
+    // Heuristic: a node represents a function/method we want to skeletonize when
+    // its type contains any of these tokens AND does not contain "type" (which
+    // would match TS function-type annotations like `function_type`).
+    const funcTypeHints = ['function', 'method', 'lambda', 'arrow']
+
+    function isFunctionLike(type) {
+      if (!type) return false
+      if (type.includes('type')) return false           // skip `function_type`
+      if (type === 'class_declaration') return false    // never skeletonize a whole class body
+      if (type === 'class_definition') return false
+      return funcTypeHints.some((hint) => type.includes(hint))
+    }
+
+    function findBodyBlock(node) {
+      // Prefer the canonical `body` field — works across grammar versions.
+      try {
+        const body = node.childForFieldName && node.childForFieldName('body')
+        if (body && blockTypes.has(body.type)) return body
+      } catch (_) { /* some grammars don't define the field — fall through */ }
+
+      // Fallback: scan direct children for a known block type.
+      for (let i = 0; i < node.childCount; i++) {
+        const child = node.child(i)
+        if (child && blockTypes.has(child.type)) return child
+      }
+      return null
+    }
+
+    let nodesWalked = 0
+    const foundTypes = new Set()
     function walk(node) {
-      nodesWalked++;
-      if (funcTypes.has(node.type)) {
-        // Find the block child
-        for (let i = 0; i < node.childCount; i++) {
-          const child = node.child(i)
-          if (blockTypes.has(child.type)) {
-            replaceRanges.push({
-              start: child.startIndex !== undefined ? child.startIndex : (child.startPosition ? child.startPosition.column : 0), // fallback
-              end: child.endIndex !== undefined ? child.endIndex : (child.endPosition ? child.endPosition.column : 0),
-              startNode: child.startIndex, // debug
-              type: child.type,
-              replacement: '{ /* ... */ }'
-            })
-            return 
-          }
+      nodesWalked++
+      if (isFunctionLike(node.type)) {
+        foundTypes.add(node.type)
+        const body = findBodyBlock(node)
+        if (body && typeof body.startIndex === 'number' && typeof body.endIndex === 'number' && body.endIndex > body.startIndex) {
+          replaceRanges.push({ start: body.startIndex, end: body.endIndex })
+          // Still recurse so we can skeletonize nested functions inside this one.
         }
       }
-      
+
       for (let i = 0; i < node.childCount; i++) {
         walk(node.child(i))
       }
@@ -150,22 +174,26 @@ export async function skeletonizeCode(code, language) {
     walk(tree.rootNode)
 
     if (replaceRanges.length === 0) {
-       return { code, error: `No functions replaced. Walked ${nodesWalked} nodes. Root type: ${tree.rootNode.type}. Has error: ${tree.rootNode.hasError()}` }
-    }
-    
-    if (replaceRanges[0].startNode === undefined) {
-       return { code, error: `startIndex is undefined! Node keys: ${Object.keys(tree.rootNode).join(', ')}` }
+      return {
+        code,
+        error: `No skeletonizable function bodies found. Walked ${nodesWalked} nodes. Root: ${tree.rootNode.type}. Matched func types: [${[...foundTypes].join(', ') || 'none'}]. Parse error: ${tree.rootNode.hasError}`
+      }
     }
 
-    // Sort ranges descending by startIndex to replace from back to front safely
+    // Sort descending and drop ranges fully contained inside another range so
+    // outer-body replacement wins (we don't try to skeletonize nested function
+    // bodies inside an already-replaced outer body).
     replaceRanges.sort((a, b) => b.start - a.start)
+    const finalRanges = []
+    for (const r of replaceRanges) {
+      const containedInLater = finalRanges.some((kept) => r.start >= kept.start && r.end <= kept.end)
+      if (!containedInLater) finalRanges.push(r)
+    }
 
+    const placeholder = language === 'python' ? '...' : '{ /* ... */ }'
     let skeletonized = code
-    for (const range of replaceRanges) {
-      // Small adjustment for Python since it uses indentation, but {} works as a visual placeholder for now
-      let replacement = range.replacement
-      if (language === 'python') replacement = '...\n'
-      skeletonized = skeletonized.substring(0, range.start) + replacement + skeletonized.substring(range.end)
+    for (const range of finalRanges) {
+      skeletonized = skeletonized.substring(0, range.start) + placeholder + skeletonized.substring(range.end)
     }
 
     return { code: skeletonized, error: null }

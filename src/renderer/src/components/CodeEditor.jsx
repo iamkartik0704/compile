@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import Editor, { loader, DiffEditor } from '@monaco-editor/react'
 import * as monaco from 'monaco-editor'
 import { applyDiff } from '../diffUtils'
-import { X, Save, Circle, Sparkles } from 'lucide-react'
+import { X, Save, Circle, Sparkles, ChevronRight } from 'lucide-react'
 import { ContextInspector } from './ContextInspector'
 import { useAppStore } from '../store/appStore'
 import { EXTENSIONS } from '../utils/extensionRegistry'
@@ -1013,12 +1013,12 @@ export const CodeEditor = ({
         {/* Run & Optimizer Button Container inside tabs header */}
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px', paddingRight: '12px' }}>
           <button
-            className="action-btn"
+            className="action-btn compress-context-btn"
             onClick={(e) => {
               e.stopPropagation()
               setShowContextInspector(true)
             }}
-            style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(6, 182, 212, 0.1)', color: '#06b6d4', padding: '4px 12px', border: '1px solid rgba(6, 182, 212, 0.2)', borderRadius: '4px', cursor: 'pointer', fontWeight: 500, fontSize: '0.85rem' }}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'var(--bg-elevated)', color: 'var(--accent-color)', padding: '4px 12px', border: '1px solid var(--border-base)', borderRadius: '4px', cursor: 'pointer', fontWeight: 500, fontSize: '0.85rem' }}
           >
             <Sparkles size={14} />
             Compress Context
@@ -1072,6 +1072,23 @@ export const CodeEditor = ({
           </div>
         </div>
       )}
+
+      {activeFile && !activeFile.startsWith('ext:') && (() => {
+        const relPath = projectRoot && activeFile.startsWith(projectRoot)
+          ? activeFile.substring(projectRoot.length).replace(/^[\\/]/, '')
+          : activeFile
+        const parts = relPath.split(/[\\/]/).filter(Boolean)
+        return (
+          <div className="editor-breadcrumb">
+            {parts.map((part, i) => (
+              <span key={i} className="breadcrumb-segment">
+                {i > 0 && <ChevronRight size={12} className="breadcrumb-sep" />}
+                <span className={i === parts.length - 1 ? 'breadcrumb-current' : 'breadcrumb-part'}>{part}</span>
+              </span>
+            ))}
+          </div>
+        )
+      })()}
 
       <div className="editor-body">
         {inlineAi.visible && (

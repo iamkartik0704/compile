@@ -1055,7 +1055,7 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
                   <button
                     onClick={handleFixWithAi}
                     disabled={aiDebugger.loading || isStreaming}
-                    style={{ background: 'var(--accent-purple)', color: '#ffffff', border: 'none', padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}
+                    style={{ background: 'var(--accent-color)', color: 'var(--accent-text)', border: 'none', padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}
                   >
                     ✨ Fix with AI
                   </button>

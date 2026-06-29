@@ -73,7 +73,7 @@
   color: var(--text-primary);
   border-bottom: 1px solid var(--bg-deep); /* Hide border under active tab */
   margin-bottom: -1px; /* Overlap border */
-  border-top: 2px solid #60a5fa;
+  border-top: 2px solid var(--accent-color);
 }
 
 .tab-name {
@@ -107,7 +107,47 @@
 }
 
 .dirty-dot {
-  color: #fbbf24; /* Amber */
+  color: var(--accent-color);
+}
+
+/* File Path Breadcrumb (under editor tabs) */
+.editor-breadcrumb {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 6px 16px;
+  background: var(--bg-deep);
+  border-bottom: 1px solid var(--border-base);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  min-height: 28px;
+  user-select: none;
+}
+
+.breadcrumb-segment {
+  display: inline-flex;
+  align-items: center;
+}
+
+.breadcrumb-sep {
+  margin: 0 4px;
+  color: var(--text-muted);
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+
+.breadcrumb-part {
+  color: var(--text-muted);
+  transition: color 0.15s ease;
+}
+
+.breadcrumb-part:hover {
+  color: var(--text-primary);
+}
+
+.breadcrumb-current {
+  color: var(--text-primary);
+  font-weight: 500;
 }
 
 /* Editor Body */
