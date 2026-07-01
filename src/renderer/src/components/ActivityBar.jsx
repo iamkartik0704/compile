@@ -1,9 +1,36 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { Files, Search, GitBranch, Blocks, Settings, Database, Box, Anchor, FolderHeart, Send, Bug } from 'lucide-react'
 import { useAppStore } from '../store/appStore'
 
-export function ActivityBar({ onShowVisualizer, onOpenFile }) {
+export function ActivityBar({ projectRoot, onShowVisualizer, onOpenFile }) {
   const { activePanel, setActivePanel, extensions } = useAppStore()
+  const [gitCount, setGitCount] = useState(0)
+
+  useEffect(() => {
+    if (!projectRoot) {
+      setGitCount(0)
+      return
+    }
+    
+    let isSubscribed = true
+    const checkGit = async () => {
+      try {
+        if (!window.api || !window.api.gitStatus) return
+        const res = await window.api.gitStatus(projectRoot)
+        if (isSubscribed && res && typeof res.status === 'string') {
+          const count = res.status.trim().split('\n').filter(line => line.length > 0).length
+          setGitCount(count)
+        }
+      } catch (err) {}
+    }
+    
+    checkGit()
+    const interval = setInterval(checkGit, 5000) // Poll every 5s
+    return () => {
+      isSubscribed = false
+      clearInterval(interval)
+    }
+  }, [projectRoot])
 
   const isDebuggerEnabled = extensions.find(e => e.id === 'ext-dbg-chrome')?.enabled
   const isDockerEnabled = extensions.find(e => e.id === 'ext-prod-docker')?.enabled
@@ -37,8 +64,8 @@ export function ActivityBar({ onShowVisualizer, onOpenFile }) {
               onClick={() => setActivePanel(isActive ? null : panel.id)}
             >
               <Icon size={24} strokeWidth={isActive ? 2 : 1.5} />
-              {panel.id === 'git' && (
-                <div className="activity-badge">42</div>
+              {panel.id === 'git' && gitCount > 0 && (
+                <div className="activity-badge">{gitCount > 99 ? '99+' : gitCount}</div>
               )}
             </div>
           )

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { Sidebar } from './components/Sidebar'
 import { ErrorBoundary } from './components/ErrorBoundary'
@@ -315,15 +315,76 @@ function App() {
   const chatEndRef = useRef(null)
 
   // ── Editor State ──
-  const [openFiles, setOpenFiles] = useState([])
-  const [activeFile, setActiveFile] = useState(null)
+  const [editorGroups, setEditorGroups] = useState([
+    { id: 'group-1', openFiles: [], activeFile: null }
+  ])
+  const [activeEditorGroupId, setActiveEditorGroupId] = useState('group-1')
+
+  // Backward compatibility getters for AI Debugger, Live Server, etc.
+  const activeGroup = editorGroups.find(g => g.id === activeEditorGroupId) || editorGroups[0]
+  const openFiles = activeGroup.openFiles
+  const activeFile = activeGroup.activeFile
+
+  // Backward compatibility setters (operates on active group)
+  const setOpenFiles = (updater) => {
+    setEditorGroups(prev => {
+      const idx = prev.findIndex(g => g.id === activeEditorGroupId)
+      if (idx === -1) return prev
+      const newGroups = [...prev]
+      const next = typeof updater === 'function' ? updater(prev[idx].openFiles) : updater
+      newGroups[idx] = { ...prev[idx], openFiles: next }
+      return newGroups
+    })
+  }
+
+  const setActiveFile = (updater) => {
+    setEditorGroups(prev => {
+      const idx = prev.findIndex(g => g.id === activeEditorGroupId)
+      if (idx === -1) return prev
+      const newGroups = [...prev]
+      const next = typeof updater === 'function' ? updater(prev[idx].activeFile) : updater
+      newGroups[idx] = { ...prev[idx], activeFile: next }
+      return newGroups
+    })
+  }
 
   // ── Terminal State ──
   const [showTerminal, setShowTerminal] = useState(false)
   const [terminalHeight, setTerminalHeight] = useState(250)
 
+  const terminalPanelRefs = useRef({})
+  const [terminals, setTerminals] = useState([{ id: 'default', name: 'bash' }])
+  const [activeTerminalId, setActiveTerminalId] = useState('default')
+  
+  const handleAddTerminal = () => {
+    const newId = 'term-' + Date.now()
+    setTerminals(prev => {
+      let maxNum = 0
+      prev.forEach(t => {
+        const match = t.name.match(/bash (\d+)/)
+        if (match) maxNum = Math.max(maxNum, parseInt(match[1], 10))
+      })
+      return [...prev, { id: newId, name: `bash ${maxNum + 1}` }]
+    })
+    setActiveTerminalId(newId)
+    setBottomTab('terminal')
+  }
+
+  const handleKillTerminal = (id, e) => {
+    e.stopPropagation()
+    window.api.killTerminal(id)
+    setTerminals(prev => {
+      const filtered = prev.filter(t => t.id !== id)
+      if (activeTerminalId === id) {
+        setTimeout(() => {
+          setActiveTerminalId(filtered.length > 0 ? filtered[filtered.length - 1].id : null)
+        }, 0)
+      }
+      return filtered
+    })
+  }
+  
   // ── Layout State ──
-  const terminalPanelRef = useRef(null)
   const [bottomTab, setBottomTab] = useState('terminal') // 'terminal' | 'ai-debugger' | 'debugger-history'
   const [aiDebugger, setAiDebugger] = useState({ explanation: '', codeFix: '', loading: false })
   const [debuggerHistory, setDebuggerHistory] = useState([])
@@ -359,8 +420,9 @@ function App() {
 
     setShowTerminal(true)
     setTimeout(() => {
-      if (terminalPanelRef.current) {
-        terminalPanelRef.current.executeCommand(cmd)
+      const activeTerminal = terminalPanelRefs.current[activeTerminalId]
+      if (activeTerminal) {
+        activeTerminal.executeCommand(cmd)
       }
     }, 100)
   }
@@ -389,8 +451,9 @@ function App() {
   }, [])
 
   const handleFixWithAi = async () => {
-    if (!terminalPanelRef.current || !activeFile) return
-    const bufferText = terminalPanelRef.current.getBuffer()
+    const activeTerminal = terminalPanelRefs.current[activeTerminalId]
+    if (!activeTerminal || !activeFile) return
+    const bufferText = activeTerminal.getBuffer()
 
     // Switch to AI Debugger Tab
     setBottomTab('ai-debugger')
@@ -533,7 +596,8 @@ the new code
 
     if (forceRun) {
       // Add to Debugger History
-      const bufferText = terminalPanelRef.current?.getBuffer() || ''
+      const activeTerminal = terminalPanelRefs.current[activeTerminalId]
+      const bufferText = activeTerminal?.getBuffer() || ''
       setDebuggerHistory(prev => [{
         timestamp: new Date().toLocaleTimeString(),
         error: bufferText.substring(Math.max(0, bufferText.length - 800)),
@@ -1115,6 +1179,7 @@ the new code
 
       {/* ── Activity Bar (VS Code style) ── */}
       <ActivityBar 
+        projectRoot={projectRoot}
         onShowVisualizer={() => setShowVisualizer(true)} 
         onOpenFile={handleOpenFile}
       />
@@ -1204,26 +1269,121 @@ the new code
         {/* ── Content Split Area ── */}
         <div className="content-split">
           <div className="editor-pane" style={{ display: 'flex', flexDirection: 'column' }}>
-            <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-              <ErrorBoundary>
-<CodeEditor
-                openFiles={openFiles}
-                setOpenFiles={setOpenFiles}
-                activeFile={activeFile}
-                setActiveFile={setActiveFile}
-                closeFile={closeFile}
-                markFileDirty={markFileDirty}
-                markFileClean={markFileClean}
-                projectRoot={projectRoot}
-                aiConfig={{
-                  model: selectedModel,
-                  customConfig: { baseURL: customBaseUrl, modelId: customModelId },
-                  autoCompleteEnabled,
-                  autoCompleteDelay
-                }}
-                onRun={handleRunFile}
-              />
-</ErrorBoundary>
+            <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex' }}>
+              {editorGroups.map((group, index) => {
+                const scopedSetOpenFiles = (updater) => {
+                  setEditorGroups(prev => {
+                    const idx = prev.findIndex(g => g.id === group.id)
+                    if (idx === -1) return prev
+                    const newGroups = [...prev]
+                    const next = typeof updater === 'function' ? updater(prev[idx].openFiles) : updater
+                    newGroups[idx] = { ...prev[idx], openFiles: next }
+                    return newGroups
+                  })
+                }
+                const scopedSetActiveFile = (updater) => {
+                  setEditorGroups(prev => {
+                    const idx = prev.findIndex(g => g.id === group.id)
+                    if (idx === -1) return prev
+                    const newGroups = [...prev]
+                    const next = typeof updater === 'function' ? updater(prev[idx].activeFile) : updater
+                    newGroups[idx] = { ...prev[idx], activeFile: next }
+                    return newGroups
+                  })
+                }
+                const scopedCloseFile = (path) => {
+                  setEditorGroups(prev => {
+                    const idx = prev.findIndex(g => g.id === group.id)
+                    if (idx === -1) return prev
+                    const newGroups = [...prev]
+                    const newFiles = newGroups[idx].openFiles.filter(f => f.path !== path)
+                    let newActive = newGroups[idx].activeFile
+                    if (newActive === path) {
+                      newActive = newFiles.length > 0 ? newFiles[newFiles.length - 1].path : null
+                    }
+                    newGroups[idx] = { ...newGroups[idx], openFiles: newFiles, activeFile: newActive }
+                    return newGroups
+                  })
+                }
+                const scopedMarkFileDirty = (path) => {
+                  setEditorGroups(prev => {
+                    const idx = prev.findIndex(g => g.id === group.id)
+                    if (idx === -1) return prev
+                    const newGroups = [...prev]
+                    newGroups[idx].openFiles = newGroups[idx].openFiles.map(f => f.path === path ? { ...f, isDirty: true } : f)
+                    return newGroups
+                  })
+                }
+                const scopedMarkFileClean = (path) => {
+                  setEditorGroups(prev => {
+                    const idx = prev.findIndex(g => g.id === group.id)
+                    if (idx === -1) return prev
+                    const newGroups = [...prev]
+                    newGroups[idx].openFiles = newGroups[idx].openFiles.map(f => f.path === path ? { ...f, isDirty: false } : f)
+                    return newGroups
+                  })
+                }
+                
+                const handleSplitRight = () => {
+                  const newId = 'group-' + Date.now()
+                  setEditorGroups(prev => [
+                    ...prev,
+                    { id: newId, openFiles: [...group.openFiles], activeFile: group.activeFile }
+                  ])
+                  setActiveEditorGroupId(newId)
+                }
+
+                const handleCloseGroup = () => {
+                  setEditorGroups(prev => {
+                    const filtered = prev.filter(g => g.id !== group.id)
+                    if (filtered.length === 0) return prev // keep at least one
+                    if (activeEditorGroupId === group.id) {
+                      setActiveEditorGroupId(filtered[0].id)
+                    }
+                    return filtered
+                  })
+                }
+
+                return (
+                  <React.Fragment key={group.id}>
+                    {index > 0 && <div style={{ width: '1px', background: 'var(--border-base)', zIndex: 10 }} />}
+                    <div 
+                      style={{ 
+                        flex: 1, 
+                        minWidth: 0, 
+                        position: 'relative',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        border: activeEditorGroupId === group.id && editorGroups.length > 1 ? '1px solid rgba(255,255,255,0.1)' : '1px solid transparent'
+                      }}
+                      onMouseDownCapture={() => setActiveEditorGroupId(group.id)}
+                    >
+                      <ErrorBoundary>
+                        <CodeEditor
+                          groupId={group.id}
+                          openFiles={group.openFiles}
+                          setOpenFiles={scopedSetOpenFiles}
+                          activeFile={group.activeFile}
+                          setActiveFile={scopedSetActiveFile}
+                          closeFile={scopedCloseFile}
+                          markFileDirty={scopedMarkFileDirty}
+                          markFileClean={scopedMarkFileClean}
+                          projectRoot={projectRoot}
+                          aiConfig={{
+                            model: selectedModel,
+                            customConfig: { baseURL: customBaseUrl, modelId: customModelId },
+                            autoCompleteEnabled,
+                            autoCompleteDelay
+                          }}
+                          onRun={handleRunFile}
+                          onSplitRight={handleSplitRight}
+                          onCloseGroup={editorGroups.length > 1 ? handleCloseGroup : undefined}
+                        />
+                      </ErrorBoundary>
+                    </div>
+                  </React.Fragment>
+                )
+              })}
             </div>
             {showTerminal && (
               <div className="bottom-panel" style={{ height: terminalHeight, display: 'flex', flexDirection: 'column', background: 'var(--bg-deep)', borderTop: '1px solid var(--border-base)', position: 'relative', boxShadow: '0 -4px 15px rgba(0,0,0,0.1)' }}>
@@ -1237,13 +1397,36 @@ the new code
                   <div style={{ width: '40px', height: '4px', background: 'rgba(255,255,255,0.2)', borderRadius: '2px', marginTop: '-2px', pointerEvents: 'none', zIndex: 11 }} />
                 </div>
 
-                <div className="bottom-tabs" style={{ display: 'flex', padding: '0 16px', background: 'var(--bg-activity)', borderBottom: '1px solid var(--border-base)', alignItems: 'center', height: '35px', gap: '20px' }}>
-                  <button
-                    onClick={() => setBottomTab('terminal')}
-                    style={{ background: bottomTab === 'terminal' ? 'var(--bg-surface)' : 'transparent', color: bottomTab === 'terminal' ? 'var(--text-primary)' : 'var(--text-muted)', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}
-                  >
-                    Terminal
-                  </button>
+                <div className="bottom-tabs" style={{ display: 'flex', padding: '0 16px', background: 'var(--bg-activity)', borderBottom: '1px solid var(--border-base)', alignItems: 'center', height: '35px', gap: '8px', overflowX: 'auto' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', background: 'rgba(0,0,0,0.2)', padding: '2px', borderRadius: '6px' }}>
+                    {terminals.map(term => (
+                      <div
+                        key={term.id}
+                        onClick={() => {
+                          setActiveTerminalId(term.id)
+                          setBottomTab('terminal')
+                        }}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: '6px',
+                          background: bottomTab === 'terminal' && activeTerminalId === term.id ? 'var(--bg-surface)' : 'transparent',
+                          color: bottomTab === 'terminal' && activeTerminalId === term.id ? 'var(--text-primary)' : 'var(--text-muted)',
+                          padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: '500'
+                        }}
+                      >
+                        {term.name}
+                        {terminals.length > 1 && (
+                          <X size={12} onClick={(e) => handleKillTerminal(term.id, e)} style={{ opacity: 0.6, cursor: 'pointer' }} />
+                        )}
+                      </div>
+                    ))}
+                    <button
+                      onClick={handleAddTerminal}
+                      style={{ background: 'transparent', color: 'var(--text-muted)', border: 'none', padding: '4px 8px', cursor: 'pointer', fontSize: '14px' }}
+                    >
+                      +
+                    </button>
+                  </div>
+                  <div style={{ width: '1px', height: '16px', background: 'var(--border-base)', margin: '0 8px' }}></div>
                   <button
                     onClick={() => setBottomTab('ai-debugger')}
                     style={{ background: bottomTab === 'ai-debugger' ? 'var(--bg-surface)' : 'transparent', color: bottomTab === 'ai-debugger' ? 'var(--text-primary)' : 'var(--text-muted)', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}
@@ -1267,9 +1450,14 @@ the new code
                 </div>
 
                 <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-                  <div style={{ position: 'absolute', inset: 0, opacity: bottomTab === 'terminal' ? 1 : 0, pointerEvents: bottomTab === 'terminal' ? 'auto' : 'none', zIndex: bottomTab === 'terminal' ? 1 : 0 }}>
-                    <TerminalPanel ref={terminalPanelRef} key={projectRoot || 'default'} height={terminalHeight - 36} cwd={projectRoot} hideHeader={true} />
-                  </div>
+                  {terminals.map(term => {
+                    const isVisible = bottomTab === 'terminal' && activeTerminalId === term.id
+                    return (
+                      <div key={term.id} style={{ position: 'absolute', inset: 0, opacity: isVisible ? 1 : 0, pointerEvents: isVisible ? 'auto' : 'none', zIndex: isVisible ? 1 : 0 }}>
+                        <TerminalPanel ref={el => terminalPanelRefs.current[term.id] = el} height={terminalHeight - 36} cwd={projectRoot} hideHeader={true} />
+                      </div>
+                    )
+                  })}
 
                   {bottomTab === 'ai-debugger' && (
                     <div className="ai-debugger-panel" style={{ position: 'absolute', inset: 0, zIndex: 2, padding: '16px', background: 'var(--bg-deep)', display: 'flex', flexDirection: 'column' }}>

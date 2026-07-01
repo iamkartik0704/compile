@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import Editor, { loader, DiffEditor } from '@monaco-editor/react'
 import * as monaco from 'monaco-editor'
 import { applyDiff } from '../diffUtils'
-import { X, Save, Circle, Sparkles, ChevronRight, AlertTriangle, Info, CheckCircle, Loader2 } from 'lucide-react'
+import { X, Save, Circle, Sparkles, ChevronRight, AlertTriangle, Info, CheckCircle, Loader2, Code2 } from 'lucide-react'
 import { ContextInspector } from './ContextInspector'
 import { GitGraph } from './GitGraph'
 import { PostmanView } from './PostmanView'
@@ -466,7 +466,10 @@ export const CodeEditor = ({
   markFileClean,
   projectRoot,
   aiConfig,
-  onRun
+  onRun,
+  groupId,
+  onSplitRight,
+  onCloseGroup
 }) => {
   const [fileContents, setFileContents] = useState({})
   const [currentValue, setCurrentValue] = useState('')
@@ -1294,44 +1297,61 @@ export const CodeEditor = ({
   if (openFiles.length === 0) {
     return (
       <div className="editor-empty">
-        <div className="editor-logo">π</div>
-        <p>Open a file from the explorer to start coding.</p>
+        <div className="editor-logo">
+          <svg width="200" height="200" viewBox="0 0 24 24" fill="none" stroke="url(#pi-gradient)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.35 }}>
+            <defs>
+              <linearGradient id="pi-gradient" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stopColor="var(--accent-purple, #8b5cf6)" />
+                <stop offset="100%" stopColor="var(--accent-blue, #3b82f6)" />
+              </linearGradient>
+            </defs>
+            <path d="M9 4v16"></path>
+            <path d="M4 7c0-1.7 1.3-3 3-3h13"></path>
+            <path d="M18 20c-1.7 0-3-1.3-3-3V4"></path>
+          </svg>
+        </div>
+        
+        <div className="editor-empty-actions">
+          <p>Press <span className="empty-keybind">Ctrl</span> + <span className="empty-keybind">P</span> to search files</p>
+        </div>
       </div>
     )
   }
 
   return (
     <div className="editor-container" style={{ position: 'relative' }}>
-      <div className="editor-tabs">
-        {openFiles.map((file, idx) => {
-          const isActive = file.path === activeFile
-          return (
-            <div
-              key={file.path}
-              className={`editor-tab ${isActive ? 'active' : ''} ${draggedTabIdx === idx ? 'dragging' : ''}`}
-              draggable
-              onDragStart={(e) => handleDragStart(e, idx)}
-              onDragOver={handleDragOver}
-              onDrop={(e) => handleDrop(e, idx)}
-              onClick={() => setActiveFile(file.path)}
-              onContextMenu={(e) => handleContextMenu(e, file, idx)}
-            >
-              <span className="tab-name">{file.name}</span>
+      <div style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-card)', borderBottom: '1px solid var(--border-light)' }}>
+        <div className="editor-tabs" style={{ flex: 1, overflowX: 'auto', overflowY: 'hidden', borderBottom: 'none' }}>
+          {openFiles.map((file, idx) => {
+            const isActive = file.path === activeFile
+            return (
               <div
-                className="tab-action"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  closeFile(file.path)
-                }}
+                key={file.path}
+                className={`editor-tab ${isActive ? 'active' : ''} ${draggedTabIdx === idx ? 'dragging' : ''}`}
+                draggable
+                onDragStart={(e) => handleDragStart(e, idx)}
+                onDragOver={handleDragOver}
+                onDrop={(e) => handleDrop(e, idx)}
+                onClick={() => setActiveFile(file.path)}
+                onContextMenu={(e) => handleContextMenu(e, file, idx)}
               >
-                {file.isDirty ? <Circle size={10} className="dirty-dot" fill="currentColor" /> : <X size={14} className="close-icon" />}
+                <span className="tab-name">{file.name}</span>
+                <div
+                  className="tab-action"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    closeFile(file.path)
+                  }}
+                >
+                  {file.isDirty ? <Circle size={10} className="dirty-dot" fill="currentColor" /> : <X size={14} className="close-icon" />}
+                </div>
               </div>
-            </div>
-          )
-        })}
+            )
+          })}
+        </div>
 
-        {/* Run & Optimizer Button Container inside tabs header */}
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px', paddingRight: '12px' }}>
+        {/* Run & Optimizer Button Container pinned to the right */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 12px', flexShrink: 0 }}>
           <button
             className="action-btn compress-context-btn"
             onClick={(e) => {
@@ -1353,6 +1373,34 @@ export const CodeEditor = ({
           >
             ▶ Run
           </button>
+          
+          <div style={{ width: '1px', height: '16px', background: 'var(--border-base)', margin: '0 4px' }} />
+          
+          <button
+            title="Split Right"
+            onClick={(e) => {
+              e.stopPropagation()
+              if (onSplitRight) onSplitRight()
+            }}
+            style={{ background: 'transparent', color: 'var(--text-muted)', border: 'none', cursor: 'pointer', padding: '4px' }}
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0 1 13.25 15H2.75A1.75 1.75 0 0 1 1 13.25V2.75zm1.5 0v10.5c0 .138.112.25.25.25h4.5V2.5h-4.5a.25.25 0 0 0-.25.25zm6.5 10.75h4.25a.25.25 0 0 0 .25-.25V2.75a.25.25 0 0 0-.25-.25H9v11z"/>
+            </svg>
+          </button>
+          
+          {onCloseGroup && (
+            <button
+              title="Close Pane"
+              onClick={(e) => {
+                e.stopPropagation()
+                onCloseGroup()
+              }}
+              style={{ background: 'transparent', color: 'var(--text-muted)', border: 'none', cursor: 'pointer', padding: '4px' }}
+            >
+              <X size={14} />
+            </button>
+          )}
         </div>
       </div>
 
