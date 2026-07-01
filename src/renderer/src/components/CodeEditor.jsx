@@ -2,12 +2,13 @@ import React, { useState, useEffect, useRef } from 'react'
 import Editor, { loader, DiffEditor } from '@monaco-editor/react'
 import * as monaco from 'monaco-editor'
 import { applyDiff } from '../diffUtils'
-import { X, Save, Circle, Sparkles, ChevronRight } from 'lucide-react'
+import { X, Save, Circle, Sparkles, ChevronRight, AlertTriangle, Info, CheckCircle, Loader2 } from 'lucide-react'
 import { ContextInspector } from './ContextInspector'
 import { GitGraph } from './GitGraph'
 import { PostmanView } from './PostmanView'
 import { useAppStore } from '../store/appStore'
 import { EXTENSIONS } from '../utils/extensionRegistry'
+import { runEsLint, runPrettier, formatWithPrettier, isExtensionEnabled } from '../utils/linterService'
 import { diffLines } from 'diff'
 
 // --- Monaco Workers ---
@@ -636,19 +637,59 @@ export const CodeEditor = ({
     }
   }, [activeFile])
 
-  const handleSave = async () => {
+  const handleSave = async (forceFormat = false) => {
     if (!activeFile || !editorRef.current) return
-    const content = editorRef.current.getValue()
 
-    const res = await window.api.saveFileContents(activeFile, content)
-    if (res.success) {
-      setFileContents(prev => ({
-        ...prev,
-        [activeFile]: { ...prev[activeFile], content }
-      }))
-      markFileClean(activeFile)
-    } else {
-      console.error('Failed to save file:', res.error)
+    const isPrettierEnabled = isExtensionEnabled('ext-fmt-prettier', extensions)
+    const isEslintEnabled = isExtensionEnabled('ext-fmt-eslint', extensions)
+
+    let content = editorRef.current.getValue()
+    const cwd = projectRoot || undefined
+
+    // Save current changes to disk FIRST so CLI tools can read them
+    const saveRes = await window.api.saveFileContents(activeFile, content)
+    if (!saveRes.success) {
+      console.error('Failed to save file:', saveRes.error)
+      return
+    }
+
+    // Format if Prettier is enabled OR the user triggered Shift+Alt+F (forceFormat)
+    if (isPrettierEnabled || forceFormat) {
+      const formatRes = await formatWithPrettier(activeFile, cwd)
+      if (formatRes.success && formatRes.content && formatRes.content !== content) {
+        content = formatRes.content
+        editorRef.current.setValue(content)
+        // If it formatted, we don't need to re-save because Prettier wrote it to disk.
+      } else if (formatRes.error && forceFormat) {
+        // Only show toast if user manually forced it or you want it always
+        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: formatRes.error, type: 'error' } }))
+      } else if (formatRes.error && isPrettierEnabled && !forceFormat) {
+        console.warn('Prettier format error:', formatRes.error)
+      }
+    } else if (forceFormat && !isPrettierEnabled) {
+      window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Prettier is not enabled.', type: 'info' } }))
+    }
+
+    // Update internal React state
+    setFileContents(prev => ({
+      ...prev,
+      [activeFile]: { ...prev[activeFile], content }
+    }))
+    markFileClean(activeFile)
+
+    // Run ESLint
+    if (isEslintEnabled) {
+      const lintRes = await runEsLint(activeFile, cwd)
+      if (lintRes.error) {
+        console.warn('ESLint error:', lintRes.error)
+      } else if (lintRes.markers) {
+        const targetUri = monaco.Uri.parse(pathToUri(activeFile)).toString().toLowerCase()
+        const models = monaco.editor.getModels()
+        const model = models.find(m => m.uri.toString().toLowerCase() === targetUri)
+        if (model) {
+          monaco.editor.setModelMarkers(model, 'eslint', lintRes.markers)
+        }
+      }
     }
   }
 
@@ -681,7 +722,7 @@ export const CodeEditor = ({
 
     // Command: Save
     editor.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.KeyS, () => {
-      handleSave()
+      handleSave(false)
     })
 
     // Expose diagnostics to the global window so the AI can read them
@@ -705,6 +746,7 @@ export const CodeEditor = ({
   const monacoRef = useRef(null)
   const decorationsCollectionRef = useRef(null)
   const gitDecorationsCollectionRef = useRef(null)
+  const errorLensDecorationsCollectionRef = useRef(null)
   const gitLensWidgetRef = useRef(null)
   const [hasActiveAiEdit, setHasActiveAiEdit] = useState(false)
   const [isReady, setIsReady] = useState(false)
@@ -796,6 +838,7 @@ export const CodeEditor = ({
     monacoRef.current = monacoInstance
     decorationsCollectionRef.current = editor.createDecorationsCollection([])
     gitDecorationsCollectionRef.current = editor.createDecorationsCollection([])
+    errorLensDecorationsCollectionRef.current = editor.createDecorationsCollection([])
     // We don't use decorations for git lens anymore due to Monaco after-injection bugs
 
     let blameTimeout
@@ -814,6 +857,50 @@ export const CodeEditor = ({
     // Command: Run File (Ctrl+Alt+N)
     editor.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyMod.Alt | monacoInstance.KeyCode.KeyN, () => {
       window.dispatchEvent(new Event('global-run-file'))
+    })
+
+    // Command: Format Document (Shift+Alt+F)
+    editor.addCommand(monacoInstance.KeyMod.Shift | monacoInstance.KeyMod.Alt | monacoInstance.KeyCode.KeyF, async () => {
+      handleSave(true)
+    })
+
+    // Error Lens Integration
+    monacoInstance.editor.onDidChangeMarkers((uris) => {
+      const { extensions } = useAppStore.getState()
+      const isErrorLensEnabled = isExtensionEnabled('ext-fmt-errorlens', extensions)
+      if (!isErrorLensEnabled || !errorLensDecorationsCollectionRef.current) {
+        if (errorLensDecorationsCollectionRef.current) errorLensDecorationsCollectionRef.current.clear()
+        return
+      }
+
+      const targetUri = monacoInstance.Uri.parse(pathToUri(activeFile)).toString().toLowerCase()
+      // Check if the current file's markers changed
+      if (uris.some(u => u.toString().toLowerCase() === targetUri)) {
+        const model = editor.getModel()
+        if (!model) return
+
+        const markers = monacoInstance.editor.getModelMarkers({ resource: model.uri })
+        
+        // Convert markers to delta decorations
+        const newDecorations = markers.map(marker => {
+          let className = 'error-lens-info'
+          if (marker.severity === monacoInstance.MarkerSeverity.Error) className = 'error-lens-error'
+          if (marker.severity === monacoInstance.MarkerSeverity.Warning) className = 'error-lens-warning'
+          
+          return {
+            range: new monacoInstance.Range(marker.startLineNumber, marker.startColumn, marker.startLineNumber, marker.startColumn),
+            options: {
+              isWholeLine: true,
+              after: {
+                content: `    ${marker.message}`,
+                inlineClassName: `error-lens-inline ${className}`
+              }
+            }
+          }
+        })
+        
+        errorLensDecorationsCollectionRef.current.set(newDecorations)
+      }
     })
 
     // Command: Inline AI Edit (Ctrl+K)

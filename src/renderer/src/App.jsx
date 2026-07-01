@@ -241,7 +241,17 @@ function App() {
   const [showExplorer, setShowExplorer] = useState(true)
   const [rightPanel, setRightPanel] = useState(null)
   const [showVisualizer, setShowVisualizer] = useState(false)
+  const [toast, setToast] = useState(null)
   
+  useEffect(() => {
+    const handleShowToast = (e) => {
+      setToast({ message: e.detail.message, type: e.detail.type || 'info' })
+      setTimeout(() => setToast(null), 3000)
+    }
+    window.addEventListener('show-toast', handleShowToast)
+    return () => window.removeEventListener('show-toast', handleShowToast)
+  }, [])
+
   // ── Live Server State ──
   const [isLiveServerRunning, setIsLiveServerRunning] = useState(false)
   const [liveServerUrl, setLiveServerUrl] = useState(null)
@@ -1927,6 +1937,25 @@ the new code
             handleOpenFile(path, name)
           }}
         />
+      )}
+
+      {toast && (
+        <div style={{
+          position: 'fixed',
+          bottom: '40px',
+          right: '20px',
+          padding: '12px 24px',
+          backgroundColor: toast.type === 'error' ? '#ef4444' : toast.type === 'warning' ? '#eab308' : '#3b82f6',
+          color: 'white',
+          borderRadius: '6px',
+          boxShadow: '0 4px 6px rgba(0,0,0,0.2)',
+          zIndex: 9999,
+          fontSize: '14px',
+          fontWeight: 500,
+          animation: 'slideIn 0.3s ease-out forwards'
+        }}>
+          {toast.message}
+        </div>
       )}
       </div>
     </div>

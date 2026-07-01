@@ -39,18 +39,7 @@ export const EXTENSIONS = [
     longDescription: 'The ESLint extension statically analyzes your code to quickly find problems.',
     author: 'IDE Core', installed: false, enabled: false 
   },
-  { 
-    id: 'ext-fmt-biome', name: 'Biome', category: 'linters', 
-    description: 'Toolchain of the web. Formatter and Linter.', 
-    longDescription: 'Biome is a fast formatter for JavaScript, TypeScript, JSX, and JSON that scores 97% compatibility with Prettier.',
-    author: 'Community', installed: false, enabled: false 
-  },
-  { 
-    id: 'ext-fmt-sonarlint', name: 'SonarLint', category: 'linters', 
-    description: 'Detect bugs and vulnerabilities as you write code.', 
-    longDescription: 'SonarLint is a Free IDE extension that lets you fix coding issues before they exist.',
-    author: 'Community', installed: false, enabled: false 
-  },
+
   { 
     id: 'ext-fmt-errorlens', name: 'Error Lens', category: 'linters', 
     description: 'Improve highlighting of errors, warnings and other language diagnostics.', 
