@@ -161,10 +161,13 @@
   font-weight: 500;
 }
 
-/* Editor Body */
 .editor-body {
   flex: 1;
   position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .editor-loading {

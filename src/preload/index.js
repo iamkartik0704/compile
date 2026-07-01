@@ -85,6 +85,10 @@ const api = {
     ipcRenderer.removeAllListeners('ai-debugger-stream')
     ipcRenderer.on('ai-debugger-stream', (_event, chunk) => callback(chunk))
   },
+  onPostmanDebuggerStream: (callback) => {
+    ipcRenderer.removeAllListeners('postman-debugger-stream')
+    ipcRenderer.on('postman-debugger-stream', (_event, chunk) => callback(chunk))
+  },
 
   /**
    * Model Resolution Listener — Push model (Main → Renderer).
@@ -144,7 +148,8 @@ const api = {
   runCommand: (command, cwd) => ipcRenderer.invoke('run-command', command, cwd),
   startLiveServer: (rootPath, openPath) => ipcRenderer.invoke('start-live-server', rootPath, openPath),
   stopLiveServer: () => ipcRenderer.invoke('stop-live-server'),
-  openUrl: (url) => ipcRenderer.invoke('open-url', url)
+  openUrl: (url) => ipcRenderer.invoke('open-url', url),
+  postmanRequest: (url, options) => ipcRenderer.invoke('postman-request', url, options)
 }
 
 // ============================================================

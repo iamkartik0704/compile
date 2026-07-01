@@ -216,6 +216,27 @@ function App() {
   const [deletingProvider, setDeletingProvider] = useState(null) // which provider is pending delete confirmation
   const [autoDetectedProvider, setAutoDetectedProvider] = useState(null)
 
+  useEffect(() => {
+    if (projectRoot) {
+      try {
+        const stored = localStorage.getItem('recent-projects')
+        let recents = stored ? JSON.parse(stored) : []
+        
+        // Remove if it already exists to move it to the top
+        recents = recents.filter(p => p.path !== projectRoot)
+        
+        const name = projectRoot.split(/[/\\]/).pop() || projectRoot
+        recents.unshift({ name, path: projectRoot, timestamp: Date.now() })
+        
+        // Keep only top 15
+        recents = recents.slice(0, 15)
+        localStorage.setItem('recent-projects', JSON.stringify(recents))
+      } catch (e) {
+        console.error('Failed to save recent project:', e)
+      }
+    }
+  }, [projectRoot])
+
   // ── UI State ──
   const [showExplorer, setShowExplorer] = useState(true)
   const [rightPanel, setRightPanel] = useState(null)
@@ -930,6 +951,65 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
     .filter(([, v]) => v.exists)
     .map(([provider, data]) => ({ ...PROVIDERS[provider], ...data, id: provider }))
 
+  useEffect(() => {
+    const handleDebugPostman = async (e) => {
+      const detail = e.detail;
+      setBottomTab('ai-debugger')
+      setShowTerminal(true)
+      setAiDebugger({ explanation: '', codeFix: '', loading: true })
+      
+      let activeFileContent = ''
+      try {
+        if (typeof window.getEditorValue === 'function') {
+          activeFileContent = window.getEditorValue()
+        } else if (activeFile) {
+          const fileRes = await window.api.getFileContents(activeFile)
+          activeFileContent = fileRes.content || fileRes || ''
+        }
+      } catch (err) {
+        console.error('Could not read active file contents for AI', err)
+      }
+
+      const promptText = `The user encountered an error with an API request in the Postman client.
+Request URL: ${detail.url}
+Request Method: ${detail.method}
+Request Headers: ${JSON.stringify(detail.headers, null, 2)}
+Request Body: ${detail.body}
+
+Response Status: ${detail.responseStatus?.code} ${detail.responseStatus?.text}
+Response Body:
+${detail.response}
+
+Active File (${activeFile}):
+${activeFileContent.substring(0, 3000)}
+
+Analyze the API request and response to figure out what went wrong. Provide a fix if applicable. Return your response in exactly this format:
+EXPLANATION: <brief explanation of the error in 1-2 short sentences>
+FIX:
+<edit_file path="FULL_PATH_OF_FILE_TO_FIX">
+<search_replace>
+<search>
+the exact code to be replaced
+</search>
+<replace>
+the new code
+</replace>
+</search_replace>
+</edit_file>
+(Or just explain what the user should change in the request if the server code is not at fault.)`
+
+      try {
+        aiDebuggerStreamRef.current = ''
+        await window.api.streamAiDebugger(promptText, { model: selectedModel, customConfig: { baseURL: customBaseUrl, modelId: customModelId } })
+      } catch (err) {
+        setAiDebugger({ explanation: `Error during AI analysis: ${err.message}`, codeFix: '', loading: false })
+      }
+    }
+    
+    window.addEventListener('debug-postman-request', handleDebugPostman)
+    return () => window.removeEventListener('debug-postman-request', handleDebugPostman)
+  }, [activeFile, selectedModel, customBaseUrl, customModelId])
+
   return (
     <div className="ide-root" style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: 'var(--bg-main)', color: 'var(--text-main)' }}>
       {/* ── Global Header ── */}
@@ -1063,7 +1143,11 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
         )}
 
         {activePanel === 'projects' && (
-          <ProjectManagerPanel width={sidebarWidth} />
+          <ProjectManagerPanel 
+            width={sidebarWidth} 
+            setProjectRoot={setProjectRoot}
+            projectRoot={projectRoot}
+          />
         )}
 
         {activePanel === 'search' && (

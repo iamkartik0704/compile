@@ -770,11 +770,13 @@ function createWindow() {
     if (model === 'auto') model = resolveAutoMode(prompt)
     
     try {
-      await routeToProvider(model, prompt, mainWindow.webContents, { ...config, emitEvent: 'ai-debugger-stream' })
+      const emitEvent = config.emitEvent || 'ai-debugger-stream'
+      await routeToProvider(model, prompt, mainWindow.webContents, { ...config, emitEvent })
       return { success: true }
     } catch (err) {
       console.error('Provider error:', err)
-      mainWindow.webContents.send('ai-debugger-stream', `\n// ❌ Error: ${err.message}`)
+      const emitEvent = config.emitEvent || 'ai-debugger-stream'
+      mainWindow.webContents.send(emitEvent, `\n// ❌ Error: ${err.message}`)
       return { success: false, error: err.message }
     }
   })
@@ -978,6 +980,29 @@ function createWindow() {
     return { success: true }
   })
 
+  ipcMain.handle('postman-request', async (event, url, options) => {
+    try {
+      const res = await fetch(url, options)
+      
+      const headers = {}
+      res.headers.forEach((val, key) => { headers[key] = val })
+      
+      let data = await res.text()
+      
+      return {
+        success: true,
+        status: res.status,
+        statusText: res.statusText,
+        headers,
+        data
+      }
+    } catch (err) {
+      return {
+        success: false,
+        error: err.message
+      }
+    }
+  })
   let liveServerProcess = null
 
   ipcMain.handle('start-live-server', async (event, rootPath, openPath = '') => {

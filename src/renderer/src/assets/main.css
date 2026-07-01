@@ -1293,3 +1293,26 @@ body {
     align-self: flex-start;
   }
 }
+
+/* ============================================================
+   MONACO EDITOR THEME OVERRIDES
+   Make Monaco's background transparent to inherit custom IDE themes
+   ============================================================ */
+.monaco-editor,
+.monaco-editor-background,
+.monaco-editor .inputarea.ime-input,
+.monaco-editor .margin {
+  background-color: transparent !important;
+}
+
+/* ============================================================
+   UTILITY ANIMATIONS
+   ============================================================ */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
