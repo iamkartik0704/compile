@@ -19,6 +19,7 @@ import { ExtensionsPanel } from './components/ExtensionsPanel'
 import { DockerPanel } from './components/DockerPanel'
 import { KubernetesPanel } from './components/KubernetesPanel'
 import { ProjectManagerPanel } from './components/ProjectManagerPanel'
+import DebugPanel from './components/DebugPanel'
 import { useAppStore } from './store/appStore'
 import './assets/sidebar.css'
 import './assets/editor.css'
@@ -293,6 +294,7 @@ function App() {
   const [customConfigLoaded, setCustomConfigLoaded] = useState(false)
 
   useEffect(() => {
+    if (!window.api) return
     window.api.getCustomConfig().then(config => {
       if (config) {
         if (config.customBaseUrl) setCustomBaseUrl(config.customBaseUrl)
@@ -304,7 +306,7 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (customConfigLoaded) {
+    if (customConfigLoaded && window.api) {
       window.api.saveCustomConfig({ customBaseUrl, customModelId, customName })
     }
   }, [customBaseUrl, customModelId, customName, customConfigLoaded])
@@ -1134,6 +1136,12 @@ the new code
             width={sidebarWidth} 
             onOpenExtension={handleOpenExtension}
           />
+        )}
+
+        {activePanel === 'debug' && (
+          <div style={{ width: sidebarWidth, borderRight: '1px solid var(--border-base)', overflow: 'hidden' }}>
+            <DebugPanel />
+          </div>
         )}
 
         {activePanel === 'git' && (

@@ -41,6 +41,7 @@ const api = {
   // ── Language Server Protocol (LSP) — Multi-language ──
   startLanguageServer: (language) => ipcRenderer.invoke('start-lsp', language),
   listAvailableLsp: () => ipcRenderer.invoke('list-available-lsp'),
+  killLsp: (language) => ipcRenderer.invoke('kill-lsp', language),
   sendLspMessage: (language, message) => ipcRenderer.send('lsp-client-message', { language, message }),
   onLspMessage: (callback) => {
     ipcRenderer.removeAllListeners('lsp-server-message')

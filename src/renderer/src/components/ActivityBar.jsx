@@ -1,10 +1,11 @@
 import React from 'react'
-import { Files, Search, GitBranch, Blocks, Settings, Database, Box, Anchor, FolderHeart, Send } from 'lucide-react'
+import { Files, Search, GitBranch, Blocks, Settings, Database, Box, Anchor, FolderHeart, Send, Bug } from 'lucide-react'
 import { useAppStore } from '../store/appStore'
 
 export function ActivityBar({ onShowVisualizer, onOpenFile }) {
   const { activePanel, setActivePanel, extensions } = useAppStore()
 
+  const isDebuggerEnabled = extensions.find(e => e.id === 'ext-dbg-chrome')?.enabled
   const isDockerEnabled = extensions.find(e => e.id === 'ext-prod-docker')?.enabled
   const isK8sEnabled = extensions.find(e => e.id === 'ext-prod-k8s')?.enabled
   const isProjMgrEnabled = extensions.find(e => e.id === 'ext-prod-projmgr')?.enabled
@@ -14,6 +15,7 @@ export function ActivityBar({ onShowVisualizer, onOpenFile }) {
     { id: 'explorer', icon: Files, title: 'Explorer' },
     { id: 'search', icon: Search, title: 'Search' },
     { id: 'git', icon: GitBranch, title: 'Source Control' },
+    ...(isDebuggerEnabled ? [{ id: 'debug', icon: Bug, title: 'Run and Debug' }] : []),
     ...(isProjMgrEnabled ? [{ id: 'projects', icon: FolderHeart, title: 'Project Manager' }] : []),
     ...(isDockerEnabled ? [{ id: 'docker', icon: Box, title: 'Docker' }] : []),
     ...(isK8sEnabled ? [{ id: 'k8s', icon: Anchor, title: 'Kubernetes' }] : []),

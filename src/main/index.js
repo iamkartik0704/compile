@@ -5,7 +5,7 @@ import { exec as execCallback } from 'child_process'
 import { promisify } from 'util'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { terminalManager } from './terminal-manager.js'
-import { startLanguageServer, sendToLanguageServer, getLanguageServerStatusForLanguage, LANGUAGE_METADATA } from './lsp-manager.js'
+import { setupLspIpcHandlers, setMainWindowLspRef } from './lsp-manager.js'
 
 const exec = promisify(execCallback)
 
@@ -639,40 +639,8 @@ function createWindow() {
   })
 
 
-  ipcMain.handle('start-lsp', async (event, language) => {
-    return startLanguageServer(
-      language,
-      // onMessage
-      (lang, message) => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('lsp-server-message', { language: lang, message })
-        }
-      },
-      // onError
-      (err) => {
-        console.error(`LSP Manager Error: ${err}`)
-      },
-      // onStatusChange
-      (status) => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('lsp-status-change', { language, status })
-        }
-      }
-    )
-  })
-
-  // List which language servers are available
-  ipcMain.handle('list-available-lsp', async () => {
-    const available = {}
-    for (const [lang, meta] of Object.entries(LANGUAGE_METADATA)) {
-      available[lang] = true // Simplified for now since we rely on lsp-manager
-    }
-    return available
-  })
-
-  ipcMain.on('lsp-client-message', (event, { language, message }) => {
-    sendToLanguageServer(language, message)
-  })
+  setMainWindowLspRef(mainWindow)
+  setupLspIpcHandlers()
 
   /**
    * Handler: AI Prompt → Auto Mode + SDK Router + Streaming

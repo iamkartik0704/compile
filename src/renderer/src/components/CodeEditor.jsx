@@ -48,7 +48,7 @@ class LspClient {
   // Called by the global message dispatcher
   handleMessage(raw) {
     try {
-      const msg = JSON.parse(raw)
+      const msg = typeof raw === 'string' ? JSON.parse(raw) : raw
       if (msg.id !== undefined && this.pendingRequests.has(msg.id)) {
         const { resolve } = this.pendingRequests.get(msg.id)
         this.pendingRequests.delete(msg.id)
@@ -129,11 +129,14 @@ class LspClient {
     })
   }
 
-  async completion(uri, line, character) {
-    return this.sendRequest('textDocument/completion', {
+  async completion(uri, line, character, context = null) {
+    const params = {
       textDocument: { uri },
       position: { line, character }
-    })
+    }
+    if (context) params.context = context
+
+    return this.sendRequest('textDocument/completion', params)
   }
 
   async hover(uri, line, character) {
@@ -208,6 +211,8 @@ const pathToUri = (p) => {
   if (!p) return ''
   let formatted = p.replace(/\\/g, '/')
   if (!formatted.startsWith('/')) formatted = '/' + formatted
+  // Lowercase the drive letter for Monaco compatibility (e.g. /C:/ -> /c:/)
+  formatted = formatted.replace(/^\/([A-Z]):\//, (match, drive) => `/${drive.toLowerCase()}:/`)
   return `file://${formatted}`
 }
 
@@ -276,13 +281,14 @@ function registerProvidersForLanguage(monacoLangId) {
     return key ? lspClients.get(key) : null
   }
 
-  // ── Ghost Text Auto-Completion ──
+  // ── Ghost Text Auto-Completion (Copilot) ──
   monaco.languages.registerInlineCompletionsProvider(monacoLangId, {
     provideInlineCompletions: async (model, position, context, token) => {
       if (!globalAiConfig || globalAiConfig.autoCompleteEnabled === false) return { items: [] }
 
       // 1. Native Debounce using cancellation token
-      await new Promise(resolve => setTimeout(resolve, globalAiConfig.autoCompleteDelay || 800))
+      // Increased default delay to 2000ms to prevent popping up on every keystroke
+      await new Promise(resolve => setTimeout(resolve, globalAiConfig.autoCompleteDelay || 2000))
       if (token.isCancellationRequested) return { items: [] }
 
       // 2. Build Context
@@ -338,7 +344,6 @@ COMPLETION:`
       completionText = completionText.replace(/^```[a-z]*\n?/i, '')
       completionText = completionText.replace(/\n?```$/i, '')
 
-      // If there's still conversational text before a markdown block, try to extract just the code
       if (completionText.includes('```')) {
         const match = completionText.match(/```[a-z]*\n([\s\S]*?)```/i)
         if (match) {
@@ -365,30 +370,65 @@ COMPLETION:`
   // Completion
   monaco.languages.registerCompletionItemProvider(monacoLangId, {
     triggerCharacters: ['.', '(', ',', ':', ' '],
-    provideCompletionItems: async (model, position) => {
+    provideCompletionItems: async (model, position, context, token) => {
       const client = findClient()
       if (!client || !client.initialized) return { suggestions: [] }
-      const uri = model.uri.toString()
-      const result = await client.completion(uri, position.lineNumber - 1, position.column - 1)
-      if (!result) return { suggestions: [] }
+      
+      const uri = decodeURIComponent(model.uri.toString())
+      // LSP uses 1 = Invoked (Ctrl+Space), 2 = Trigger Character, 3 = Incomplete
+      const triggerKind = context.triggerKind === monaco.languages.CompletionTriggerKind.TriggerCharacter ? 2 : 1
+      
+      const result = await client.completion(uri, position.lineNumber - 1, position.column - 1, {
+        triggerKind,
+        triggerCharacter: context.triggerCharacter
+      })
+      
+      const items = Array.isArray(result) ? result : (result.items || null)
+      if (!items) return { suggestions: [] }
 
-      const items = result.items || result || []
       const word = model.getWordUntilPosition(position)
-
-      const suggestions = items.map((item) => ({
-        label: item.label,
-        kind: completionKindMap[item.kind] || monaco.languages.CompletionItemKind.Text,
-        detail: item.detail || '',
-        documentation: item.documentation?.value || item.documentation || '',
-        insertText: item.insertText || item.label,
-        range: {
+      
+      const suggestions = items.map(item => {
+        let insertText = item.insertText || item.label
+        let range = {
           startLineNumber: position.lineNumber,
           startColumn: word.startColumn,
           endLineNumber: position.lineNumber,
           endColumn: word.endColumn
         }
-      }))
-      return { suggestions }
+
+        if (item.textEdit) {
+          insertText = item.textEdit.newText
+          if (item.textEdit.range) {
+            range = {
+              startLineNumber: item.textEdit.range.start.line + 1,
+              startColumn: item.textEdit.range.start.character + 1,
+              endLineNumber: item.textEdit.range.end.line + 1,
+              endColumn: item.textEdit.range.end.character + 1
+            }
+          }
+        }
+
+        const mappedItem = {
+          label: item.label,
+          kind: completionKindMap[item.kind] || monaco.languages.CompletionItemKind.Text,
+          detail: item.detail || '',
+          documentation: item.documentation?.value || item.documentation || '',
+          insertText,
+          range
+        }
+        
+        if (item.filterText) mappedItem.filterText = item.filterText
+        if (item.sortText) mappedItem.sortText = item.sortText
+        if (item.insertTextFormat === 2) {
+          mappedItem.insertTextRules = monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
+        }
+        
+        return mappedItem
+      })
+      
+      console.log(`[LSP] Returning ${suggestions.length} suggestions, incomplete:`, result.isIncomplete)
+      return { suggestions, incomplete: result.isIncomplete || false }
     }
   })
 
@@ -866,41 +906,8 @@ export const CodeEditor = ({
 
     // Error Lens Integration
     monacoInstance.editor.onDidChangeMarkers((uris) => {
-      const { extensions } = useAppStore.getState()
-      const isErrorLensEnabled = isExtensionEnabled('ext-fmt-errorlens', extensions)
-      if (!isErrorLensEnabled || !errorLensDecorationsCollectionRef.current) {
-        if (errorLensDecorationsCollectionRef.current) errorLensDecorationsCollectionRef.current.clear()
-        return
-      }
-
-      const targetUri = monacoInstance.Uri.parse(pathToUri(activeFile)).toString().toLowerCase()
-      // Check if the current file's markers changed
-      if (uris.some(u => u.toString().toLowerCase() === targetUri)) {
-        const model = editor.getModel()
-        if (!model) return
-
-        const markers = monacoInstance.editor.getModelMarkers({ resource: model.uri })
-        
-        // Convert markers to delta decorations
-        const newDecorations = markers.map(marker => {
-          let className = 'error-lens-info'
-          if (marker.severity === monacoInstance.MarkerSeverity.Error) className = 'error-lens-error'
-          if (marker.severity === monacoInstance.MarkerSeverity.Warning) className = 'error-lens-warning'
-          
-          return {
-            range: new monacoInstance.Range(marker.startLineNumber, marker.startColumn, marker.startLineNumber, marker.startColumn),
-            options: {
-              isWholeLine: true,
-              after: {
-                content: `    ${marker.message}`,
-                inlineClassName: `error-lens-inline ${className}`
-              }
-            }
-          }
-        })
-        
-        errorLensDecorationsCollectionRef.current.set(newDecorations)
-      }
+      // Forcefully disabled as per user request to stop inline diagnostic text
+      if (errorLensDecorationsCollectionRef.current) errorLensDecorationsCollectionRef.current.clear()
     })
 
     // Command: Inline AI Edit (Ctrl+K)
@@ -1536,7 +1543,37 @@ export const CodeEditor = ({
                 cursorSmoothCaretAnimation: 'on',
                 formatOnPaste: true,
                 automaticLayout: true,
-                inlineSuggest: { enabled: true },
+                inlineSuggest: { enabled: true }, // Enable inline ghost text for Copilot
+                quickSuggestions: true, // Enable classic dropdown on normal keystrokes
+                wordBasedSuggestions: 'off', // Disables dumb word-based guessing
+                suggestOnTriggerCharacters: true, // Pop up on . or :: or Ctrl+Space
+                suggest: {
+                  showMethods: true,
+                  showFunctions: true,
+                  showConstructors: true,
+                  showFields: true,
+                  showVariables: true,
+                  showClasses: true,
+                  showStructs: true,
+                  showInterfaces: true,
+                  showModules: true,
+                  showProperties: true,
+                  showEvents: true,
+                  showOperators: true,
+                  showUnits: true,
+                  showValues: true,
+                  showConstants: true,
+                  showEnums: true,
+                  showEnumMembers: true,
+                  showKeywords: true,
+                  showWords: true,
+                  showColors: true,
+                  showFiles: true,
+                  showReferences: true,
+                  showFolders: true,
+                  showTypeParameters: true,
+                  showSnippets: true,
+                },
                 glyphMargin: false,
                 lineDecorationsWidth: 16
               }}
