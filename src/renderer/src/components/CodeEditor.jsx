@@ -867,6 +867,52 @@ export const CodeEditor = ({
     return () => window.removeEventListener('editor-action', handleEditorAction)
   }, [])
 
+  // Jump to a specific line/column when the Search panel (or any caller) requests it.
+  // Fired via: window.dispatchEvent(new CustomEvent('jump-to-line', { detail: { path, line, column, matchLength } }))
+  useEffect(() => {
+    const handleJumpToLine = (e) => {
+      const detail = e.detail || {}
+      // Only respond if this editor is showing the requested file (or no path filter given).
+      if (detail.path && detail.path !== activeFile) return
+      const editor = editorRef.current
+      if (!editor) return
+
+      const line = Math.max(1, parseInt(detail.line, 10) || 1)
+      const column = Math.max(1, parseInt(detail.column, 10) || 1)
+      const matchLength = parseInt(detail.matchLength, 10) || 0
+
+      // Wait a tick so file content is loaded into the model.
+      const doJump = () => {
+        const model = editor.getModel()
+        if (!model) return
+        const lastLine = model.getLineCount()
+        const targetLine = Math.min(line, lastLine)
+        editor.revealLineInCenter(targetLine)
+        if (matchLength > 0) {
+          editor.setSelection({
+            startLineNumber: targetLine,
+            startColumn: column,
+            endLineNumber: targetLine,
+            endColumn: column + matchLength
+          })
+        } else {
+          editor.setPosition({ lineNumber: targetLine, column })
+        }
+        editor.focus()
+      }
+
+      // If content is still 'Loading...' the model may not have the target line yet — retry once.
+      const model = editor.getModel()
+      if (model && model.getLineCount() >= line) {
+        doJump()
+      } else {
+        setTimeout(doJump, 120)
+      }
+    }
+    window.addEventListener('jump-to-line', handleJumpToLine)
+    return () => window.removeEventListener('jump-to-line', handleJumpToLine)
+  }, [activeFile])
+
   // Handle Monaco Mount
   const handleEditorDidMount = (editor, monacoInstance) => {
     editorRef.current = editor

@@ -9,7 +9,7 @@ import ReactMarkdown from 'react-markdown'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { applyDiff, unescapeXml } from './diffUtils'
-import { Play, Bug, Maximize2, Minimize2, Trash2, CheckCircle, Circle, RefreshCw, Command, ChevronRight, File, Code, Cpu, Activity, Info, LogOut, ArrowRight, X, Search, Settings, User, LayoutGrid, PanelLeft, PanelBottom, PanelRight, Square, Minus } from 'lucide-react'
+import { Play, Bug, Maximize2, Minimize2, Trash2, CheckCircle, Circle, RefreshCw, Command, ChevronRight, ChevronDown, File, Code, Cpu, Activity, Info, LogOut, ArrowRight, X, Search, Settings, User, LayoutGrid, PanelLeft, PanelBottom, PanelRight, Square, Minus } from 'lucide-react'
 import { getEnclosingScope } from './utils/astParser'
 import { CodebaseVisualizer } from './components/CodebaseVisualizer'
 import { ActivityBar } from './components/ActivityBar'
@@ -1457,6 +1457,197 @@ the new code
     return () => window.removeEventListener('debug-postman-request', handleDebugPostman)
   }, [activeFile, selectedModel, customBaseUrl, customModelId])
 
+  // Reactive subscription so menu shortcuts re-render when user edits bindings.
+  const customShortcuts = useShortcutStore(state => state.shortcuts)
+  const formatShortcutById = (id, fallback) => {
+    if (!id) return fallback
+    for (const group of customShortcuts) {
+      const item = group.items.find(i => i.id === id)
+      if (item && item.keys && item.keys.length) return item.keys.join('+')
+    }
+    return fallback
+  }
+
+  // ── Workspace Search ──
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchCaseSensitive, setSearchCaseSensitive] = useState(false)
+  const [searchWholeWord, setSearchWholeWord] = useState(false)
+  const [searchRegex, setSearchRegex] = useState(false)
+  const [searchIncludeGlob, setSearchIncludeGlob] = useState('')
+  const [searchExcludeGlob, setSearchExcludeGlob] = useState('')
+  const [searchResults, setSearchResults] = useState([]) // [{ path, matches: [{ line, column, preview, matchLength }] }]
+  const [searchStatus, setSearchStatus] = useState('idle') // 'idle' | 'searching' | 'done' | 'error'
+  const [searchError, setSearchError] = useState(null)
+  const [collapsedSearchFiles, setCollapsedSearchFiles] = useState({})
+  const searchRunIdRef = useRef(0)
+
+  // Simple glob → regex (supports *, **, ?). Empty string means "no filter".
+  const globToRegex = (glob) => {
+    if (!glob) return null
+    // Split on commas so users can enter multiple patterns.
+    const parts = glob.split(',').map(p => p.trim()).filter(Boolean)
+    if (!parts.length) return null
+    const escaped = parts.map(p => {
+      let re = ''
+      for (let i = 0; i < p.length; i++) {
+        const c = p[i]
+        if (c === '*') {
+          if (p[i + 1] === '*') { re += '.*'; i++ } else { re += '[^/\\\\]*' }
+        } else if (c === '?') { re += '[^/\\\\]' }
+        else if ('.+^$(){}|[]\\'.includes(c)) { re += '\\' + c }
+        else { re += c }
+      }
+      return re
+    })
+    // Match anywhere in the path.
+    return new RegExp('(?:' + escaped.join('|') + ')', 'i')
+  }
+
+  const runWorkspaceSearch = async (query, opts) => {
+    const runId = ++searchRunIdRef.current
+    setSearchStatus('searching')
+    setSearchError(null)
+    setSearchResults([])
+    setCollapsedSearchFiles({})
+
+    if (!query) {
+      setSearchStatus('idle')
+      return
+    }
+    if (!projectRoot) {
+      setSearchError('Open a folder to search in.')
+      setSearchStatus('error')
+      return
+    }
+
+    let pattern
+    try {
+      let source = opts.regex ? query : query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      if (opts.wholeWord) source = `\\b${source}\\b`
+      pattern = new RegExp(source, opts.caseSensitive ? 'g' : 'gi')
+    } catch (err) {
+      setSearchError(`Invalid regex: ${err.message}`)
+      setSearchStatus('error')
+      return
+    }
+
+    let includeRe, excludeRe
+    try {
+      includeRe = globToRegex(opts.includeGlob)
+      excludeRe = globToRegex(opts.excludeGlob)
+    } catch (err) {
+      setSearchError(`Invalid glob: ${err.message}`)
+      setSearchStatus('error')
+      return
+    }
+
+    // Default excludes so we don't waste cycles on node_modules and binaries.
+    const defaultExcludes = /(?:^|[/\\])(?:node_modules|\.git|dist|out|build)(?:[/\\]|$)/
+    const binaryExt = /\.(png|jpg|jpeg|gif|bmp|ico|svg|pdf|zip|tar|gz|rar|7z|exe|dll|so|dylib|class|jar|woff2?|ttf|eot|mp3|mp4|mov|avi|webm|wasm)$/i
+
+    try {
+      const allFiles = await window.api.getProjectTree(projectRoot)
+      if (runId !== searchRunIdRef.current) return
+
+      const filtered = (allFiles || []).filter(fp => {
+        if (defaultExcludes.test(fp)) return false
+        if (binaryExt.test(fp)) return false
+        if (includeRe && !includeRe.test(fp)) return false
+        if (excludeRe && excludeRe.test(fp)) return false
+        return true
+      })
+
+      // Cap total files scanned so a huge repo doesn't lock up the renderer.
+      const MAX_FILES = 2000
+      const MAX_MATCHES_PER_FILE = 100
+      const MAX_TOTAL_MATCHES = 5000
+      const files = filtered.slice(0, MAX_FILES)
+
+      const results = []
+      let totalMatches = 0
+
+      // Process in small chunks and yield to the event loop so the UI stays responsive.
+      const CHUNK = 25
+      for (let i = 0; i < files.length && totalMatches < MAX_TOTAL_MATCHES; i += CHUNK) {
+        if (runId !== searchRunIdRef.current) return
+        const slice = files.slice(i, i + CHUNK)
+        const readResults = await Promise.all(slice.map(async (fp) => {
+          try {
+            const res = await window.api.getFileContents(fp)
+            if (!res || !res.success || typeof res.content !== 'string') return null
+            // Skip files that look binary (contain NUL bytes in the first chunk).
+            if (res.content.indexOf('\u0000') !== -1) return null
+            return { path: fp, content: res.content }
+          } catch { return null }
+        }))
+        if (runId !== searchRunIdRef.current) return
+
+        for (const r of readResults) {
+          if (!r) continue
+          const lines = r.content.split(/\r?\n/)
+          const matches = []
+          for (let ln = 0; ln < lines.length && matches.length < MAX_MATCHES_PER_FILE; ln++) {
+            const line = lines[ln]
+            pattern.lastIndex = 0
+            let m
+            while ((m = pattern.exec(line)) !== null) {
+              if (m[0].length === 0) { pattern.lastIndex++; continue }
+              matches.push({
+                line: ln + 1,
+                column: m.index + 1,
+                matchLength: m[0].length,
+                preview: line.length > 400 ? line.slice(0, 400) + '…' : line
+              })
+              if (matches.length >= MAX_MATCHES_PER_FILE) break
+            }
+          }
+          if (matches.length) {
+            results.push({ path: r.path, matches })
+            totalMatches += matches.length
+          }
+        }
+        // Stream partial results so the user sees hits as they arrive.
+        setSearchResults([...results])
+        // Yield to the event loop.
+        await new Promise(res => setTimeout(res, 0))
+      }
+
+      if (runId !== searchRunIdRef.current) return
+      setSearchStatus('done')
+    } catch (err) {
+      if (runId !== searchRunIdRef.current) return
+      setSearchError(err.message || String(err))
+      setSearchStatus('error')
+    }
+  }
+
+  // Debounce searches while the user types.
+  useEffect(() => {
+    const q = searchQuery
+    const opts = {
+      caseSensitive: searchCaseSensitive,
+      wholeWord: searchWholeWord,
+      regex: searchRegex,
+      includeGlob: searchIncludeGlob,
+      excludeGlob: searchExcludeGlob
+    }
+    const handle = setTimeout(() => runWorkspaceSearch(q, opts), 300)
+    return () => clearTimeout(handle)
+  }, [searchQuery, searchCaseSensitive, searchWholeWord, searchRegex, searchIncludeGlob, searchExcludeGlob, projectRoot])
+
+  const openSearchMatch = (path, match) => {
+    const name = path.split(/[/\\]/).pop() || path
+    handleOpenFile(path, name)
+    // Give the editor a moment to mount / load content before revealing the line.
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('jump-to-line', {
+        detail: { path, line: match.line, column: match.column, matchLength: match.matchLength }
+      }))
+    }, 60)
+  }
+
+  const totalSearchMatches = searchResults.reduce((n, r) => n + r.matches.length, 0)
+
   return (
     <div className="ide-root" style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: 'var(--bg-deep)', color: 'var(--text-primary)' }}>
       {/* ── Global Header ── */}
@@ -1468,16 +1659,16 @@ the new code
           <div style={{ display: 'flex', gap: '16px', fontSize: '13px', color: 'var(--text-muted)' }}>
             {[
               { name: 'File', items: [
-                { label: 'New Text File', shortcut: 'Ctrl+N', action: () => {
+                { label: 'New Text File', shortcutId: 'file.new', shortcut: 'Ctrl+N', action: () => {
                    const id = `untitled:Untitled-${Date.now()}`;
                    const name = `Untitled`;
                    setOpenFiles(prev => [...prev, { name, path: id }]);
                    setActiveFile(id);
                 }},
                 { label: 'New File...', shortcut: 'Ctrl+Alt+Windows+N', action: () => window.dispatchEvent(new CustomEvent('create-new-file')) },
-                { label: 'New Window', shortcut: 'Ctrl+Shift+N', action: () => window.api.newWindow && window.api.newWindow() },
+                { label: 'New Window', shortcutId: 'file.newWindow', shortcut: 'Ctrl+Shift+N', action: () => window.api.newWindow && window.api.newWindow() },
                 { type: 'separator' },
-                { label: 'Open File...', shortcut: 'Ctrl+O', action: async () => {
+                { label: 'Open File...', shortcutId: 'file.open', shortcut: 'Ctrl+O', action: async () => {
                     if (window.api.selectFile) {
                       const p = await window.api.selectFile();
                       if (p) {
@@ -1487,7 +1678,7 @@ the new code
                       }
                     }
                 }},
-                { label: 'Open Folder...', shortcut: 'Ctrl+K Ctrl+O', action: async () => {
+                { label: 'Open Folder...', shortcutId: 'file.openFolder', shortcut: 'Ctrl+K Ctrl+O', action: async () => {
                     if (window.api.selectFolder) {
                       const p = await window.api.selectFolder();
                       if (p) {
@@ -1524,49 +1715,49 @@ the new code
                 ] : []),
                 { type: 'separator' },
                 { label: `Auto Save ${autoSave ? '✓' : ''}`, action: () => setAutoSave(!autoSave) },
-                { label: 'Save', shortcut: 'Ctrl+S', action: () => saveActiveFile() },
-                { label: 'Save As...', shortcut: 'Ctrl+Shift+S', action: () => saveActiveFile() },
-                { label: 'Save All', shortcut: 'Ctrl+K S', action: () => saveActiveFile() },
+                { label: 'Save', shortcutId: 'file.save', shortcut: 'Ctrl+S', action: () => saveActiveFile() },
+                { label: 'Save As...', shortcutId: 'file.saveAs', shortcut: 'Ctrl+Shift+S', action: () => saveActiveFile() },
+                { label: 'Save All', shortcutId: 'file.saveAll', shortcut: 'Ctrl+K S', action: () => saveActiveFile() },
                 { type: 'separator' },
-                { label: 'Close Editor', shortcut: 'Ctrl+F4', action: () => activeFile ? closeFile(activeFile) : null },
+                { label: 'Close Editor', shortcutId: 'file.close', shortcut: 'Ctrl+F4', action: () => activeFile ? closeFile(activeFile) : null },
                 { label: 'Close Folder', shortcut: 'Ctrl+K F', action: () => setProjectRoot(null) },
-                { label: 'Close Window', shortcut: 'Alt+F4', action: () => window.close() },
+                { label: 'Close Window', shortcutId: 'general.closeWindow', shortcut: 'Alt+F4', action: () => window.close() },
                 { type: 'separator' },
                 { label: 'Exit', action: () => window.close() }
               ]},
               { name: 'Edit', items: [
-                { label: 'Undo', shortcut: 'Ctrl+Z', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'undo' })) },
-                { label: 'Redo', shortcut: 'Ctrl+Y', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'redo' })) },
+                { label: 'Undo', shortcutId: 'edit.undo', shortcut: 'Ctrl+Z', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'undo' })) },
+                { label: 'Redo', shortcutId: 'edit.redo', shortcut: 'Ctrl+Y', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'redo' })) },
                 { type: 'separator' },
-                { label: 'Cut', shortcut: 'Ctrl+X', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.clipboardCutAction' })) },
-                { label: 'Copy', shortcut: 'Ctrl+C', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.clipboardCopyAction' })) },
-                { label: 'Paste', shortcut: 'Ctrl+V', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.clipboardPasteAction' })) },
+                { label: 'Cut', shortcutId: 'edit.cut', shortcut: 'Ctrl+X', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.clipboardCutAction' })) },
+                { label: 'Copy', shortcutId: 'edit.copy', shortcut: 'Ctrl+C', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.clipboardCopyAction' })) },
+                { label: 'Paste', shortcutId: 'edit.paste', shortcut: 'Ctrl+V', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.clipboardPasteAction' })) },
                 { type: 'separator' },
-                { label: 'Find', shortcut: 'Ctrl+F', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'actions.find' })) },
-                { label: 'Replace', shortcut: 'Ctrl+H', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.startFindReplaceAction' })) },
+                { label: 'Find', shortcutId: 'edit.find', shortcut: 'Ctrl+F', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'actions.find' })) },
+                { label: 'Replace', shortcutId: 'edit.replace', shortcut: 'Ctrl+H', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.startFindReplaceAction' })) },
                 { type: 'separator' },
-                { label: 'Find in Files', shortcut: 'Ctrl+Shift+F', action: () => setActivePanel('search') },
+                { label: 'Find in Files', shortcutId: 'edit.findInFiles', shortcut: 'Ctrl+Shift+F', action: () => setActivePanel('search') },
                 { label: 'Replace in Files', shortcut: 'Ctrl+Shift+H', action: () => setActivePanel('search') },
                 { type: 'separator' },
-                { label: 'Toggle Line Comment', shortcut: 'Ctrl+/', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.commentLine' })) },
+                { label: 'Toggle Line Comment', shortcutId: 'edit.commentLine', shortcut: 'Ctrl+/', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.commentLine' })) },
                 { label: 'Toggle Block Comment', shortcut: 'Shift+Alt+A', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.blockComment' })) },
                 { label: 'Emmet: Expand Abbreviation', shortcut: 'Tab', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.emmet.action.expandAbbreviation' })) }
               ]},
               { name: 'Selection', items: [
-                { label: 'Select All', shortcut: 'Ctrl+A', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.selectAll' })) },
+                { label: 'Select All', shortcutId: 'edit.selectAll', shortcut: 'Ctrl+A', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.selectAll' })) },
                 { label: 'Expand Selection', shortcut: 'Shift+Alt+RightArrow', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.smartSelect.expand' })) },
                 { label: 'Shrink Selection', shortcut: 'Shift+Alt+LeftArrow', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.smartSelect.shrink' })) },
                 { type: 'separator' },
                 { label: 'Copy Line Up', shortcut: 'Shift+Alt+UpArrow', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.copyLinesUpAction' })) },
                 { label: 'Copy Line Down', shortcut: 'Shift+Alt+DownArrow', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.copyLinesDownAction' })) },
-                { label: 'Move Line Up', shortcut: 'Alt+UpArrow', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.moveLinesUpAction' })) },
-                { label: 'Move Line Down', shortcut: 'Alt+DownArrow', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.moveLinesDownAction' })) },
+                { label: 'Move Line Up', shortcutId: 'edit.moveLineUp', shortcut: 'Alt+UpArrow', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.moveLinesUpAction' })) },
+                { label: 'Move Line Down', shortcutId: 'edit.moveLineDown', shortcut: 'Alt+DownArrow', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.moveLinesDownAction' })) },
                 { label: 'Duplicate Selection', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.duplicateSelection' })) },
                 { type: 'separator' },
                 { label: 'Add Cursor Above', shortcut: 'Ctrl+Alt+UpArrow', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.insertCursorAbove' })) },
                 { label: 'Add Cursor Below', shortcut: 'Ctrl+Alt+DownArrow', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.insertCursorBelow' })) },
                 { label: 'Add Cursors to Line Ends', shortcut: 'Shift+Alt+I', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.insertCursorAtEndOfEachLineSelected' })) },
-                { label: 'Add Next Occurrence', shortcut: 'Ctrl+D', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.addSelectionToNextFindMatch' })) },
+                { label: 'Add Next Occurrence', shortcutId: 'editor.action.addSelectionToNextFindMatch', shortcut: 'Ctrl+D', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.addSelectionToNextFindMatch' })) },
                 { label: 'Add Previous Occurrence', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.addSelectionToPreviousFindMatch' })) },
                 { label: 'Select All Occurrences', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.selectHighlights' })) },
                 { type: 'separator' },
@@ -1574,11 +1765,11 @@ the new code
                 { label: 'Column Selection Mode', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.toggleColumnSelection' })) }
               ]},
               { name: 'View', items: [
-                { label: 'Command Palette...', shortcut: 'Ctrl+Shift+P', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.quickCommand' })) },
+                { label: 'Command Palette...', shortcutId: 'general.commandPalette', shortcut: 'Ctrl+Shift+P', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.quickCommand' })) },
                 { label: 'Open View...', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.quickCommand' })) },
                 { type: 'separator' },
                 { label: 'Appearance', hasSubmenu: true, submenu: [
-                  { label: 'Full Screen', shortcut: 'F11', action: () => { if (!document.fullscreenElement) { document.documentElement.requestFullscreen().catch(() => {}); } else { document.exitFullscreen(); } } },
+                  { label: 'Full Screen', shortcutId: 'general.fullscreen', shortcut: 'F11', action: () => { if (!document.fullscreenElement) { document.documentElement.requestFullscreen().catch(() => {}); } else { document.exitFullscreen(); } } },
                   { label: 'Zen Mode', action: () => { if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {}); setActivePanel(null); setShowTerminal(false); } },
                   { type: 'separator' },
                   { label: 'Primary Side Bar', action: () => setActivePanel(activePanel === 'explorer' ? null : 'explorer') },
@@ -1620,48 +1811,48 @@ the new code
                   }}
                 ]},
                 { type: 'separator' },
-                { label: 'Explorer', shortcut: 'Ctrl+Shift+E', action: () => setActivePanel('explorer') },
+                { label: 'Explorer', shortcutId: 'nav.focusExplorer', shortcut: 'Ctrl+Shift+E', action: () => setActivePanel('explorer') },
                 { label: 'Search', shortcut: 'Ctrl+Shift+F', action: () => setActivePanel('search') },
                 { label: 'Source Control', shortcut: 'Ctrl+Shift+G', action: () => setActivePanel('git') },
                 { label: 'Run', shortcut: 'Ctrl+Shift+D', action: () => setActivePanel('debug') },
-                { label: 'Extensions', shortcut: 'Ctrl+Shift+X', action: () => setActivePanel('extensions') },
+                { label: 'Extensions', shortcutId: 'general.extensions', shortcut: 'Ctrl+Shift+X', action: () => setActivePanel('extensions') },
                 { type: 'separator' },
                 { label: 'Problems', shortcut: 'Ctrl+Shift+M', action: () => { setShowTerminal(true); setBottomTab('ai-debugger'); } },
                 { label: 'Output', shortcut: 'Ctrl+Shift+U', action: () => { setShowTerminal(true); setBottomTab('terminal'); } },
                 { label: 'Debug Console', shortcut: 'Ctrl+Shift+Y', action: () => { setShowTerminal(true); setBottomTab('debugger-history'); } },
-                { label: 'Terminal', shortcut: 'Ctrl+`', action: () => { setShowTerminal(true); setBottomTab('terminal'); } },
+                { label: 'Terminal', shortcutId: 'nav.focusTerminal', shortcut: 'Ctrl+`', action: () => { setShowTerminal(true); setBottomTab('terminal'); } },
                 { type: 'separator' },
                 { label: 'Word Wrap', shortcut: 'Alt+Z', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.toggleWordWrap' })) }
               ]},
               { name: 'Go', items: [
-                { label: 'Back', shortcut: 'Alt+LeftArrow', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'cursorUndo' })) },
-                { label: 'Forward', shortcut: 'Alt+RightArrow', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'cursorRedo' })) },
+                { label: 'Back', shortcutId: 'nav.goBack', shortcut: 'Alt+LeftArrow', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'cursorUndo' })) },
+                { label: 'Forward', shortcutId: 'nav.goForward', shortcut: 'Alt+RightArrow', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'cursorRedo' })) },
                 { type: 'separator' },
-                { label: 'Go to File...', shortcut: 'Ctrl+P', action: () => setActivePanel('search') },
+                { label: 'Go to File...', shortcutId: 'nav.goToFile', shortcut: 'Ctrl+P', action: () => setActivePanel('search') },
                 { type: 'separator' },
                 { label: 'Go to Symbol in Editor...', shortcut: 'Ctrl+Shift+O', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.quickOutline' })) },
-                { label: 'Go to Definition', shortcut: 'F12', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.revealDefinition' })) },
+                { label: 'Go to Definition', shortcutId: 'nav.goToDef', shortcut: 'F12', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.revealDefinition' })) },
                 { label: 'Go to Declaration', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.revealDeclaration' })) },
                 { label: 'Go to Type Definition', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.goToTypeDefinition' })) },
                 { label: 'Go to Implementations', shortcut: 'Ctrl+F12', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.goToImplementation' })) },
-                { label: 'Go to References', shortcut: 'Shift+F12', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.referenceSearch.trigger' })) },
+                { label: 'Go to References', shortcutId: 'nav.goToRef', shortcut: 'Shift+F12', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.referenceSearch.trigger' })) },
                 { type: 'separator' },
-                { label: 'Go to Line/Column...', shortcut: 'Ctrl+G', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.gotoLine' })) },
+                { label: 'Go to Line/Column...', shortcutId: 'nav.goToLine', shortcut: 'Ctrl+G', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.gotoLine' })) },
                 { label: 'Go to Bracket', shortcut: 'Ctrl+Shift+\\', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.jumpToBracket' })) },
                 { type: 'separator' },
                 { label: 'Next Problem', shortcut: 'F8', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.marker.next' })) },
                 { label: 'Previous Problem', shortcut: 'Shift+F8', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.marker.prev' })) }
               ]},
               { name: 'Run', items: [
-                { label: 'Start Debugging', shortcut: 'F5', action: () => { setActivePanel('debug'); setTimeout(() => window.dispatchEvent(new CustomEvent('start-debugging')), 50); } },
+                { label: 'Start Debugging', shortcutId: 'debug.start', shortcut: 'F5', action: () => { setActivePanel('debug'); setTimeout(() => window.dispatchEvent(new CustomEvent('start-debugging')), 50); } },
                 { label: 'Run Without Debugging', shortcut: 'Ctrl+F5', action: () => runFileRef.current && runFileRef.current() },
-                { label: 'Stop Debugging', shortcut: 'Shift+F5', action: () => { setActivePanel('debug'); if (window.api && window.api.dapStop) { window.api.dapStop(); window.dispatchEvent(new Event('dap-stop')); } } },
+                { label: 'Stop Debugging', shortcutId: 'debug.stop', shortcut: 'Shift+F5', action: () => { setActivePanel('debug'); if (window.api && window.api.dapStop) { window.api.dapStop(); window.dispatchEvent(new Event('dap-stop')); } } },
                 { type: 'separator' },
-                { label: 'Step Over', shortcut: 'F10', action: () => { setActivePanel('debug'); if (window.api && window.api.dapStep) window.api.dapStep() } },
-                { label: 'Continue', shortcut: 'F5', action: () => { setActivePanel('debug'); if (window.api && window.api.dapContinue) { window.api.dapContinue(); window.dispatchEvent(new Event('dap-continue')); } } }
+                { label: 'Step Over', shortcutId: 'debug.stepOver', shortcut: 'F10', action: () => { setActivePanel('debug'); if (window.api && window.api.dapStep) window.api.dapStep() } },
+                { label: 'Continue', shortcutId: 'debug.start', shortcut: 'F5', action: () => { setActivePanel('debug'); if (window.api && window.api.dapContinue) { window.api.dapContinue(); window.dispatchEvent(new Event('dap-continue')); } } }
               ]},
               { name: 'Terminal', items: [
-                { label: 'New Terminal', shortcut: 'Ctrl+Shift+`', action: () => { setShowTerminal(true); handleAddTerminal(); } },
+                { label: 'New Terminal', shortcutId: 'general.terminal', shortcut: 'Ctrl+Shift+`', action: () => { setShowTerminal(true); handleAddTerminal(); } },
                 { label: 'Split Terminal', shortcut: 'Ctrl+Shift+5', action: () => { setShowTerminal(true); handleAddTerminal(); } },
                 { type: 'separator' },
                 { label: 'Run Active File', action: () => runFileRef.current && runFileRef.current() },
@@ -1711,7 +1902,7 @@ the new code
                           onClick={() => { if(!item.hasSubmenu) { setActiveMenu(null); setActiveSubmenu(null); if(item.action) item.action() } }}
                         >
                           <span>{item.label}</span>
-                          {item.shortcut && <span style={{ opacity: 0.5, fontSize: '11px', letterSpacing: '0.2px', marginLeft: 'auto' }}>{item.shortcut}</span>}
+                          {(item.shortcutId || item.shortcut) && <span style={{ opacity: 0.5, fontSize: '11px', letterSpacing: '0.2px', marginLeft: 'auto' }}>{formatShortcutById(item.shortcutId, item.shortcut)}</span>}
                           {item.hasSubmenu && <ChevronRight size={14} style={{ opacity: 0.6, marginLeft: 'auto' }} />}
                           
                           {item.hasSubmenu && activeSubmenu === idx && (
@@ -1728,7 +1919,7 @@ the new code
                                     onClick={() => { setActiveSubmenu(null); setActiveMenu(null); if(sub.action) sub.action() }}
                                   >
                                     <span>{sub.label}</span>
-                                    {sub.shortcut && <span style={{ opacity: 0.6, fontSize: '11px', letterSpacing: '0.2px' }}>{sub.shortcut}</span>}
+                                    {(sub.shortcutId || sub.shortcut) && <span style={{ opacity: 0.6, fontSize: '11px', letterSpacing: '0.2px' }}>{formatShortcutById(sub.shortcutId, sub.shortcut)}</span>}
                                   </div>
                                 )
                               ))}
@@ -1877,21 +2068,121 @@ the new code
         )}
 
         {activePanel === 'search' && (
-          <aside className="sidebar search-panel" style={{ width: sidebarWidth }}>
+          <aside className="sidebar search-panel" style={{ width: sidebarWidth, display: 'flex', flexDirection: 'column' }}>
             <div className="sidebar-header">
               <h2>SEARCH</h2>
             </div>
-            <div className="extensions-search">
-              <div className="search-input-wrapper">
-                <Search size={14} className="search-icon" />
-                <input 
-                  type="text" 
-                  placeholder="Search..." 
-                />
+            <div style={{ padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: '6px', borderBottom: '1px solid var(--border-base)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <div className="search-input-wrapper" style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '6px', background: 'var(--bg-dark)', border: '1px solid var(--border-base)', borderRadius: '4px', padding: '4px 6px' }}>
+                  <Search size={14} className="search-icon" style={{ opacity: 0.6 }} />
+                  <input
+                    type="text"
+                    autoFocus
+                    placeholder="Search"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'var(--text-primary)', fontSize: '13px' }}
+                  />
+                  {searchQuery && (
+                    <X size={14} style={{ cursor: 'pointer', opacity: 0.6 }} onClick={() => setSearchQuery('')} title="Clear" />
+                  )}
+                </div>
               </div>
+              <div style={{ display: 'flex', gap: '4px' }}>
+                <button
+                  onClick={() => setSearchCaseSensitive(v => !v)}
+                  title="Match Case"
+                  style={{ background: searchCaseSensitive ? 'var(--accent-active, #094771)' : 'transparent', border: '1px solid var(--border-base)', borderRadius: '3px', color: 'var(--text-primary)', padding: '2px 6px', cursor: 'pointer', fontSize: '11px', fontFamily: 'monospace' }}
+                >Aa</button>
+                <button
+                  onClick={() => setSearchWholeWord(v => !v)}
+                  title="Match Whole Word"
+                  style={{ background: searchWholeWord ? 'var(--accent-active, #094771)' : 'transparent', border: '1px solid var(--border-base)', borderRadius: '3px', color: 'var(--text-primary)', padding: '2px 6px', cursor: 'pointer', fontSize: '11px', fontFamily: 'monospace' }}
+                >\b</button>
+                <button
+                  onClick={() => setSearchRegex(v => !v)}
+                  title="Use Regular Expression"
+                  style={{ background: searchRegex ? 'var(--accent-active, #094771)' : 'transparent', border: '1px solid var(--border-base)', borderRadius: '3px', color: 'var(--text-primary)', padding: '2px 6px', cursor: 'pointer', fontSize: '11px', fontFamily: 'monospace' }}
+                >.*</button>
+              </div>
+              <input
+                type="text"
+                placeholder="files to include (e.g. *.js, src/**)"
+                value={searchIncludeGlob}
+                onChange={(e) => setSearchIncludeGlob(e.target.value)}
+                style={{ background: 'var(--bg-dark)', border: '1px solid var(--border-base)', borderRadius: '4px', padding: '4px 6px', color: 'var(--text-primary)', fontSize: '12px', outline: 'none' }}
+              />
+              <input
+                type="text"
+                placeholder="files to exclude"
+                value={searchExcludeGlob}
+                onChange={(e) => setSearchExcludeGlob(e.target.value)}
+                style={{ background: 'var(--bg-dark)', border: '1px solid var(--border-base)', borderRadius: '4px', padding: '4px 6px', color: 'var(--text-primary)', fontSize: '12px', outline: 'none' }}
+              />
             </div>
-            <div className="sidebar-content" style={{ padding: '16px' }}>
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Search functionality coming soon...</p>
+
+            <div style={{ padding: '6px 12px', fontSize: '11px', color: 'var(--text-muted)', borderBottom: '1px solid var(--border-base)', minHeight: '22px' }}>
+              {!projectRoot && 'Open a folder to search.'}
+              {projectRoot && searchStatus === 'idle' && !searchQuery && 'Type to search across the workspace.'}
+              {projectRoot && searchStatus === 'searching' && `Searching… ${totalSearchMatches} matches so far`}
+              {projectRoot && searchStatus === 'done' && (
+                totalSearchMatches === 0
+                  ? 'No results.'
+                  : `${totalSearchMatches} result${totalSearchMatches === 1 ? '' : 's'} in ${searchResults.length} file${searchResults.length === 1 ? '' : 's'}`
+              )}
+              {searchStatus === 'error' && (
+                <span style={{ color: 'var(--error, #f48771)' }}>{searchError}</span>
+              )}
+            </div>
+
+            <div className="sidebar-content" style={{ flex: 1, overflow: 'auto', padding: '4px 0' }}>
+              {searchResults.map(fileResult => {
+                const collapsed = !!collapsedSearchFiles[fileResult.path]
+                const parts = fileResult.path.split(/[/\\]/)
+                const name = parts[parts.length - 1] || fileResult.path
+                let dir = ''
+                if (projectRoot && fileResult.path.startsWith(projectRoot)) {
+                  const rel = fileResult.path.substring(projectRoot.length).replace(/^[/\\]/, '')
+                  const relParts = rel.split(/[/\\]/)
+                  relParts.pop()
+                  dir = relParts.join('/')
+                }
+                return (
+                  <div key={fileResult.path}>
+                    <div
+                      onClick={() => setCollapsedSearchFiles(prev => ({ ...prev, [fileResult.path]: !collapsed }))}
+                      style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '3px 12px', cursor: 'pointer', userSelect: 'none' }}
+                      title={fileResult.path}
+                    >
+                      {collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+                      <File size={12} style={{ opacity: 0.7 }} />
+                      <span style={{ fontSize: '13px' }}>{name}</span>
+                      {dir && <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dir}</span>}
+                      <span style={{ marginLeft: 'auto', fontSize: '11px', background: 'var(--bg-dark)', borderRadius: '10px', padding: '0 6px', color: 'var(--text-muted)' }}>{fileResult.matches.length}</span>
+                    </div>
+                    {!collapsed && fileResult.matches.map((m, idx) => {
+                      const before = m.preview.substring(0, m.column - 1)
+                      const hit = m.preview.substring(m.column - 1, m.column - 1 + m.matchLength)
+                      const after = m.preview.substring(m.column - 1 + m.matchLength)
+                      return (
+                        <div
+                          key={idx}
+                          onClick={() => openSearchMatch(fileResult.path, m)}
+                          className="search-match-row"
+                          style={{ padding: '2px 12px 2px 32px', cursor: 'pointer', fontSize: '12px', fontFamily: 'monospace', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: 'var(--text-muted)' }}
+                          title={`Line ${m.line}, col ${m.column}`}
+                        >
+                          <span style={{ opacity: 0.5, marginRight: '6px' }}>{m.line}:</span>
+                          <span>{before}</span>
+                          <span style={{ background: 'var(--accent-search, #613214)', color: 'var(--text-primary)', borderRadius: '2px' }}>{hit}</span>
+                          <span>{after}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )
+              })}
             </div>
           </aside>
         )}
