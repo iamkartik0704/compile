@@ -6,11 +6,12 @@ import { promisify } from 'util'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { terminalManager } from './terminal-manager.js'
 import { setupLspIpcHandlers, setMainWindowLspRef } from './lsp-manager.js'
+import { DapManager } from './dap-manager.js'
 
 const exec = promisify(execCallback)
 
-let currentWatcher = null
-
+const watchers = new Map();
+const liveServers = new Map();
 // ============================================================
 // IN-MEMORY API KEY CACHE — per-provider map
 // { provider: decryptedKey }
@@ -402,107 +403,6 @@ function writeKeyFile(keyMap) {
 function createWindow() {
   // Create the browser window.
 
-  // --- FILE EXPLORER HANDLERS ---
-  ipcMain.handle('select-folder', async () => {
-    const result = await dialog.showOpenDialog({
-      properties: ['openDirectory']
-    })
-    if (result.canceled) return null
-    return result.filePaths[0]
-  })
-
-  ipcMain.handle('read-directory', async (event, dirPath) => {
-    try {
-      const entries = await fsPromises.readdir(dirPath, { withFileTypes: true })
-      const files = []
-      const folders = []
-      
-      for (const entry of entries) {
-        const isDirectory = entry.isDirectory()
-        const item = {
-          name: entry.name,
-          path: join(dirPath, entry.name),
-          isDirectory
-        }
-        if (isDirectory) folders.push(item)
-        else files.push(item)
-      }
-      
-      return [
-        ...folders.sort((a, b) => a.name.localeCompare(b.name)),
-        ...files.sort((a, b) => a.name.localeCompare(b.name))
-      ]
-    } catch (error) {
-      console.error('Error reading directory:', error)
-      return null
-    }
-  })
-
-  ipcMain.handle('get-project-tree', async (event, dirPath) => {
-    async function walk(dir) {
-      let results = []
-      try {
-        const entries = await fsPromises.readdir(dir, { withFileTypes: true })
-        for (const entry of entries) {
-          if (entry.name === 'node_modules' || entry.name === '.git') continue
-          const fullPath = join(dir, entry.name)
-          if (entry.isDirectory()) {
-            const sub = await walk(fullPath)
-            results = results.concat(sub)
-          } else {
-            results.push(fullPath)
-          }
-        }
-      } catch (err) {}
-      return results
-    }
-    return walk(dirPath)
-  })
-
-  ipcMain.handle('create-file', async (event, filePath) => {
-    try {
-      await fsPromises.writeFile(filePath, '')
-      return { success: true }
-    } catch (error) {
-      console.error('Error creating file:', error)
-      return { success: false, error: error.message }
-    }
-  })
-
-  ipcMain.handle('create-folder', async (event, folderPath) => {
-    try {
-      await fsPromises.mkdir(folderPath, { recursive: true })
-      return { success: true }
-    } catch (error) {
-      console.error('Error creating folder:', error)
-      return { success: false, error: error.message }
-    }
-  })
-
-  ipcMain.handle('watch-project', async (event, rootPath) => {
-    if (currentWatcher) {
-      await currentWatcher.close()
-    }
-    
-    if (!rootPath) return
-
-    const { default: chokidar } = await import('chokidar')
-
-    currentWatcher = chokidar.watch(rootPath, {
-      ignored: /(^|[\/\\])\../, // ignore dotfiles
-      persistent: true,
-      ignoreInitial: true,
-      depth: 10
-    })
-
-    currentWatcher.on('all', (eventName, path) => {
-      // Forward add, unlink, change events to frontend
-      if (['add', 'unlink', 'addDir', 'unlinkDir'].includes(eventName)) {
-        event.sender.send('fs-changed', { event: eventName, path })
-      }
-    })
-  })
-
   // --- EXISTING HANDLERS ---
   const mainWindow = new BrowserWindow({
     width: 1280,
@@ -526,14 +426,6 @@ function createWindow() {
     }
   })
 
-  // ── Window control IPC (for custom title bar) ──
-  ipcMain.handle('window-minimize', () => mainWindow.minimize())
-  ipcMain.handle('window-maximize-toggle', () => {
-    if (mainWindow.isMaximized()) mainWindow.unmaximize()
-    else mainWindow.maximize()
-  })
-  ipcMain.handle('window-close', () => mainWindow.close())
-  ipcMain.handle('window-is-maximized', () => mainWindow.isMaximized())
   mainWindow.on('maximize', () => mainWindow.webContents.send('window-maximized-changed', true))
   mainWindow.on('unmaximize', () => mainWindow.webContents.send('window-maximized-changed', false))
 
@@ -545,8 +437,8 @@ function createWindow() {
     mainWindow.show()
   })
 
-  terminalManager.init(mainWindow)
-
+  terminalManager.init()
+  setMainWindowLspRef(mainWindow)
   // Route external links to the OS browser, never in-app
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
@@ -560,13 +452,161 @@ function createWindow() {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
 
-  // ============================================================
-  // IPC HANDLERS — The Backend Logic
+
   // ============================================================
 
   /**
    * Handler: File Read
    */
+  const windowId = mainWindow.webContents.id;
+  mainWindow.on('closed', () => {
+    if (watchers.has(windowId)) {
+      watchers.get(windowId).close();
+      watchers.delete(windowId);
+    }
+    if (liveServers.has(windowId)) {
+      liveServers.get(windowId).kill();
+      liveServers.delete(windowId);
+    }
+  });
+}
+
+
+
+  // ============================================================
+  // IPC HANDLERS — The Backend Logic
+
+
+
+// --- FILE EXPLORER HANDLERS ---
+ipcMain.handle('show-save-dialog', async (event, options) => {
+  const result = await dialog.showSaveDialog(options || {})
+  if (result.canceled) return null
+  return result.filePath
+})
+
+ipcMain.handle('select-file', async () => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openFile']
+  })
+  if (result.canceled) return null
+  return result.filePaths[0]
+})
+
+ipcMain.handle('select-folder', async () => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openDirectory']
+  })
+  if (result.canceled) return null
+  return result.filePaths[0]
+})
+
+ipcMain.handle('read-directory', async (event, dirPath) => {
+  try {
+    const entries = await fsPromises.readdir(dirPath, { withFileTypes: true })
+    const files = []
+    const folders = []
+    
+    for (const entry of entries) {
+      const isDirectory = entry.isDirectory()
+      const item = {
+        name: entry.name,
+        path: join(dirPath, entry.name),
+        isDirectory
+      }
+      if (isDirectory) folders.push(item)
+      else files.push(item)
+    }
+    
+    return [
+      ...folders.sort((a, b) => a.name.localeCompare(b.name)),
+      ...files.sort((a, b) => a.name.localeCompare(b.name))
+    ]
+  } catch (error) {
+    console.error('Error reading directory:', error)
+    return null
+  }
+})
+
+ipcMain.handle('get-project-tree', async (event, dirPath) => {
+  async function walk(dir) {
+    let results = []
+    try {
+      const entries = await fsPromises.readdir(dir, { withFileTypes: true })
+      for (const entry of entries) {
+        if (entry.name === 'node_modules' || entry.name === '.git') continue
+        const fullPath = join(dir, entry.name)
+        if (entry.isDirectory()) {
+          const sub = await walk(fullPath)
+          results = results.concat(sub)
+        } else {
+          results.push(fullPath)
+        }
+      }
+    } catch (err) {}
+    return results
+  }
+  return walk(dirPath)
+})
+
+ipcMain.handle('create-file', async (event, filePath) => {
+  try {
+    await fsPromises.writeFile(filePath, '')
+    return { success: true }
+  } catch (error) {
+    console.error('Error creating file:', error)
+    return { success: false, error: error.message }
+  }
+})
+
+ipcMain.handle('create-folder', async (event, folderPath) => {
+  try {
+    await fsPromises.mkdir(folderPath, { recursive: true })
+    return { success: true }
+  } catch (error) {
+    console.error('Error creating folder:', error)
+    return { success: false, error: error.message }
+  }
+})
+
+ipcMain.handle('watch-project', async (event, rootPath) => {
+  const id = event.sender.id;
+  if (watchers.has(id)) {
+    await watchers.get(id).close()
+    watchers.delete(id)
+  }
+  
+  if (!rootPath) return
+
+  const { default: chokidar } = await import('chokidar')
+
+  const currentWatcher = chokidar.watch(rootPath, {
+    ignored: /(^|[\/\\])\../, // ignore dotfiles
+    persistent: true,
+    ignoreInitial: true,
+    depth: 10
+  })
+
+  currentWatcher.on('all', (eventName, path) => {
+    if (['add', 'unlink', 'addDir', 'unlinkDir'].includes(eventName)) {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('fs-changed', { event: eventName, path })
+      }
+    }
+  })
+  watchers.set(id, currentWatcher);
+})
+
+// ── Window control IPC (for custom title bar) ──
+ipcMain.handle('window-minimize', (event) => BrowserWindow.fromWebContents(event.sender)?.minimize())
+ipcMain.handle('window-maximize-toggle', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win) return;
+  if (win.isMaximized()) win.unmaximize()
+  else win.maximize()
+})
+ipcMain.handle('window-close', (event) => BrowserWindow.fromWebContents(event.sender)?.close())
+ipcMain.handle('window-is-maximized', (event) => BrowserWindow.fromWebContents(event.sender)?.isMaximized())
   ipcMain.handle('get-file-contents', async (_event, filePath) => {
     try {
       const content = await fsPromises.readFile(filePath, 'utf-8')
@@ -638,8 +678,6 @@ function createWindow() {
     }
   })
 
-
-  setMainWindowLspRef(mainWindow)
   setupLspIpcHandlers()
 
   /**
@@ -662,17 +700,17 @@ function createWindow() {
     }
 
     // Notify renderer which model is being used
-    mainWindow.webContents.send('ai-model-resolved', model)
+    event.sender.send('ai-model-resolved', model)
     console.log(`Routing to provider: ${model}`)
 
     // Route to provider (async streaming)
     try {
-      await routeToProvider(model, prompt, mainWindow.webContents, config)
-      mainWindow.webContents.send('ai-stream-chunk', '\n')
+      await routeToProvider(model, prompt, event.sender, config)
+      event.sender.send('ai-stream-chunk', '\n')
       return { status: 'done', model }
     } catch (err) {
       console.error('Provider error:', err)
-      mainWindow.webContents.send('ai-stream-chunk', `\n// ❌ Error: ${err.message}`)
+      event.sender.send('ai-stream-chunk', `\n// ❌ Error: ${err.message}`)
       return { status: 'error', model, error: err.message }
     }
   })
@@ -689,11 +727,11 @@ function createWindow() {
     }
 
     try {
-      await routeToProvider(model, prompt, mainWindow.webContents, { ...config, emitEvent: 'inline-ai-stream-chunk' })
+      await routeToProvider(model, prompt, event.sender, { ...config, emitEvent: 'inline-ai-stream-chunk' })
       return { status: 'done', model }
     } catch (err) {
       console.error('Provider error:', err)
-      mainWindow.webContents.send('inline-ai-stream-chunk', `\n// ❌ Error: ${err.message}`)
+      event.sender.send('inline-ai-stream-chunk', `\n// ❌ Error: ${err.message}`)
       return { status: 'error', model, error: err.message }
     }
   })
@@ -739,12 +777,12 @@ function createWindow() {
     
     try {
       const emitEvent = config.emitEvent || 'ai-debugger-stream'
-      await routeToProvider(model, prompt, mainWindow.webContents, { ...config, emitEvent })
+      await routeToProvider(model, prompt, event.sender, { ...config, emitEvent })
       return { success: true }
     } catch (err) {
       console.error('Provider error:', err)
       const emitEvent = config.emitEvent || 'ai-debugger-stream'
-      mainWindow.webContents.send(emitEvent, `\n// ❌ Error: ${err.message}`)
+      event.sender.send(emitEvent, `\n// ❌ Error: ${err.message}`)
       return { success: false, error: err.message }
     }
   })
@@ -994,19 +1032,21 @@ function createWindow() {
       }, 1500)
 
       liveServerProcess.on('exit', () => {
-        liveServerProcess = null
+        liveServers.delete(id);
       })
     })
   })
 
-  ipcMain.handle('stop-live-server', async () => {
-    if (liveServerProcess) {
-      liveServerProcess.kill()
-      liveServerProcess = null
+  ipcMain.handle('stop-live-server', async (event) => {
+    const id = event.sender.id;
+    if (liveServers.has(id)) {
+      liveServers.get(id).kill();
+      liveServers.delete(id);
     }
     return { success: true }
   })
-}
+
+ipcMain.handle('create-new-window', () => createWindow())
 
 // ============================================================
 // APP LIFECYCLE
@@ -1015,20 +1055,174 @@ function createWindow() {
 // Force chromium to render native UI (dropdowns, scrollbars) in dark mode
 app.commandLine.appendSwitch('force-dark-mode')
 
+// Handle single instance lock and deep linking
+const gotTheLock = app.requestSingleInstanceLock()
+
+if (!gotTheLock) {
+  app.quit()
+} else {
+  app.on('second-instance', (event, commandLine, workingDirectory) => {
+    // Someone tried to run a second instance, we should focus our window.
+    const mainWindow = BrowserWindow.getAllWindows()[0]
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
+      
+      const url = commandLine.find(arg => arg.startsWith('comiple://'))
+      if (url) {
+        event.sender.send('auth-callback', url)
+      }
+    }
+  })
+  
+  app.on('open-url', (event, url) => {
+    event.preventDefault()
+    const mainWindow = BrowserWindow.getAllWindows()[0]
+    if (mainWindow) {
+      event.sender.send('auth-callback', url)
+    }
+  })
+
+  // Register the protocol
+  if (process.defaultApp) {
+    if (process.argv.length >= 2) {
+      app.setAsDefaultProtocolClient('comiple', process.execPath, [require('path').resolve(process.argv[1])])
+    }
+  } else {
+    app.setAsDefaultProtocolClient('comiple')
+  }
+
+  // ---- Debug Adapter Protocol (DAP) Manager ----
+const dapManager = new DapManager()
+
+dapManager.on('dap-paused', (body) => {
+  const win = BrowserWindow.getAllWindows()[0]
+  if (win) win.webContents.send('dap-paused', body)
+})
+dapManager.on('dap-output', (output) => {
+  const win = BrowserWindow.getAllWindows()[0]
+  if (win) win.webContents.send('dap-output', output)
+})
+dapManager.on('dap-error', (error) => {
+  const win = BrowserWindow.getAllWindows()[0]
+  if (win) win.webContents.send('dap-error', error)
+})
+dapManager.on('dap-exit', () => {
+  const win = BrowserWindow.getAllWindows()[0]
+  if (win) win.webContents.send('dap-exit')
+})
+
+ipcMain.handle('dap-start', async (event, filePath, language, breakpoints) => {
+  try {
+    console.log('[DAP] Starting debug session...', { filePath, language, breakpoints })
+    await dapManager.start(filePath, language, breakpoints)
+    return { success: true }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+})
+ipcMain.handle('dap-stop', async () => {
+  dapManager.stop()
+  return true
+})
+ipcMain.handle('dap-step', async () => {
+  try { await dapManager.sendRequest('next'); return true } catch(e) { return false }
+})
+ipcMain.handle('dap-step-in', async () => {
+  try { await dapManager.sendRequest('stepIn'); return true } catch(e) { return false }
+})
+ipcMain.handle('dap-step-out', async () => {
+  try { await dapManager.sendRequest('stepOut'); return true } catch(e) { return false }
+})
+ipcMain.handle('dap-continue', async () => {
+  try { await dapManager.sendRequest('continue'); return true } catch(e) { return false }
+})
+ipcMain.handle('dap-evaluate', async (event, expression) => {
+  try {
+    const res = await dapManager.sendRequest('evaluate', { expression })
+    return res.result
+  } catch (err) {
+    return 'error'
+  }
+})
+ipcMain.handle('dap-get-variables', async () => {
+  try {
+    const res = await dapManager.sendRequest('variables')
+    return res.variables || []
+  } catch(e) {
+    return []
+  }
+})
+
+ipcMain.handle('toggle-dev-tools', () => {
+  const win = BrowserWindow.getFocusedWindow()
+  if (win) {
+    win.webContents.toggleDevTools()
+  }
+})
+
 app.whenReady().then(() => {
-  // Set app user model id for Windows
-  electronApp.setAppUserModelId('com.compile.editor')
+    // Set app user model id for Windows
+    electronApp.setAppUserModelId('com.compile.editor')
 
-  // Default open or close DevTools by F12 in dev, ignore in production
-  app.on('browser-window-created', (_, window) => {
-    optimizer.watchWindowShortcuts(window)
+    // Default open or close DevTools by F12 in dev, ignore in production
+    app.on('browser-window-created', (_, window) => {
+      optimizer.watchWindowShortcuts(window)
+    })
+
+    createWindow()
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    })
   })
+}
 
-  createWindow()
+// ============================================================
+// AUTH TOKEN STORAGE (Secure)
+// ============================================================
+ipcMain.handle('save-auth-token', async (_event, key, value) => {
+  try {
+    if (!safeStorage.isEncryptionAvailable()) {
+      return { success: false, error: 'Encryption not available' }
+    }
+    const encrypted = safeStorage.encryptString(value)
+    const filePath = join(app.getPath('userData'), `.compile-${key}`)
+    writeFileSync(filePath, encrypted)
+    return { success: true }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+})
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
-  })
+ipcMain.handle('get-auth-token', async (_event, key) => {
+  try {
+    if (!safeStorage.isEncryptionAvailable()) {
+      return { success: false, error: 'Encryption not available' }
+    }
+    const filePath = join(app.getPath('userData'), `.compile-${key}`)
+    if (existsSync(filePath)) {
+      const encrypted = readFileSync(filePath)
+      const decrypted = safeStorage.decryptString(encrypted)
+      return { success: true, value: decrypted }
+    }
+    return { success: true, value: null }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+})
+
+ipcMain.handle('delete-auth-token', async (_event, key) => {
+  try {
+    const filePath = join(app.getPath('userData'), `.compile-${key}`)
+    if (existsSync(filePath)) {
+      const { unlinkSync } = require('fs')
+      unlinkSync(filePath)
+    }
+    return { success: true }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
 })
 
 app.on('window-all-closed', () => {

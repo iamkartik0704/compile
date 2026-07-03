@@ -1,10 +1,13 @@
-import React, { useEffect, useState } from 'react'
-import { Files, Search, GitBranch, Blocks, Settings, Database, Box, Anchor, FolderHeart, Send, Bug } from 'lucide-react'
+import React, { useEffect, useState, useRef } from 'react'
+import { Files, Search, GitBranch, Blocks, Settings, Database, Box, Anchor, FolderHeart, Send, Bug, User, ChevronRight } from 'lucide-react'
 import { useAppStore } from '../store/appStore'
 
 export function ActivityBar({ projectRoot, onShowVisualizer, onOpenFile }) {
   const { activePanel, setActivePanel, extensions } = useAppStore()
   const [gitCount, setGitCount] = useState(0)
+  const [showSettingsMenu, setShowSettingsMenu] = useState(false)
+  const [showThemeSubmenu, setShowThemeSubmenu] = useState(false)
+  const settingsMenuRef = useRef(null)
 
   useEffect(() => {
     if (!projectRoot) {
@@ -32,6 +35,20 @@ export function ActivityBar({ projectRoot, onShowVisualizer, onOpenFile }) {
     }
   }, [projectRoot])
 
+  // Close settings menu on outside click
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (settingsMenuRef.current && !settingsMenuRef.current.contains(e.target)) {
+        setShowSettingsMenu(false)
+        setShowThemeSubmenu(false)
+      }
+    }
+    if (showSettingsMenu) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showSettingsMenu])
+
   const isDebuggerEnabled = extensions.find(e => e.id === 'ext-dbg-chrome')?.enabled
   const isDockerEnabled = extensions.find(e => e.id === 'ext-prod-docker')?.enabled
   const isK8sEnabled = extensions.find(e => e.id === 'ext-prod-k8s')?.enabled
@@ -47,6 +64,20 @@ export function ActivityBar({ projectRoot, onShowVisualizer, onOpenFile }) {
     ...(isDockerEnabled ? [{ id: 'docker', icon: Box, title: 'Docker' }] : []),
     ...(isK8sEnabled ? [{ id: 'k8s', icon: Anchor, title: 'Kubernetes' }] : []),
     { id: 'extensions', icon: Blocks, title: 'Extensions' }
+  ]
+
+  const handleSettingsAction = (action) => {
+    setShowSettingsMenu(false)
+    setShowThemeSubmenu(false)
+    action()
+  }
+
+  const settingsMenuItems = [
+    { label: 'Settings', shortcut: 'Ctrl+,', action: () => onOpenFile('settings:main', 'Settings') },
+    { label: 'Extensions', shortcut: 'Ctrl+Shift+X', action: () => setActivePanel('extensions') },
+    { label: 'Keyboard Shortcuts', shortcut: 'Ctrl+K Ctrl+S', action: () => onOpenFile('settings:shortcuts', 'Keyboard Shortcuts') },
+    { type: 'separator' },
+    { label: 'Check for Updates...', action: () => window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'comπle is up to date.', type: 'success' } })) }
   ]
 
   return (
@@ -90,11 +121,89 @@ export function ActivityBar({ projectRoot, onShowVisualizer, onOpenFile }) {
       
       <div className="activity-bar-bottom">
         <div 
-          className={`activity-item ${activePanel === 'settings' ? 'active' : ''}`}
-          title="Settings"
-          onClick={() => setActivePanel('settings')}
+          className={`activity-item ${activePanel === 'auth' ? 'active' : ''}`}
+          title="Account"
+          onClick={() => setActivePanel('auth')}
         >
-          <Settings size={24} strokeWidth={1.5} />
+          <User size={24} strokeWidth={1.5} />
+        </div>
+        <div style={{ position: 'relative' }} ref={settingsMenuRef}>
+          <div 
+            className={`activity-item ${showSettingsMenu ? 'active' : ''}`}
+            title="Manage"
+            onClick={() => { setShowSettingsMenu(!showSettingsMenu); setShowThemeSubmenu(false) }}
+          >
+            <Settings size={24} strokeWidth={showSettingsMenu ? 2 : 1.5} />
+          </div>
+          {showSettingsMenu && (
+            <div style={{
+              position: 'absolute',
+              bottom: '0',
+              left: '52px',
+              background: 'var(--bg-elevated)',
+              border: '1px solid var(--border-base)',
+              borderRadius: '6px',
+              padding: '6px 0',
+              minWidth: '280px',
+              zIndex: 9999,
+              boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+              display: 'flex',
+              flexDirection: 'column',
+              whiteSpace: 'nowrap'
+            }}>
+              {settingsMenuItems.map((item, idx) => (
+                item.type === 'separator' ? (
+                  <div key={idx} style={{ height: '1px', background: 'var(--border-base)', margin: '4px 0' }} />
+                ) : (
+                  <div
+                    key={idx}
+                    className="submenu-item"
+                    style={{ position: 'relative' }}
+                    onMouseEnter={() => { if (item.hasSubmenu) setShowThemeSubmenu(true); else setShowThemeSubmenu(false) }}
+                    onClick={() => {
+                      if (!item.hasSubmenu && item.action) {
+                        handleSettingsAction(item.action)
+                      } else if (!item.hasSubmenu && !item.action) {
+                        setShowSettingsMenu(false)
+                        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: `${item.label} is not yet implemented.`, type: 'info' } }))
+                      }
+                    }}
+                  >
+                    <span>{item.label}</span>
+                    {item.shortcut && <span style={{ opacity: 0.5, fontSize: '11px', letterSpacing: '0.2px', marginLeft: 'auto' }}>{item.shortcut}</span>}
+                    {item.hasSubmenu && <ChevronRight size={14} style={{ opacity: 0.6, marginLeft: 'auto' }} />}
+                    {item.hasSubmenu && showThemeSubmenu && (
+                      <div style={{
+                        position: 'absolute',
+                        bottom: '-6px',
+                        left: '100%',
+                        marginLeft: '4px',
+                        background: 'var(--bg-elevated)',
+                        border: '1px solid var(--border-base)',
+                        borderRadius: '6px',
+                        padding: '6px 0',
+                        minWidth: '200px',
+                        zIndex: 10000,
+                        boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+                        display: 'flex',
+                        flexDirection: 'column'
+                      }}>
+                        {item.submenu.map((sub, subIdx) => (
+                          <div
+                            key={subIdx}
+                            className="submenu-item"
+                            onClick={(e) => { e.stopPropagation(); handleSettingsAction(sub.action) }}
+                          >
+                            <span>{sub.label}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -8,9 +8,13 @@ export const useAppStore = create(
       activePanel: 'explorer', // 'explorer', 'search', 'git', 'extensions', 'settings'
       activeTheme: 'compile-dark', // 'compile-dark', 'dark-plus', 'light-modern', 'dracula'
       extensions: EXTENSIONS,
+      autoSave: false,
+      breakpoints: {}, // { [filePath]: number[] }
       
       setActivePanel: (panel) => set({ activePanel: panel }),
       setActiveTheme: (theme) => set({ activeTheme: theme }),
+      setAutoSave: (val) => set({ autoSave: val }),
+      setBreakpoints: (file, bps) => set((state) => ({ breakpoints: { ...state.breakpoints, [file]: bps } })),
       
       toggleExtension: (id, category) => set((state) => ({
         extensions: state.extensions.map(ext => {
@@ -29,6 +33,7 @@ export const useAppStore = create(
       name: 'app-storage',
       partialize: (state) => ({
         activeTheme: state.activeTheme,
+        autoSave: state.autoSave,
         enabledExtensions: state.extensions.filter(e => e.enabled).map(e => e.id)
       }),
       merge: (persistedState, currentState) => {
@@ -47,6 +52,7 @@ export const useAppStore = create(
         return {
           ...currentState,
           activeTheme: persistedState.activeTheme || currentState.activeTheme,
+          autoSave: persistedState.autoSave ?? currentState.autoSave,
           extensions: mergedExtensions
         }
       }

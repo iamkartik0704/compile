@@ -12,11 +12,15 @@ const api = {
   minimizeWindow: () => ipcRenderer.invoke('window-minimize'),
   maximizeWindow: () => ipcRenderer.invoke('window-maximize-toggle'),
   closeWindow: () => ipcRenderer.invoke('window-close'),
+  newWindow: () => ipcRenderer.invoke('create-new-window'),
 
   // ── File Operations ──
 
   // File Explorer
   selectFolder: () => ipcRenderer.invoke('select-folder'),
+      selectFile: () => ipcRenderer.invoke('select-file'),
+      showSaveDialog: (options) => ipcRenderer.invoke('show-save-dialog', options),
+      openRecent: () => ipcRenderer.invoke('open-recent'),
   readDirectory: (path) => ipcRenderer.invoke('read-directory', path),
   getProjectTree: (path) => ipcRenderer.invoke('get-project-tree', path),
   createFile: (path) => ipcRenderer.invoke('create-file', path),
@@ -150,7 +154,43 @@ const api = {
   startLiveServer: (rootPath, openPath) => ipcRenderer.invoke('start-live-server', rootPath, openPath),
   stopLiveServer: () => ipcRenderer.invoke('stop-live-server'),
   openUrl: (url) => ipcRenderer.invoke('open-url', url),
-  postmanRequest: (url, options) => ipcRenderer.invoke('postman-request', url, options)
+  postmanRequest: (url, options) => ipcRenderer.invoke('postman-request', url, options),
+  toggleDevTools: () => ipcRenderer.invoke('toggle-dev-tools'),
+
+  // ── Auth Token Storage & Callbacks ──
+  saveAuthToken: (key, value) => ipcRenderer.invoke('save-auth-token', key, value),
+  getAuthToken: (key) => ipcRenderer.invoke('get-auth-token', key),
+  deleteAuthToken: (key) => ipcRenderer.invoke('delete-auth-token', key),
+  onAuthCallback: (callback) => {
+    ipcRenderer.removeAllListeners('auth-callback')
+    ipcRenderer.on('auth-callback', (_event, url) => callback(url))
+  },
+
+  // ── Debug Adapter Protocol (DAP) ──
+  dapStart: (filePath, language, breakpoints = []) => ipcRenderer.invoke('dap-start', filePath, language, breakpoints),
+  dapStop: () => ipcRenderer.invoke('dap-stop'),
+  dapStep: () => ipcRenderer.invoke('dap-step'),
+  dapStepIn: () => ipcRenderer.invoke('dap-step-in'),
+  dapStepOut: () => ipcRenderer.invoke('dap-step-out'),
+  dapContinue: () => ipcRenderer.invoke('dap-continue'),
+  dapEvaluate: (expression) => ipcRenderer.invoke('dap-evaluate', expression),
+  dapGetVariables: () => ipcRenderer.invoke('dap-get-variables'),
+  onDapPaused: (callback) => {
+    ipcRenderer.removeAllListeners('dap-paused')
+    ipcRenderer.on('dap-paused', (_event, data) => callback(data))
+  },
+  onDapOutput: (callback) => {
+    ipcRenderer.removeAllListeners('dap-output')
+    ipcRenderer.on('dap-output', (_event, data) => callback(data))
+  },
+  onDapExit: (callback) => {
+    ipcRenderer.removeAllListeners('dap-exit')
+    ipcRenderer.on('dap-exit', () => callback())
+  },
+  onDapError: (callback) => {
+    ipcRenderer.removeAllListeners('dap-error')
+    ipcRenderer.on('dap-error', (_event, data) => callback(data))
+  }
 }
 
 // ============================================================

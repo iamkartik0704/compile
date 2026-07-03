@@ -168,6 +168,27 @@
   background-color: rgba(255, 255, 0, 0.2) !important;
 }
 
+.monaco-breakpoint-glyph {
+  background: #ea5c00;
+  border-radius: 50%;
+  width: 11px !important;
+  height: 11px !important;
+  margin-left: 4px;
+  margin-top: 4px;
+  cursor: pointer;
+}
+
+.monaco-breakpoint-hint-glyph {
+  background: #ea5c00;
+  opacity: 0.5;
+  border-radius: 50%;
+  width: 11px !important;
+  height: 11px !important;
+  margin-left: 4px;
+  margin-top: 4px;
+  cursor: pointer;
+}
+
 .breadcrumb-segment {
   display: inline-flex;
   align-items: center;
@@ -385,3 +406,6 @@
 .error-lens-info {
     color: #3b82f6; /* blue-500 */
 }
+
+.debug-active-line { background-color: rgba(255, 255, 0, 0.2); }
+

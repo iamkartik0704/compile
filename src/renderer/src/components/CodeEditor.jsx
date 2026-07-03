@@ -6,10 +6,13 @@ import { X, Save, Circle, Sparkles, ChevronRight, AlertTriangle, Info, CheckCirc
 import { ContextInspector } from './ContextInspector'
 import { GitGraph } from './GitGraph'
 import { PostmanView } from './PostmanView'
+import { SettingsEditor } from './SettingsEditor'
+import { KeyboardShortcuts } from './KeyboardShortcuts'
 import { useAppStore } from '../store/appStore'
 import { EXTENSIONS } from '../utils/extensionRegistry'
 import { runEsLint, runPrettier, formatWithPrettier, isExtensionEnabled } from '../utils/linterService'
 import { diffLines } from 'diff'
+import { useShortcutStore, defaultShortcuts } from '../store/shortcutStore'
 
 // --- Monaco Workers ---
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
@@ -31,6 +34,128 @@ if (!self.MonacoEnvironment) {
 }
 
 loader.config({ monaco })
+
+// ─── Global Keybinding Registry Sync ───
+let isMonacoKeybindingsSynced = false;
+let previousShortcuts = null;
+
+
+
+const mapCustomIdToMonacoCommandId = (id) => {
+  switch (id) {
+    case 'edit.undo': return 'undo';
+    case 'edit.redo': return 'redo';
+    case 'edit.cut': return 'editor.action.clipboardCutAction';
+    case 'edit.copy': return 'editor.action.clipboardCopyAction';
+    case 'edit.paste': return 'editor.action.clipboardPasteAction';
+    case 'edit.find': return 'actions.find';
+    case 'edit.replace': return 'editor.action.startFindReplaceAction';
+    case 'edit.selectAll': return 'editor.action.selectAll';
+    case 'edit.duplicateLine': return 'editor.action.copyLinesDownAction';
+    case 'edit.moveLineUp': return 'editor.action.moveLinesUpAction';
+    case 'edit.moveLineDown': return 'editor.action.moveLinesDownAction';
+    case 'edit.commentLine': return 'editor.action.commentLine';
+    case 'edit.format': return 'compile.formatDocument';
+    case 'edit.inlineAi': return 'compile.inlineAi';
+    default: return null;
+  }
+}
+
+const parseKeysToMonaco = (keysArray) => {
+  if (!keysArray || keysArray.length === 0) return 0;
+  let monacoKey = 0;
+  for (const key of keysArray) {
+    if (key === 'Ctrl') monacoKey |= monaco.KeyMod.CtrlCmd;
+    else if (key === 'Shift') monacoKey |= monaco.KeyMod.Shift;
+    else if (key === 'Alt') monacoKey |= monaco.KeyMod.Alt;
+    else if (key === 'Meta') monacoKey |= monaco.KeyMod.WinCtrl;
+    else {
+      const upperKey = key.toUpperCase();
+      if (/^[A-Z]$/.test(upperKey)) {
+        monacoKey |= monaco.KeyCode[`Key${upperKey}`];
+      } else if (/^[0-9]$/.test(upperKey)) {
+        monacoKey |= monaco.KeyCode[`Digit${upperKey}`];
+      } else {
+        switch(upperKey) {
+          case 'ENTER': monacoKey |= monaco.KeyCode.Enter; break;
+          case 'ESCAPE': monacoKey |= monaco.KeyCode.Escape; break;
+          case 'SPACE': monacoKey |= monaco.KeyCode.Space; break;
+          case 'TAB': monacoKey |= monaco.KeyCode.Tab; break;
+          case 'BACKSPACE': monacoKey |= monaco.KeyCode.Backspace; break;
+          case 'DELETE': monacoKey |= monaco.KeyCode.Delete; break;
+          case 'UP':
+          case 'ARROWUP': monacoKey |= monaco.KeyCode.UpArrow; break;
+          case 'DOWN':
+          case 'ARROWDOWN': monacoKey |= monaco.KeyCode.DownArrow; break;
+          case 'LEFT':
+          case 'ARROWLEFT': monacoKey |= monaco.KeyCode.LeftArrow; break;
+          case 'RIGHT':
+          case 'ARROWRIGHT': monacoKey |= monaco.KeyCode.RightArrow; break;
+          case '/': monacoKey |= monaco.KeyCode.Slash; break;
+          case '`': monacoKey |= monaco.KeyCode.Backquote; break;
+          case '-': monacoKey |= monaco.KeyCode.Minus; break;
+          case '=': monacoKey |= monaco.KeyCode.Equal; break;
+          case '[': monacoKey |= monaco.KeyCode.BracketLeft; break;
+          case ']': monacoKey |= monaco.KeyCode.BracketRight; break;
+          case '\\': monacoKey |= monaco.KeyCode.Backslash; break;
+          case ';': monacoKey |= monaco.KeyCode.Semicolon; break;
+          case "'": monacoKey |= monaco.KeyCode.Quote; break;
+          case ',': monacoKey |= monaco.KeyCode.Comma; break;
+          case '.': monacoKey |= monaco.KeyCode.Period; break;
+        }
+      }
+    }
+  }
+  return monacoKey;
+}
+
+const syncMonacoKeybindings = () => {
+  const currentShortcuts = useShortcutStore.getState().shortcuts;
+  
+  if (!previousShortcuts) {
+    // Bootstrap: unbind original defaults so we start fresh
+    for (const group of defaultShortcuts) {
+      for (const item of group.items) {
+        if (item.id.startsWith('edit.')) {
+           monaco.editor.addKeybindingRule({
+             keybinding: parseKeysToMonaco(item.keys),
+             command: null
+           });
+        }
+      }
+    }
+  } else {
+    // Unbind previously set custom bindings
+    for (const group of previousShortcuts) {
+      for (const item of group.items) {
+        if (item.id.startsWith('edit.')) {
+           monaco.editor.addKeybindingRule({
+             keybinding: parseKeysToMonaco(item.keys),
+             command: null
+           });
+        }
+      }
+    }
+  }
+  
+  // Bind current custom keys
+  for (const group of currentShortcuts) {
+    for (const item of group.items) {
+      if (item.id.startsWith('edit.')) {
+        const monacoCommandId = mapCustomIdToMonacoCommandId(item.id);
+        if (monacoCommandId) {
+           monaco.editor.addKeybindingRule({
+             keybinding: parseKeysToMonaco(item.keys),
+             command: monacoCommandId,
+             when: 'editorTextFocus'
+           });
+        }
+      }
+    }
+  }
+  
+  previousShortcuts = currentShortcuts;
+}
 
 // ─── Lightweight LSP Client ────────────────────────────────────────
 // ─── Lightweight LSP Client (per-language) ─────────────────────────
@@ -478,6 +603,51 @@ export const CodeEditor = ({
   const [showContextInspector, setShowContextInspector] = useState(false)
   const editorRef = useRef(null)
 
+  // Use global app store for extensions and theme
+  const { extensions, toggleExtension, activeTheme, setActiveTheme, autoSave } = useAppStore()
+
+  const [editorSettings, setEditorSettings] = useState({
+    fontSize: parseInt(localStorage.getItem('editor-fontSize') || '14'),
+    fontFamily: localStorage.getItem('editor-fontFamily') || "'JetBrains Mono', 'Fira Code', monospace",
+    tabSize: parseInt(localStorage.getItem('editor-tabSize') || '2'),
+    wordWrap: localStorage.getItem('editor-wordWrap') || 'on',
+    minimap: localStorage.getItem('editor-minimap') === 'true',
+    smoothScrolling: localStorage.getItem('editor-smoothScrolling') !== 'false',
+    cursorBlinking: localStorage.getItem('editor-cursorBlinking') || 'smooth',
+    lineNumbers: localStorage.getItem('editor-lineNumbers') || 'on',
+    formatOnPaste: localStorage.getItem('editor-formatOnPaste') !== 'false',
+    renderWhitespace: localStorage.getItem('editor-renderWhitespace') || 'selection',
+    autoClosingBrackets: localStorage.getItem('editor-autoClosingBrackets') || 'always'
+  })
+
+  // ── Global Monaco Keybinding Initialization ──
+  useEffect(() => {
+    if (!isMonacoKeybindingsSynced) {
+      isMonacoKeybindingsSynced = true;
+      // Sync on bootstrap
+      syncMonacoKeybindings();
+      
+      // Sync on future changes
+      useShortcutStore.subscribe((state, prevState) => {
+        if (state.shortcuts !== prevState.shortcuts) {
+          syncMonacoKeybindings();
+        }
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    const handleSettingsChanged = (e) => {
+      const { key, value } = e.detail
+      if (key.startsWith('editor-')) {
+        const settingName = key.replace('editor-', '')
+        setEditorSettings(prev => ({ ...prev, [settingName]: value }))
+      }
+    }
+    window.addEventListener('settings-changed', handleSettingsChanged)
+    return () => window.removeEventListener('settings-changed', handleSettingsChanged)
+  }, [])
+
 
 
   useEffect(() => {
@@ -501,6 +671,28 @@ export const CodeEditor = ({
     const closeContextMenu = () => setContextMenu(null)
     window.addEventListener('click', closeContextMenu)
     return () => window.removeEventListener('click', closeContextMenu)
+  }, [])
+
+  // Listen for global editor actions (from menu, shortcuts, etc)
+  useEffect(() => {
+    const handleEditorAction = (e) => {
+      const actionId = e.detail
+      if (!actionId) return
+      
+      if (editorRef.current) {
+        editorRef.current.focus()
+        
+        // Special case for native undo/redo which map directly to core editor commands
+        if (actionId === 'undo' || actionId === 'redo') {
+          editorRef.current.trigger('keyboard', actionId, null)
+          return
+        }
+        
+        editorRef.current.trigger('keyboard', actionId, null)
+      }
+    }
+    window.addEventListener('editor-action', handleEditorAction)
+    return () => window.removeEventListener('editor-action', handleEditorAction)
   }, [])
 
   // ─── Drag and Drop Handlers ───
@@ -590,7 +782,18 @@ export const CodeEditor = ({
 
   // Load file content when active file changes
   useEffect(() => {
-    if (!activeFile || activeFile.startsWith('ext:') || activeFile.startsWith('git-graph:')) return
+    if (!activeFile) return
+    if (activeFile.startsWith('ext:') || activeFile.startsWith('git-graph:')) return
+
+    if (activeFile.startsWith('untitled:')) {
+      if (!fileContents[activeFile]) {
+        setFileContents(prev => ({ ...prev, [activeFile]: { content: '', isLoading: false } }))
+        setCurrentValue('')
+      } else {
+        setCurrentValue(fileContents[activeFile].content)
+      }
+      return
+    }
 
     const loadContent = async () => {
       if (!fileContents[activeFile]) {
@@ -736,10 +939,36 @@ export const CodeEditor = ({
     }
   }
 
+  // Handle Editor Action Events from the Menu
+  useEffect(() => {
+    const handleEditorAction = (e) => {
+      const actionId = e.detail
+      if (!editorRef.current) return
+      
+      // The editor loses focus when you click the top menu,
+      // which causes interactive prompts (like Go to Line) to instantly close
+      // or keystrokes to fail. We MUST refocus the editor first!
+      editorRef.current.focus()
+
+      const action = editorRef.current.getAction(actionId)
+      if (action) {
+        action.run()
+      } else if (actionId === 'cursorUndo' || actionId === 'cursorRedo') {
+        // Fallback for native cursor history commands if they don't have explicit actions in some versions
+        editorRef.current.trigger('keyboard', actionId, null)
+      } else {
+        console.warn('Monaco Action not found:', actionId)
+      }
+    }
+
+    window.addEventListener('editor-action', handleEditorAction)
+    return () => window.removeEventListener('editor-action', handleEditorAction)
+  }, [])
+
   // Handle Monaco Mount
   const handleEditorDidMount = (editor, monacoInstance) => {
     editorRef.current = editor
-
+    
     // Set up LSP logic
     const monacoLangId = getLanguageFromPath(activeFile)
     registerProvidersForLanguage(monacoLangId)
@@ -763,10 +992,7 @@ export const CodeEditor = ({
       })
     }
 
-    // Command: Save
-    editor.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.KeyS, () => {
-      handleSave(false)
-    })
+    // Removed hardcoded Ctrl+S since it's handled by global shortcuts
 
     // Expose diagnostics to the global window so the AI can read them
     window.getEditorDiagnostics = () => {
@@ -794,8 +1020,7 @@ export const CodeEditor = ({
   const [hasActiveAiEdit, setHasActiveAiEdit] = useState(false)
   const [isReady, setIsReady] = useState(false)
   
-  // Use global app store for extensions and theme
-  const { extensions, toggleExtension, activeTheme, setActiveTheme } = useAppStore()
+  // Removed useAppStore call from here
   
   const isGitLensEnabled = extensions.some(ext => ext.id === 'ext-git-lens' && ext.enabled)
   const isGitLensEnabledRef = useRef(isGitLensEnabled)
@@ -877,11 +1102,77 @@ export const CodeEditor = ({
     setInlineAi({ visible: false, top: 0, left: 0, prompt: '', isLoading: false, range: null, selectionText: '' })
   }
 
+  const breakpointsRef = useRef(new Map())
+  const breakpointDecorationsCollectionRef = useRef(null)
+
   const handleEditorDidMountWrapper = (editor, monacoInstance) => {
     monacoRef.current = monacoInstance
     decorationsCollectionRef.current = editor.createDecorationsCollection([])
     gitDecorationsCollectionRef.current = editor.createDecorationsCollection([])
     errorLensDecorationsCollectionRef.current = editor.createDecorationsCollection([])
+    breakpointDecorationsCollectionRef.current = editor.createDecorationsCollection([])
+
+    // Breakpoint Click Handler
+    editor.onMouseDown((e) => {
+      if (e.target.type === monacoInstance.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) {
+        const line = e.target.position.lineNumber
+        const uri = editor.getModel().uri.toString()
+        
+        if (!breakpointsRef.current.has(uri)) breakpointsRef.current.set(uri, new Set())
+        const bpSet = breakpointsRef.current.get(uri)
+        
+        if (bpSet.has(line)) {
+          bpSet.delete(line)
+        } else {
+          bpSet.add(line)
+        }
+        
+        const newDecorations = Array.from(bpSet).map(l => ({
+          range: new monacoInstance.Range(l, 1, l, 1),
+          options: {
+            isWholeLine: false,
+            glyphMarginClassName: 'monaco-breakpoint-glyph'
+          }
+        }))
+        
+        breakpointDecorationsCollectionRef.current.set(newDecorations)
+        
+        useAppStore.getState().setBreakpoints(uri, Array.from(bpSet))
+
+        // Also fire a global event so DebugPanel could potentially listen to it
+        window.dispatchEvent(new CustomEvent('breakpoints-changed', { detail: { uri, breakpoints: Array.from(bpSet) } }))
+      }
+    })
+
+    const hoverDecorationsCollectionRef = editor.createDecorationsCollection([])
+    
+    editor.onMouseMove((e) => {
+      const targetType = e.target.type
+      // 2 corresponds to GUTTER_GLYPH_MARGIN
+      if (targetType === 2 || targetType === monacoInstance.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) {
+        const line = e.target.position ? e.target.position.lineNumber : null
+        if (line) {
+          const uri = activeFile
+          const bpSet = breakpointsRef.current.get(uri)
+          if (!bpSet || !bpSet.has(line)) {
+            hoverDecorationsCollectionRef.set([{
+              range: new monacoInstance.Range(line, 1, line, 1),
+              options: {
+                isWholeLine: false,
+                glyphMarginClassName: 'monaco-breakpoint-hint-glyph'
+              }
+            }])
+            return
+          }
+        }
+      }
+      hoverDecorationsCollectionRef.clear()
+    })
+
+    editor.onMouseLeave(() => {
+      hoverDecorationsCollectionRef.clear()
+    })
+
     // We don't use decorations for git lens anymore due to Monaco after-injection bugs
 
     let blameTimeout
@@ -897,14 +1188,22 @@ export const CodeEditor = ({
       }, 300)
     })
 
-    // Command: Run File (Ctrl+Alt+N)
-    editor.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyMod.Alt | monacoInstance.KeyCode.KeyN, () => {
-      window.dispatchEvent(new Event('global-run-file'))
+    // Custom Action: Run File
+    editor.addAction({
+      id: 'compile.runFile',
+      label: 'Run File',
+      run: () => {
+        window.dispatchEvent(new Event('global-run-file'))
+      }
     })
 
-    // Command: Format Document (Shift+Alt+F)
-    editor.addCommand(monacoInstance.KeyMod.Shift | monacoInstance.KeyMod.Alt | monacoInstance.KeyCode.KeyF, async () => {
-      handleSave(true)
+    // Custom Action: Format Document
+    editor.addAction({
+      id: 'compile.formatDocument',
+      label: 'Format Document (Prettier)',
+      run: async () => {
+        handleSave(true)
+      }
     })
 
     // Error Lens Integration
@@ -913,33 +1212,69 @@ export const CodeEditor = ({
       if (errorLensDecorationsCollectionRef.current) errorLensDecorationsCollectionRef.current.clear()
     })
 
-    // Command: Inline AI Edit (Ctrl+K)
-    editor.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.KeyK, () => {
-      const position = editor.getPosition()
-      const selection = editor.getSelection()
+    // Custom Action: Inline AI Edit
+    editor.addAction({
+      id: 'compile.inlineAi',
+      label: 'Inline AI Edit',
+      run: () => {
+        const position = editor.getPosition()
+        const selection = editor.getSelection()
 
-      let selectionText = ''
-      let range = selection
+        let selectionText = ''
+        let range = selection
 
-      if (!selection.isEmpty()) {
-        selectionText = editor.getModel().getValueInRange(selection)
-      } else {
-        range = new monacoInstance.Range(position.lineNumber, 1, position.lineNumber, editor.getModel().getLineMaxColumn(position.lineNumber))
-        selectionText = editor.getModel().getValueInRange(range)
+        if (!selection.isEmpty()) {
+          selectionText = editor.getModel().getValueInRange(selection)
+        } else {
+          range = new monacoInstance.Range(position.lineNumber, 1, position.lineNumber, editor.getModel().getLineMaxColumn(position.lineNumber))
+          selectionText = editor.getModel().getValueInRange(range)
+        }
+
+        const pixelPos = editor.getScrolledVisiblePosition(position)
+
+        setInlineAi({
+          visible: true,
+          top: pixelPos.top + 20, // slightly below cursor
+          left: pixelPos.left,
+          prompt: '',
+          isLoading: false,
+          range,
+          selectionText
+        })
       }
-
-      const pixelPos = editor.getScrolledVisiblePosition(position)
-
-      setInlineAi({
-        visible: true,
-        top: pixelPos.top + 20, // slightly below cursor
-        left: pixelPos.left,
-        prompt: '',
-        isLoading: false,
-        range,
-        selectionText
-      })
     })
+
+    // DAP Integration
+    const dapPausedDecorationRef = { current: null }
+    if (window.api && window.api.onDapPaused) {
+      window.api.onDapPaused((body) => {
+        // Find the line where the debugger stopped (e.g. from DAP event body)
+        // For simplicity in MVP, if there is a threadId we just highlight line 1 or current cursor if body doesn't provide it
+        // A real DAP 'stopped' event doesn't give line number directly, we usually fetch stackTrace.
+        // We will just highlight line 5 as a mock if we can't parse it for now, or assume the user gets the stack
+        const line = typeof body === 'object' && body.line ? body.line : editor.getPosition().lineNumber
+        
+        const newDecoration = {
+          range: new monacoInstance.Range(line, 1, line, 1),
+          options: {
+            isWholeLine: true,
+            className: 'debug-active-line' // Highlight the active debug line with yellow background
+          }
+        }
+        const newIds = editor.deltaDecorations(dapPausedDecorationRef.current ? dapPausedDecorationRef.current : [], [newDecoration])
+        dapPausedDecorationRef.current = newIds
+      })
+      
+      const clearPaused = () => {
+        if (dapPausedDecorationRef.current) {
+          editor.deltaDecorations(dapPausedDecorationRef.current, [])
+          dapPausedDecorationRef.current = null
+        }
+      }
+      
+      window.addEventListener('dap-continue', clearPaused)
+      window.addEventListener('dap-stop', clearPaused)
+    }
 
     handleEditorDidMount(editor, monacoInstance)
   }
@@ -1281,6 +1616,18 @@ export const CodeEditor = ({
         client.didChange(pathToUri(activeFile), value)
       }
     }
+
+    if (autoSave && !activeFile.startsWith('untitled:')) {
+      if (window.autoSaveTimeout) clearTimeout(window.autoSaveTimeout)
+      const fileToSave = activeFile
+      const contentToSave = value
+      window.autoSaveTimeout = setTimeout(async () => {
+        const res = await window.api.saveFileContents(fileToSave, contentToSave)
+        if (res.success) {
+          markFileClean(fileToSave)
+        }
+      }, 1000)
+    }
   }
 
   const saveActiveFile = async () => {
@@ -1441,7 +1788,7 @@ export const CodeEditor = ({
         </div>
       )}
 
-      {activeFile && !activeFile.startsWith('ext:') && !activeFile.startsWith('git-graph:') && (() => {
+      {activeFile && !activeFile.startsWith('settings:') && !activeFile.startsWith('postman:') && !activeFile.startsWith('ext:') && !activeFile.startsWith('git-graph:') && (() => {
         const relPath = projectRoot && activeFile.startsWith(projectRoot)
           ? activeFile.substring(projectRoot.length).replace(/^[\\/]/, '')
           : activeFile
@@ -1508,6 +1855,10 @@ export const CodeEditor = ({
           <GitGraph projectRoot={projectRoot} />
         ) : activeFile === 'postman:main' ? (
           <PostmanView />
+        ) : activeFile === 'settings:main' ? (
+          <SettingsEditor />
+        ) : activeFile === 'settings:shortcuts' ? (
+          <KeyboardShortcuts />
         ) : activeFile && activeFile.startsWith('ext:') ? (
           (function() {
             const extId = activeFile.replace('ext:', '')
@@ -1563,7 +1914,9 @@ export const CodeEditor = ({
               onMount={handleDiffEditorMountWrapper}
               options={{
                 renderSideBySide: true,
-                minimap: { enabled: false },
+                minimap: { enabled: editorSettings.minimap },
+                fontSize: editorSettings.fontSize,
+                fontFamily: editorSettings.fontFamily,
                 readOnly: !isGitDiff,
                 padding: { top: 16 },
                 glyphMargin: false,
@@ -1580,16 +1933,20 @@ export const CodeEditor = ({
               onChange={handleEditorChange}
               onMount={handleEditorDidMountWrapper}
               options={{
-                minimap: { enabled: false },
-                fontSize: 14,
-                fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                wordWrap: 'on',
+                minimap: { enabled: editorSettings.minimap },
+                fontSize: editorSettings.fontSize,
+                fontFamily: editorSettings.fontFamily,
+                wordWrap: editorSettings.wordWrap,
                 padding: { top: 16 },
                 scrollBeyondLastLine: false,
-                smoothScrolling: true,
-                cursorBlinking: 'smooth',
+                smoothScrolling: editorSettings.smoothScrolling,
+                cursorBlinking: editorSettings.cursorBlinking,
+                lineNumbers: editorSettings.lineNumbers,
+                formatOnPaste: editorSettings.formatOnPaste,
+                renderWhitespace: editorSettings.renderWhitespace,
+                autoClosingBrackets: editorSettings.autoClosingBrackets,
+                tabSize: editorSettings.tabSize,
                 cursorSmoothCaretAnimation: 'on',
-                formatOnPaste: true,
                 automaticLayout: true,
                 inlineSuggest: { enabled: true }, // Enable inline ghost text for Copilot
                 quickSuggestions: true, // Enable classic dropdown on normal keystrokes
@@ -1622,8 +1979,9 @@ export const CodeEditor = ({
                   showTypeParameters: true,
                   showSnippets: true,
                 },
-                glyphMargin: false,
-                lineDecorationsWidth: 16
+                glyphMargin: true,
+                lineDecorationsWidth: 16,
+                fixedOverflowWidgets: true
               }}
             />
           )

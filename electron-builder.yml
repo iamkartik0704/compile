@@ -19,3 +19,7 @@ linux:
     - deb
   maintainer: compile-editor
   category: Development
+protocols:
+  - name: Comiple Deep Link
+    schemes:
+      - comiple

@@ -5,15 +5,18 @@ import { LSP_REGISTRY } from './lsp-config.js'
 // Map to track running language servers: { language: { process, buffer, status } }
 const lspProcesses = new Map()
 
-let mainWindowRef = null
+const lspWindows = new Set()
 
 export function setMainWindowLspRef(win) {
-  mainWindowRef = win
+  lspWindows.add(win)
+  win.on('closed', () => lspWindows.delete(win))
 }
 
 function sendToWindow(channel, payload) {
-  if (mainWindowRef && !mainWindowRef.isDestroyed()) {
-    mainWindowRef.webContents.send(channel, payload)
+  for (const win of lspWindows) {
+    if (!win.isDestroyed()) {
+      win.webContents.send(channel, payload)
+    }
   }
 }
 

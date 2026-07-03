@@ -78,6 +78,7 @@ export const EXTENSIONS = [
     longDescription: 'View a Git Graph of your repository, and easily perform Git actions from the graph.',
     author: 'Community', installed: false, enabled: false 
   },
+  
   // 4. Productivity and dev experience
   { 
     id: 'ext-prod-docker', name: 'Docker', category: 'productivity', 
@@ -108,20 +109,6 @@ export const EXTENSIONS = [
     description: 'Easily switch between projects.', 
     longDescription: 'Project Manager helps you to easily access your projects, no matter where they are located.',
     author: 'Community', installed: false, enabled: false 
-  },
-  
-  // 5. Remote development
-  { 
-    id: 'ext-rem-ssh', name: 'Remote - SSH', category: 'remote', 
-    description: 'Open any folder on a remote machine using SSH.', 
-    longDescription: 'The Remote - SSH extension lets you use any remote machine with a SSH server as your development environment.',
-    author: 'IDE Core', installed: false, enabled: false 
-  },
-  { 
-    id: 'ext-rem-containers', name: 'Dev Containers', category: 'remote', 
-    description: 'Open any folder inside (or mounted into) a container.', 
-    longDescription: 'The Dev Containers extension lets you use a Docker container as a full-featured development environment.',
-    author: 'IDE Core', installed: false, enabled: false 
   },
   
   // Themes

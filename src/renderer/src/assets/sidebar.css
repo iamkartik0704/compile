@@ -1,7 +1,7 @@
 .sidebar {
   width: 260px;
-  background: var(--bg-card);
-  border-right: 1px solid var(--border-light);
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border-base);
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -12,7 +12,7 @@
 
 .sidebar-header {
   padding: 1rem;
-  border-bottom: 1px solid var(--border-light);
+  border-bottom: 1px solid var(--border-base);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -23,6 +23,7 @@
   gap: 0.25rem;
   opacity: 0;
   transition: opacity 0.2s ease;
+  flex-shrink: 0;
 }
 
 .project-root-label:hover .sidebar-header-actions {
@@ -112,6 +113,15 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.root-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .tree-node {
@@ -275,7 +285,7 @@
 .extensions-search {
   padding: 10px;
   background: var(--bg-sidebar);
-  border-bottom: 1px solid var(--border-light);
+  border-bottom: 1px solid var(--border-base);
 }
 
 .search-input-wrapper {

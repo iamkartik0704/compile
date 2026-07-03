@@ -21,9 +21,13 @@ import { KubernetesPanel } from './components/KubernetesPanel'
 import { ProjectManagerPanel } from './components/ProjectManagerPanel'
 import DebugPanel from './components/DebugPanel'
 import { useAppStore } from './store/appStore'
+import { AuthPanel } from './components/AuthPanel'
+import { supabase } from './lib/supabase'
+import { useAuthStore } from './store/authStore'
 import './assets/sidebar.css'
 import './assets/editor.css'
 import './assets/themes.css'
+import { useShortcutStore, normalizeEventToKeys } from './store/shortcutStore'
 
 const renderMessageParts = (content) => {
   const parts = []
@@ -243,6 +247,19 @@ function App() {
   const [rightPanel, setRightPanel] = useState(null)
   const [showVisualizer, setShowVisualizer] = useState(false)
   const [toast, setToast] = useState(null)
+  const [activeMenu, setActiveMenu] = useState(null)
+  const [activeSubmenu, setActiveSubmenu] = useState(null)
+
+  useEffect(() => {
+    const handleClickOutside = () => {
+      setActiveMenu(null)
+      setActiveSubmenu(null)
+    }
+    if (activeMenu) {
+      window.addEventListener('click', handleClickOutside)
+    }
+    return () => window.removeEventListener('click', handleClickOutside)
+  }, [activeMenu])
   
   useEffect(() => {
     const handleShowToast = (e) => {
@@ -393,6 +410,36 @@ function App() {
   const [autoCompleteEnabled, setAutoCompleteEnabled] = useState(true)
   const [autoCompleteDelay, setAutoCompleteDelay] = useState(500)
 
+  const saveActiveFile = async () => {
+    if (!activeFile) return
+    if (typeof window.getEditorValue === 'function') {
+      const content = window.getEditorValue()
+      
+      if (activeFile.startsWith('untitled:')) {
+        if (window.api.showSaveDialog) {
+          const newPath = await window.api.showSaveDialog({
+            title: 'Save Untitled File',
+            defaultPath: 'Untitled.txt'
+          });
+          if (newPath) {
+            await window.api.saveFileContents(newPath, content);
+            setOpenFiles(prev => prev.map(f => {
+              if (f.path === activeFile) {
+                return { ...f, path: newPath, name: newPath.split(/[/\\]/).pop(), isDirty: false };
+              }
+              return f;
+            }));
+            setActiveFile(newPath);
+          }
+        }
+        return;
+      }
+
+      await window.api.saveFileContents(activeFile, content)
+      markFileClean(activeFile)
+    }
+  }
+
   const handleRunFile = async () => {
     if (!activeFile) return
 
@@ -432,20 +479,11 @@ function App() {
     runFileRef.current = handleRunFile
   })
 
-  // Global Keyboard Shortcut: Ctrl+Alt+N to Run File
+  // Global Run File event listener
   useEffect(() => {
-    const handleKeyDown = (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.altKey && e.key.toLowerCase() === 'n') {
-        e.preventDefault()
-        runFileRef.current()
-      }
-    }
     const handleGlobalRun = () => runFileRef.current()
-
-    window.addEventListener('keydown', handleKeyDown)
     window.addEventListener('global-run-file', handleGlobalRun)
     return () => {
-      window.removeEventListener('keydown', handleKeyDown)
       window.removeEventListener('global-run-file', handleGlobalRun)
     }
   }, [])
@@ -657,12 +695,13 @@ the new code
   }
 
   const [sidebarWidth, setSidebarWidth] = useState(260)
-  const { activePanel, setActivePanel, activeTheme, extensions } = useAppStore()
+  const { activePanel, setActivePanel, activeTheme, extensions, autoSave, setAutoSave } = useAppStore()
   const isLiveServerEnabled = extensions?.find(e => e.id === 'ext-prod-liveserver')?.enabled
   const [rightPanelWidth, setRightPanelWidth] = useState(320)
 
-  // ── Apply Theme ──
+  // Initialize active theme
   useEffect(() => {
+    document.body.style.backgroundColor = '' // Clear inline script fallback
     document.body.className = `theme-${activeTheme}`
   }, [activeTheme])
 
@@ -759,18 +798,158 @@ the new code
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // ── Global Hotkeys ──
+  const pendingChordRef = useRef([])
+
+  const executeGlobalAction = (id) => {
+    switch (id) {
+      case 'general.commandPalette':
+        window.dispatchEvent(new CustomEvent('open-command-palette'))
+        break
+      case 'general.terminal':
+        setShowTerminal(prev => !prev)
+        break
+      case 'general.sidebar':
+        setShowExplorer(prev => !prev)
+        break
+      case 'general.zen':
+        setShowExplorer(false)
+        setShowTerminal(false)
+        break
+      case 'general.fullscreen':
+        window.api.toggleFullScreen && window.api.toggleFullScreen()
+        break
+      case 'general.closeWindow':
+        window.close()
+        break
+      case 'file.openFolder':
+        if (window.api.selectFolder) {
+          window.api.selectFolder().then(p => {
+            if (p) {
+              const recents = JSON.parse(localStorage.getItem('recentFolders') || '[]')
+              if (!recents.includes(p)) localStorage.setItem('recentFolders', JSON.stringify([p, ...recents].slice(0, 5)))
+              setProjectRoot(p)
+            }
+          })
+        }
+        break
+      case 'general.shortcuts':
+        handleOpenFile('settings:shortcuts', 'Keyboard Shortcuts')
+        break
+      case 'file.saveAll':
+        saveActiveFile()
+        break
+      case 'file.closeFolder':
+        setProjectRoot(null)
+        break
+      case 'general.run':
+      case 'debug.run':
+        window.dispatchEvent(new Event('global-run-file'))
+        break
+      case 'file.new':
+        const newId = `untitled:Untitled-${Date.now()}`
+        setOpenFiles(prev => [...prev, { name: 'Untitled', path: newId }])
+        setActiveFile(newId)
+        break
+      case 'file.newWindow':
+        if (window.api.newWindow) window.api.newWindow()
+        break
+      case 'file.closeAll':
+        setOpenFiles([])
+        setActiveFile(null)
+        break
+      case 'file.open':
+        if (window.api.selectFile) {
+          window.api.selectFile().then(p => {
+            if (p) {
+              const recents = JSON.parse(localStorage.getItem('recentFiles') || '[]')
+              if (!recents.includes(p)) localStorage.setItem('recentFiles', JSON.stringify([p, ...recents].slice(0, 5)))
+              handleOpenFile(p, p.split(/[/\\]/).pop())
+            }
+          })
+        }
+        break
+      case 'file.saveAs':
+      case 'file.save':
+        saveActiveFile()
+        break
+      case 'file.close':
+        if (activeFile) closeFile(activeFile)
+        break
+      case 'general.settings':
+        handleOpenFile('settings:main', 'Settings')
+        break
+      case 'general.extensions':
+        setActivePanel('extensions')
+        break
+    }
+  }
+
   useEffect(() => {
     const handleGlobalKeyDown = (e) => {
-      // Ctrl + Shift + ` (backtick) toggles terminal
-      if (e.ctrlKey && e.shiftKey && e.code === 'Backquote') {
-        e.preventDefault()
-        setShowTerminal((prev) => !prev)
+      if (useShortcutStore.getState().isEditing) return;
+      
+      // Focus guard: ignore if typing in an input/textarea (unless it's the Monaco editor)
+      const activeEl = document.activeElement;
+      if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable)) {
+        if (!activeEl.classList.contains('inputarea')) {
+          return;
+        }
+      }
+
+      const currentKeys = normalizeEventToKeys(e);
+      
+      // Ignore if only modifier keys are pressed
+      if (currentKeys.length === 0 || (currentKeys.length === 1 && ['Ctrl', 'Shift', 'Alt', 'Meta'].includes(currentKeys[0]))) {
+        return;
+      }
+
+      const keysToMatch = [...pendingChordRef.current, ...currentKeys];
+      const shortcuts = useShortcutStore.getState().shortcuts;
+      
+      let matchFound = null;
+      let partialMatch = false;
+
+      for (const group of shortcuts) {
+        for (const item of group.items) {
+          const itemKeysStr = item.keys.join('+').toLowerCase();
+          const matchStr = keysToMatch.join('+').toLowerCase();
+          
+          if (itemKeysStr === matchStr) {
+            matchFound = item;
+            break;
+          }
+          if (itemKeysStr.startsWith(matchStr + '+')) {
+            partialMatch = true;
+          }
+        }
+        if (matchFound) break;
+      }
+
+      if (matchFound) {
+        // Only prevent default and stop propagation if it's a GLOBAL action.
+        // Editor actions are natively handled by Monaco's keybinding registry.
+        const isGlobalAction = ['general', 'file', 'nav', 'ai', 'debug'].includes(matchFound.id.split('.')[0]) && !matchFound.id.startsWith('edit.');
+        
+        if (isGlobalAction) {
+          e.preventDefault();
+          e.stopPropagation();
+          executeGlobalAction(matchFound.id);
+        }
+        
+        pendingChordRef.current = [];
+      } else if (partialMatch) {
+        e.preventDefault();
+        e.stopPropagation();
+        pendingChordRef.current = keysToMatch;
+        setTimeout(() => { pendingChordRef.current = []; }, 2000);
+      } else {
+        pendingChordRef.current = [];
       }
     }
-    window.addEventListener('keydown', handleGlobalKeyDown)
-    return () => window.removeEventListener('keydown', handleGlobalKeyDown)
-  }, [])
+
+    window.addEventListener('keydown', handleGlobalKeyDown, { capture: true })
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown, { capture: true })
+  }, [activeFile, setActivePanel])
 
   // ── Auto-detect provider from key input ──
   useEffect(() => {
@@ -1028,6 +1207,40 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
     .map(([provider, data]) => ({ ...PROVIDERS[provider], ...data, id: provider }))
 
   useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      useAuthStore.getState().setSession(session)
+    })
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      useAuthStore.getState().setSession(session)
+    })
+
+    const removeListener = window.api?.onAuthCallback?.(async (urlStr) => {
+      try {
+        const url = new URL(urlStr)
+        const hash = url.hash
+        if (hash && hash.includes('access_token')) {
+          const hashParams = new URLSearchParams(hash.substring(1))
+          const access_token = hashParams.get('access_token')
+          const refresh_token = hashParams.get('refresh_token')
+          if (access_token && refresh_token) {
+            await supabase.auth.setSession({ access_token, refresh_token })
+          }
+        } else if (url.searchParams.get('code')) {
+          const code = url.searchParams.get('code')
+          await supabase.auth.exchangeCodeForSession(code)
+        }
+      } catch (err) {
+        console.error("Auth callback error:", err)
+      }
+    })
+
+    return () => {
+      subscription?.unsubscribe()
+    }
+  }, [])
+
+  useEffect(() => {
     const handleDebugPostman = async (e) => {
       const detail = e.detail;
       setBottomTab('ai-debugger')
@@ -1087,7 +1300,7 @@ the new code
   }, [activeFile, selectedModel, customBaseUrl, customModelId])
 
   return (
-    <div className="ide-root" style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: 'var(--bg-main)', color: 'var(--text-main)' }}>
+    <div className="ide-root" style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: 'var(--bg-deep)', color: 'var(--text-primary)' }}>
       {/* ── Global Header ── */}
       <header className="global-title-bar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 16px', height: '40px', background: 'var(--bg-activity)', borderBottom: '1px solid var(--border-base)', flexShrink: 0, userSelect: 'none', WebkitAppRegion: 'drag' }}>
         
@@ -1095,29 +1308,298 @@ the new code
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '24px', WebkitAppRegion: 'no-drag' }}>
           <span style={{ fontSize: '14px', fontWeight: 'bold', color: '#f1e05a', letterSpacing: '0.5px' }}>comπle</span>
           <div style={{ display: 'flex', gap: '16px', fontSize: '13px', color: 'var(--text-muted)' }}>
-            <span style={{ cursor: 'pointer', WebkitAppRegion: 'no-drag' }} className="menu-item">File</span>
-            <span style={{ cursor: 'pointer', WebkitAppRegion: 'no-drag' }} className="menu-item">Edit</span>
-            <span style={{ cursor: 'pointer', WebkitAppRegion: 'no-drag' }} className="menu-item">Selection</span>
-            <span style={{ cursor: 'pointer', WebkitAppRegion: 'no-drag' }} className="menu-item">View</span>
-            <span style={{ cursor: 'pointer', WebkitAppRegion: 'no-drag' }} className="menu-item">Go</span>
-            <span style={{ cursor: 'pointer', WebkitAppRegion: 'no-drag' }} className="menu-item">Run</span>
-            <span style={{ cursor: 'pointer', WebkitAppRegion: 'no-drag' }} className="menu-item">Terminal</span>
-            <span style={{ cursor: 'pointer', WebkitAppRegion: 'no-drag' }} className="menu-item">Help</span>
+            {[
+              { name: 'File', items: [
+                { label: 'New Text File', shortcut: 'Ctrl+N', action: () => {
+                   const id = `untitled:Untitled-${Date.now()}`;
+                   const name = `Untitled`;
+                   setOpenFiles(prev => [...prev, { name, path: id }]);
+                   setActiveFile(id);
+                }},
+                { label: 'New File...', shortcut: 'Ctrl+Alt+Windows+N', action: () => window.dispatchEvent(new CustomEvent('create-new-file')) },
+                { label: 'New Window', shortcut: 'Ctrl+Shift+N', action: () => window.api.newWindow && window.api.newWindow() },
+                { type: 'separator' },
+                { label: 'Open File...', shortcut: 'Ctrl+O', action: async () => {
+                    if (window.api.selectFile) {
+                      const p = await window.api.selectFile();
+                      if (p) {
+                        const recents = JSON.parse(localStorage.getItem('recentFiles') || '[]');
+                        if (!recents.includes(p)) localStorage.setItem('recentFiles', JSON.stringify([p, ...recents].slice(0, 5)));
+                        handleOpenFile(p, p.split(/[/\\]/).pop());
+                      }
+                    }
+                }},
+                { label: 'Open Folder...', shortcut: 'Ctrl+K Ctrl+O', action: async () => {
+                    if (window.api.selectFolder) {
+                      const p = await window.api.selectFolder();
+                      if (p) {
+                        const recents = JSON.parse(localStorage.getItem('recentFolders') || '[]');
+                        if (!recents.includes(p)) localStorage.setItem('recentFolders', JSON.stringify([p, ...recents].slice(0, 5)));
+                        setProjectRoot(p);
+                      }
+                    }
+                }},
+                { label: 'Open Workspace from File...', action: async () => {
+                    if (window.api.selectFile) {
+                      const p = await window.api.selectFile();
+                      if (p) {
+                        const recents = JSON.parse(localStorage.getItem('recentFolders') || '[]');
+                        const dir = p.substring(0, Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')));
+                        if (!recents.includes(dir)) localStorage.setItem('recentFolders', JSON.stringify([dir, ...recents].slice(0, 5)));
+                        setProjectRoot(dir);
+                      }
+                    }
+                }},
+                ...(JSON.parse(localStorage.getItem('recentFiles') || '[]').length > 0 ? [
+                  { type: 'separator' },
+                  ...JSON.parse(localStorage.getItem('recentFiles') || '[]').map(f => ({
+                    label: `Recent File: ${f.split(/[/\\]/).pop()}`,
+                    action: () => handleOpenFile(f, f.split(/[/\\]/).pop())
+                  }))
+                ] : []),
+                ...(JSON.parse(localStorage.getItem('recentFolders') || '[]').length > 0 ? [
+                  { type: 'separator' },
+                  ...JSON.parse(localStorage.getItem('recentFolders') || '[]').map(f => ({
+                    label: `Recent Folder: ${f.split(/[/\\]/).pop()}`,
+                    action: () => setProjectRoot(f)
+                  }))
+                ] : []),
+                { type: 'separator' },
+                { label: `Auto Save ${autoSave ? '✓' : ''}`, action: () => setAutoSave(!autoSave) },
+                { label: 'Save', shortcut: 'Ctrl+S', action: () => saveActiveFile() },
+                { label: 'Save As...', shortcut: 'Ctrl+Shift+S', action: () => saveActiveFile() },
+                { label: 'Save All', shortcut: 'Ctrl+K S', action: () => saveActiveFile() },
+                { type: 'separator' },
+                { label: 'Close Editor', shortcut: 'Ctrl+F4', action: () => activeFile ? closeFile(activeFile) : null },
+                { label: 'Close Folder', shortcut: 'Ctrl+K F', action: () => setProjectRoot(null) },
+                { label: 'Close Window', shortcut: 'Alt+F4', action: () => window.close() },
+                { type: 'separator' },
+                { label: 'Exit', action: () => window.close() }
+              ]},
+              { name: 'Edit', items: [
+                { label: 'Undo', shortcut: 'Ctrl+Z', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'undo' })) },
+                { label: 'Redo', shortcut: 'Ctrl+Y', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'redo' })) },
+                { type: 'separator' },
+                { label: 'Cut', shortcut: 'Ctrl+X', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.clipboardCutAction' })) },
+                { label: 'Copy', shortcut: 'Ctrl+C', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.clipboardCopyAction' })) },
+                { label: 'Paste', shortcut: 'Ctrl+V', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.clipboardPasteAction' })) },
+                { type: 'separator' },
+                { label: 'Find', shortcut: 'Ctrl+F', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'actions.find' })) },
+                { label: 'Replace', shortcut: 'Ctrl+H', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.startFindReplaceAction' })) },
+                { type: 'separator' },
+                { label: 'Find in Files', shortcut: 'Ctrl+Shift+F', action: () => setActivePanel('search') },
+                { label: 'Replace in Files', shortcut: 'Ctrl+Shift+H', action: () => setActivePanel('search') },
+                { type: 'separator' },
+                { label: 'Toggle Line Comment', shortcut: 'Ctrl+/', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.commentLine' })) },
+                { label: 'Toggle Block Comment', shortcut: 'Shift+Alt+A', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.blockComment' })) },
+                { label: 'Emmet: Expand Abbreviation', shortcut: 'Tab', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.emmet.action.expandAbbreviation' })) }
+              ]},
+              { name: 'Selection', items: [
+                { label: 'Select All', shortcut: 'Ctrl+A', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.selectAll' })) },
+                { label: 'Expand Selection', shortcut: 'Shift+Alt+RightArrow', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.smartSelect.expand' })) },
+                { label: 'Shrink Selection', shortcut: 'Shift+Alt+LeftArrow', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.smartSelect.shrink' })) },
+                { type: 'separator' },
+                { label: 'Copy Line Up', shortcut: 'Shift+Alt+UpArrow', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.copyLinesUpAction' })) },
+                { label: 'Copy Line Down', shortcut: 'Shift+Alt+DownArrow', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.copyLinesDownAction' })) },
+                { label: 'Move Line Up', shortcut: 'Alt+UpArrow', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.moveLinesUpAction' })) },
+                { label: 'Move Line Down', shortcut: 'Alt+DownArrow', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.moveLinesDownAction' })) },
+                { label: 'Duplicate Selection', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.duplicateSelection' })) },
+                { type: 'separator' },
+                { label: 'Add Cursor Above', shortcut: 'Ctrl+Alt+UpArrow', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.insertCursorAbove' })) },
+                { label: 'Add Cursor Below', shortcut: 'Ctrl+Alt+DownArrow', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.insertCursorBelow' })) },
+                { label: 'Add Cursors to Line Ends', shortcut: 'Shift+Alt+I', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.insertCursorAtEndOfEachLineSelected' })) },
+                { label: 'Add Next Occurrence', shortcut: 'Ctrl+D', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.addSelectionToNextFindMatch' })) },
+                { label: 'Add Previous Occurrence', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.addSelectionToPreviousFindMatch' })) },
+                { label: 'Select All Occurrences', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.selectHighlights' })) },
+                { type: 'separator' },
+                { label: 'Switch to Ctrl+Click for Multi-Cursor', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.toggleMultiCursorModifier' })) },
+                { label: 'Column Selection Mode', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.toggleColumnSelection' })) }
+              ]},
+              { name: 'View', items: [
+                { label: 'Command Palette...', shortcut: 'Ctrl+Shift+P', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.quickCommand' })) },
+                { label: 'Open View...', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.quickCommand' })) },
+                { type: 'separator' },
+                { label: 'Appearance', hasSubmenu: true, submenu: [
+                  { label: 'Full Screen', shortcut: 'F11', action: () => { if (!document.fullscreenElement) { document.documentElement.requestFullscreen().catch(() => {}); } else { document.exitFullscreen(); } } },
+                  { label: 'Zen Mode', action: () => { if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {}); setActivePanel(null); setShowTerminal(false); } },
+                  { type: 'separator' },
+                  { label: 'Primary Side Bar', action: () => setActivePanel(activePanel === 'explorer' ? null : 'explorer') },
+                  { label: 'Panel', action: () => setShowTerminal(!showTerminal) }
+                ]},
+                { label: 'Editor Layout', hasSubmenu: true, submenu: [
+                  { label: 'Split Right', action: () => {
+                    const newId = Date.now().toString();
+                    setEditorGroups(prev => {
+                      const activeGroup = prev.find(g => g.id === activeEditorGroupId) || prev[0];
+                      const newGroup = { id: newId, openFiles: activeGroup.openFiles, activeFile: activeGroup.activeFile, fileContents: activeGroup.fileContents };
+                      return [...prev, newGroup];
+                    });
+                    setActiveEditorGroupId(newId);
+                  }},
+                  { type: 'separator' },
+                  { label: 'Single', action: () => {
+                    setEditorGroups(prev => {
+                      const activeGroup = prev.find(g => g.id === activeEditorGroupId) || prev[0];
+                      return [activeGroup];
+                    });
+                  }},
+                  { label: 'Two Columns', action: () => {
+                    setEditorGroups(prev => {
+                      if (prev.length >= 2) return prev.slice(0, 2);
+                      const activeGroup = prev[0];
+                      return [activeGroup, { id: Date.now().toString(), openFiles: activeGroup.openFiles, activeFile: activeGroup.activeFile, fileContents: activeGroup.fileContents }];
+                    });
+                  }},
+                  { label: 'Three Columns', action: () => {
+                    setEditorGroups(prev => {
+                      if (prev.length >= 3) return prev.slice(0, 3);
+                      let newGroups = [...prev];
+                      while (newGroups.length < 3) {
+                        newGroups.push({ id: Date.now().toString() + Math.random(), openFiles: newGroups[0].openFiles, activeFile: newGroups[0].activeFile, fileContents: newGroups[0].fileContents });
+                      }
+                      return newGroups;
+                    });
+                  }}
+                ]},
+                { type: 'separator' },
+                { label: 'Explorer', shortcut: 'Ctrl+Shift+E', action: () => setActivePanel('explorer') },
+                { label: 'Search', shortcut: 'Ctrl+Shift+F', action: () => setActivePanel('search') },
+                { label: 'Source Control', shortcut: 'Ctrl+Shift+G', action: () => setActivePanel('git') },
+                { label: 'Run', shortcut: 'Ctrl+Shift+D', action: () => setActivePanel('debug') },
+                { label: 'Extensions', shortcut: 'Ctrl+Shift+X', action: () => setActivePanel('extensions') },
+                { type: 'separator' },
+                { label: 'Problems', shortcut: 'Ctrl+Shift+M', action: () => { setShowTerminal(true); setBottomTab('ai-debugger'); } },
+                { label: 'Output', shortcut: 'Ctrl+Shift+U', action: () => { setShowTerminal(true); setBottomTab('terminal'); } },
+                { label: 'Debug Console', shortcut: 'Ctrl+Shift+Y', action: () => { setShowTerminal(true); setBottomTab('debugger-history'); } },
+                { label: 'Terminal', shortcut: 'Ctrl+`', action: () => { setShowTerminal(true); setBottomTab('terminal'); } },
+                { type: 'separator' },
+                { label: 'Word Wrap', shortcut: 'Alt+Z', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.toggleWordWrap' })) }
+              ]},
+              { name: 'Go', items: [
+                { label: 'Back', shortcut: 'Alt+LeftArrow', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'cursorUndo' })) },
+                { label: 'Forward', shortcut: 'Alt+RightArrow', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'cursorRedo' })) },
+                { type: 'separator' },
+                { label: 'Go to File...', shortcut: 'Ctrl+P', action: () => setActivePanel('search') },
+                { type: 'separator' },
+                { label: 'Go to Symbol in Editor...', shortcut: 'Ctrl+Shift+O', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.quickOutline' })) },
+                { label: 'Go to Definition', shortcut: 'F12', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.revealDefinition' })) },
+                { label: 'Go to Declaration', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.revealDeclaration' })) },
+                { label: 'Go to Type Definition', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.goToTypeDefinition' })) },
+                { label: 'Go to Implementations', shortcut: 'Ctrl+F12', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.goToImplementation' })) },
+                { label: 'Go to References', shortcut: 'Shift+F12', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.referenceSearch.trigger' })) },
+                { type: 'separator' },
+                { label: 'Go to Line/Column...', shortcut: 'Ctrl+G', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.gotoLine' })) },
+                { label: 'Go to Bracket', shortcut: 'Ctrl+Shift+\\', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.jumpToBracket' })) },
+                { type: 'separator' },
+                { label: 'Next Problem', shortcut: 'F8', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.marker.next' })) },
+                { label: 'Previous Problem', shortcut: 'Shift+F8', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.marker.prev' })) }
+              ]},
+              { name: 'Run', items: [
+                { label: 'Start Debugging', shortcut: 'F5', action: () => { setActivePanel('debug'); setTimeout(() => window.dispatchEvent(new CustomEvent('start-debugging')), 50); } },
+                { label: 'Run Without Debugging', shortcut: 'Ctrl+F5', action: () => runFileRef.current && runFileRef.current() },
+                { label: 'Stop Debugging', shortcut: 'Shift+F5', action: () => { setActivePanel('debug'); if (window.api && window.api.dapStop) { window.api.dapStop(); window.dispatchEvent(new Event('dap-stop')); } } },
+                { type: 'separator' },
+                { label: 'Step Over', shortcut: 'F10', action: () => { setActivePanel('debug'); if (window.api && window.api.dapStep) window.api.dapStep() } },
+                { label: 'Continue', shortcut: 'F5', action: () => { setActivePanel('debug'); if (window.api && window.api.dapContinue) { window.api.dapContinue(); window.dispatchEvent(new Event('dap-continue')); } } }
+              ]},
+              { name: 'Terminal', items: [
+                { label: 'New Terminal', shortcut: 'Ctrl+Shift+`', action: () => { setShowTerminal(true); handleAddTerminal(); } },
+                { label: 'Split Terminal', shortcut: 'Ctrl+Shift+5', action: () => { setShowTerminal(true); handleAddTerminal(); } },
+                { type: 'separator' },
+                { label: 'Run Active File', action: () => runFileRef.current && runFileRef.current() },
+                { label: 'Run Build Task...', shortcut: 'Ctrl+Shift+B', action: () => window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Build task started...', type: 'info' } })) },
+                { type: 'separator' },
+                { label: 'Reset Terminals', action: () => { setTerminals([{ id: 'default', name: 'bash' }]); setActiveTerminalId('default'); window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Terminals reset!', type: 'success' } })); } },
+                { label: 'Sync Dependencies (npm install)', action: () => { 
+                    setShowTerminal(true);
+                    const term = terminalPanelRefs.current[activeTerminalId];
+                    if (term) term.executeCommand('npm install\r'); 
+                } },
+                { label: 'Start Dev Server (npm run dev)', action: () => { 
+                    setShowTerminal(true);
+                    const term = terminalPanelRefs.current[activeTerminalId];
+                    if (term) term.executeCommand('npm run dev\r'); 
+                } }
+              ]},
+              { name: 'Help', items: [
+                { label: 'Toggle Developer Tools', action: () => { if (window.api && window.api.toggleDevTools) window.api.toggleDevTools() } },
+                { type: 'separator' },
+                { label: 'Check for Updates...', action: () => window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'comπle is up to date.', type: 'success' } })) },
+                { type: 'separator' },
+                { label: 'About comπle', action: () => window.open('https://kartikchawla.in', '_blank') }
+              ]}
+            ].map((menu) => (
+              <div key={menu.name} style={{ position: 'relative' }}>
+                <span 
+                  style={{ cursor: 'pointer', WebkitAppRegion: 'no-drag', color: activeMenu === menu.name ? 'var(--text-primary)' : 'inherit' }} 
+                  className="menu-item"
+                  onClick={(e) => { e.stopPropagation(); setActiveMenu(activeMenu === menu.name ? null : menu.name) }}
+                >
+                  {menu.name}
+                </span>
+                {activeMenu === menu.name && (
+                  <div style={{
+                    position: 'absolute', top: '24px', left: 0, background: 'var(--bg-elevated)', border: '1px solid var(--border-base)',
+                    borderRadius: '6px', padding: '6px 0', minWidth: '300px', zIndex: 9999, boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+                    display: 'flex', flexDirection: 'column', whiteSpace: 'nowrap'
+                  }} onClick={(e) => e.stopPropagation()}>
+                    {menu.items.map((item, idx) => (
+                      item.type === 'separator' ? (
+                        <div key={idx} onMouseEnter={() => setActiveSubmenu(null)} style={{ height: '1px', background: 'var(--border-base)', margin: '4px 0' }} />
+                      ) : (
+                        <div key={idx} className="submenu-item"
+                          style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '24px' }}
+                          onMouseEnter={() => { if(item.hasSubmenu) setActiveSubmenu(idx); else setActiveSubmenu(null); }}
+                          onClick={() => { if(!item.hasSubmenu) { setActiveMenu(null); setActiveSubmenu(null); if(item.action) item.action() } }}
+                        >
+                          <span>{item.label}</span>
+                          {item.shortcut && <span style={{ opacity: 0.5, fontSize: '11px', letterSpacing: '0.2px', marginLeft: 'auto' }}>{item.shortcut}</span>}
+                          {item.hasSubmenu && <ChevronRight size={14} style={{ opacity: 0.6, marginLeft: 'auto' }} />}
+                          
+                          {item.hasSubmenu && activeSubmenu === idx && (
+                            <div style={{
+                              position: 'absolute', top: '-6px', left: '100%', marginLeft: '4px', background: 'var(--bg-elevated)',
+                              border: '1px solid var(--border-base)', borderRadius: '6px', padding: '6px 0', minWidth: '200px',
+                              zIndex: 10000, boxShadow: '0 8px 24px rgba(0,0,0,0.6)', display: 'flex', flexDirection: 'column'
+                            }} onClick={(e) => e.stopPropagation()}>
+                              {item.submenu.map((sub, subIdx) => (
+                                sub.type === 'separator' ? (
+                                  <div key={subIdx} style={{ height: '1px', background: 'var(--border-base)', margin: '4px 0' }} />
+                                ) : (
+                                  <div key={subIdx} className="submenu-item"
+                                    onClick={() => { setActiveSubmenu(null); setActiveMenu(null); if(sub.action) sub.action() }}
+                                  >
+                                    <span>{sub.label}</span>
+                                    {sub.shortcut && <span style={{ opacity: 0.6, fontSize: '11px', letterSpacing: '0.2px' }}>{sub.shortcut}</span>}
+                                  </div>
+                                )
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         </div>
 
         {/* Center Section */}
         <div style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '16px', WebkitAppRegion: 'no-drag' }}>
-          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>COMPILE-PROJECT App.jsx</span>
-          <div style={{ display: 'flex', gap: '4px', color: 'var(--text-muted)' }}>
-            <div onClick={() => setActivePanel(activePanel === 'explorer' ? null : 'explorer')} style={{ padding: '4px', borderRadius: '4px', cursor: 'pointer', display: 'flex', background: activePanel === 'explorer' ? 'var(--bg-dark)' : 'transparent' }} title="Toggle Sidebar"><PanelLeft size={14} /></div>
-            <div onClick={() => setShowTerminal(!showTerminal)} style={{ padding: '4px', borderRadius: '4px', cursor: 'pointer', display: 'flex', background: showTerminal ? 'var(--bg-dark)' : 'transparent' }} title="Toggle Terminal"><PanelBottom size={14} /></div>
-            <div onClick={() => setRightPanel(rightPanel === 'chat' ? null : 'chat')} style={{ padding: '4px', borderRadius: '4px', cursor: 'pointer', display: 'flex', background: rightPanel === 'chat' ? 'var(--bg-dark)' : 'transparent' }} title="Toggle AI Agent"><PanelRight size={14} /></div>
-          </div>
+          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+            {activeFile ? activeFile.split(/[/\\]/).pop() : (projectRoot ? projectRoot.split(/[/\\]/).pop() : 'comπle')}
+          </span>
         </div>
 
         {/* Right Section */}
         <div style={{ flex: 1, display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '12px', WebkitAppRegion: 'no-drag' }}>
+          <div style={{ display: 'flex', gap: '4px', color: 'var(--text-muted)', marginRight: '8px' }}>
+            <div onClick={() => setActivePanel(activePanel === 'explorer' ? null : 'explorer')} style={{ padding: '4px', borderRadius: '4px', cursor: 'pointer', display: 'flex', background: activePanel === 'explorer' ? 'var(--bg-dark)' : 'transparent' }} title="Toggle Sidebar"><PanelLeft size={14} /></div>
+            <div onClick={() => setShowTerminal(!showTerminal)} style={{ padding: '4px', borderRadius: '4px', cursor: 'pointer', display: 'flex', background: showTerminal ? 'var(--bg-dark)' : 'transparent' }} title="Toggle Terminal"><PanelBottom size={14} /></div>
+            <div onClick={() => setRightPanel(rightPanel === 'chat' ? null : 'chat')} style={{ padding: '4px', borderRadius: '4px', cursor: 'pointer', display: 'flex', background: rightPanel === 'chat' ? 'var(--bg-dark)' : 'transparent' }} title="Toggle AI Agent"><PanelRight size={14} /></div>
+          </div>
           <div className="model-selector-wrapper" style={{ marginRight: '8px' }}>
               <select
                 id="model-selector"
@@ -1147,7 +1629,6 @@ the new code
 
           <div style={{ display: 'flex', gap: '16px', color: 'var(--text-muted)', alignItems: 'center' }}>
             <Settings size={16} style={{ cursor: 'pointer' }} onClick={() => setRightPanel('settings')} title="Settings" />
-            <User size={16} style={{ cursor: 'pointer' }} />
           </div>
           
           <button 
@@ -1186,6 +1667,10 @@ the new code
 
       {/* ── Sidebar (File Explorer / Extensions / Search / Source Control) ── */}
       <div style={{ display: 'flex', height: '100%', borderRight: '1px solid var(--border-base)' }}>
+        {activePanel === 'auth' && (
+          <AuthPanel width={sidebarWidth} />
+        )}
+        
         {activePanel === 'explorer' && (
           <Sidebar
             projectRoot={projectRoot}
@@ -1205,7 +1690,7 @@ the new code
 
         {activePanel === 'debug' && (
           <div style={{ width: sidebarWidth, borderRight: '1px solid var(--border-base)', overflow: 'hidden' }}>
-            <DebugPanel />
+            <DebugPanel activeFile={activeFile} />
           </div>
         )}
 

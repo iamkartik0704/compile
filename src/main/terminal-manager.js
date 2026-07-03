@@ -70,7 +70,7 @@ class TerminalManager {
     this.nextId = 1
     this.hostProcess = null
     this.pendingResolves = {}
-    this.mainWindow = null
+    this.terminalWindows = {} // Map of terminal ID to webContents
   }
 
   startHostProcess() {
@@ -84,23 +84,23 @@ class TerminalManager {
     })
 
     this.hostProcess.on('message', (msg) => {
-      if (!this.mainWindow || this.mainWindow.isDestroyed()) return
-
-      if (msg.type === 'data') {
-        this.mainWindow.webContents.send(`terminal-data-${msg.id}`, msg.data)
-      } else if (msg.type === 'exit') {
-        this.mainWindow.webContents.send(`terminal-exit-${msg.id}`, { exitCode: msg.exitCode })
-      } else if (msg.type === 'created') {
+      if (msg.type === 'created' || msg.type === 'error') {
+        if (msg.type === 'error') console.error('PTY Host Error:', msg.error)
         if (this.pendingResolves[msg.id]) {
           this.pendingResolves[msg.id]()
           delete this.pendingResolves[msg.id]
         }
-      } else if (msg.type === 'error') {
-        console.error('PTY Host Error:', msg.error)
-        if (this.pendingResolves[msg.id]) {
-          this.pendingResolves[msg.id]() // Resolve anyway to avoid unhandled rejection, or handle differently
-          delete this.pendingResolves[msg.id]
-        }
+        return
+      }
+
+      const sender = this.terminalWindows[msg.id]
+      if (!sender || sender.isDestroyed()) return
+
+      if (msg.type === 'data') {
+        sender.send(`terminal-data-${msg.id}`, msg.data)
+      } else if (msg.type === 'exit') {
+        sender.send(`terminal-exit-${msg.id}`, { exitCode: msg.exitCode })
+        delete this.terminalWindows[msg.id]
       }
     })
 
@@ -113,9 +113,11 @@ class TerminalManager {
     })
   }
 
-  init(mainWindow) {
-    this.mainWindow = mainWindow
+  init() {
     this.startHostProcess()
+
+    if (this._handlersRegistered) return
+    this._handlersRegistered = true
 
     // Spawn a new terminal
     ipcMain.handle('create-terminal', (event, options = {}) => {
@@ -124,6 +126,7 @@ class TerminalManager {
       }
 
       const id = this.nextId++
+      this.terminalWindows[id] = event.sender
 
       return new Promise((resolve) => {
         this.pendingResolves[id] = () => resolve(id)

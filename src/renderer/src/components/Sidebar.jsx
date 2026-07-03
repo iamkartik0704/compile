@@ -207,9 +207,22 @@ export const Sidebar = ({
         console.log('FS Event:', data)
         handleRefresh()
       })
+      
+      // Fetch initial directory structure for the new project root
+      handleRefresh()
     }
     
-    return () => window.removeEventListener('refresh-sidebar', onRefreshSidebar)
+    const onCreateNewFile = () => handleCreateNew('file')
+    const onCreateNewFolder = () => handleCreateNew('folder')
+    window.addEventListener('refresh-sidebar', onRefreshSidebar)
+    window.addEventListener('create-new-file', onCreateNewFile)
+    window.addEventListener('create-new-folder', onCreateNewFolder)
+    
+    return () => {
+      window.removeEventListener('refresh-sidebar', onRefreshSidebar)
+      window.removeEventListener('create-new-file', onCreateNewFile)
+      window.removeEventListener('create-new-folder', onCreateNewFolder)
+    }
   }, [projectRoot])
 
   const handleCollapseAll = () => {

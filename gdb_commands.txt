@@ -1,0 +1,5 @@
+-break-insert index.cpp:8
+-exec-run
+-stack-list-locals 1
+-data-evaluate-expression "sum"
+-gdb-exit

@@ -10,7 +10,27 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   </head>
-  <body>
+  <body style="background-color: #111111;">
+    <script>
+      try {
+        const data = localStorage.getItem('app-storage');
+        let theme = 'compile-dark';
+        let bg = '#111111';
+        if (data) {
+          const parsed = JSON.parse(data);
+          if (parsed && parsed.state && parsed.state.activeTheme) {
+            theme = parsed.state.activeTheme;
+          }
+        }
+        if (theme === 'light-modern') bg = '#ffffff';
+        else if (theme === 'compile-dark') bg = '#111111';
+        else if (theme === 'dark-plus') bg = '#1e1e1e';
+        else if (theme === 'dracula') bg = '#282a36';
+        
+        document.body.className = 'theme-' + theme;
+        document.body.style.backgroundColor = bg;
+      } catch (e) {}
+    </script>
     <div id="root"></div>
     <script type="module" src="./src/main.jsx"></script>
   </body>
