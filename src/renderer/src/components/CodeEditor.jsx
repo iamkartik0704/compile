@@ -57,105 +57,18 @@ const mapCustomIdToMonacoCommandId = (id) => {
     case 'edit.commentLine': return 'editor.action.commentLine';
     case 'edit.format': return 'compile.formatDocument';
     case 'edit.inlineAi': return 'compile.inlineAi';
+    case 'edit.multiCursor': return 'editor.action.insertCursorAtEndOfEachLineSelected';
+    case 'nav.goToLine': return 'editor.action.gotoLine';
+    case 'nav.goToDef': return 'editor.action.revealDefinition';
+    case 'nav.goToRef': return 'editor.action.referenceSearch.trigger';
+    case 'ai.autocomplete': return 'editor.action.inlineSuggest.trigger';
+    case 'ai.accept': return 'editor.action.inlineSuggest.commit';
+    case 'ai.dismiss': return 'editor.action.inlineSuggest.hide';
     default: return null;
   }
 }
 
-const parseKeysToMonaco = (keysArray) => {
-  if (!keysArray || keysArray.length === 0) return 0;
-  let monacoKey = 0;
-  for (const key of keysArray) {
-    if (key === 'Ctrl') monacoKey |= monaco.KeyMod.CtrlCmd;
-    else if (key === 'Shift') monacoKey |= monaco.KeyMod.Shift;
-    else if (key === 'Alt') monacoKey |= monaco.KeyMod.Alt;
-    else if (key === 'Meta') monacoKey |= monaco.KeyMod.WinCtrl;
-    else {
-      const upperKey = key.toUpperCase();
-      if (/^[A-Z]$/.test(upperKey)) {
-        monacoKey |= monaco.KeyCode[`Key${upperKey}`];
-      } else if (/^[0-9]$/.test(upperKey)) {
-        monacoKey |= monaco.KeyCode[`Digit${upperKey}`];
-      } else {
-        switch(upperKey) {
-          case 'ENTER': monacoKey |= monaco.KeyCode.Enter; break;
-          case 'ESCAPE': monacoKey |= monaco.KeyCode.Escape; break;
-          case 'SPACE': monacoKey |= monaco.KeyCode.Space; break;
-          case 'TAB': monacoKey |= monaco.KeyCode.Tab; break;
-          case 'BACKSPACE': monacoKey |= monaco.KeyCode.Backspace; break;
-          case 'DELETE': monacoKey |= monaco.KeyCode.Delete; break;
-          case 'UP':
-          case 'ARROWUP': monacoKey |= monaco.KeyCode.UpArrow; break;
-          case 'DOWN':
-          case 'ARROWDOWN': monacoKey |= monaco.KeyCode.DownArrow; break;
-          case 'LEFT':
-          case 'ARROWLEFT': monacoKey |= monaco.KeyCode.LeftArrow; break;
-          case 'RIGHT':
-          case 'ARROWRIGHT': monacoKey |= monaco.KeyCode.RightArrow; break;
-          case '/': monacoKey |= monaco.KeyCode.Slash; break;
-          case '`': monacoKey |= monaco.KeyCode.Backquote; break;
-          case '-': monacoKey |= monaco.KeyCode.Minus; break;
-          case '=': monacoKey |= monaco.KeyCode.Equal; break;
-          case '[': monacoKey |= monaco.KeyCode.BracketLeft; break;
-          case ']': monacoKey |= monaco.KeyCode.BracketRight; break;
-          case '\\': monacoKey |= monaco.KeyCode.Backslash; break;
-          case ';': monacoKey |= monaco.KeyCode.Semicolon; break;
-          case "'": monacoKey |= monaco.KeyCode.Quote; break;
-          case ',': monacoKey |= monaco.KeyCode.Comma; break;
-          case '.': monacoKey |= monaco.KeyCode.Period; break;
-        }
-      }
-    }
-  }
-  return monacoKey;
-}
 
-const syncMonacoKeybindings = () => {
-  const currentShortcuts = useShortcutStore.getState().shortcuts;
-  
-  if (!previousShortcuts) {
-    // Bootstrap: unbind original defaults so we start fresh
-    for (const group of defaultShortcuts) {
-      for (const item of group.items) {
-        if (item.id.startsWith('edit.')) {
-           monaco.editor.addKeybindingRule({
-             keybinding: parseKeysToMonaco(item.keys),
-             command: null
-           });
-        }
-      }
-    }
-  } else {
-    // Unbind previously set custom bindings
-    for (const group of previousShortcuts) {
-      for (const item of group.items) {
-        if (item.id.startsWith('edit.')) {
-           monaco.editor.addKeybindingRule({
-             keybinding: parseKeysToMonaco(item.keys),
-             command: null
-           });
-        }
-      }
-    }
-  }
-  
-  // Bind current custom keys
-  for (const group of currentShortcuts) {
-    for (const item of group.items) {
-      if (item.id.startsWith('edit.')) {
-        const monacoCommandId = mapCustomIdToMonacoCommandId(item.id);
-        if (monacoCommandId) {
-           monaco.editor.addKeybindingRule({
-             keybinding: parseKeysToMonaco(item.keys),
-             command: monacoCommandId,
-             when: 'editorTextFocus'
-           });
-        }
-      }
-    }
-  }
-  
-  previousShortcuts = currentShortcuts;
-}
 
 // ─── Lightweight LSP Client ────────────────────────────────────────
 // ─── Lightweight LSP Client (per-language) ─────────────────────────
@@ -617,24 +530,15 @@ export const CodeEditor = ({
     lineNumbers: localStorage.getItem('editor-lineNumbers') || 'on',
     formatOnPaste: localStorage.getItem('editor-formatOnPaste') !== 'false',
     renderWhitespace: localStorage.getItem('editor-renderWhitespace') || 'selection',
-    autoClosingBrackets: localStorage.getItem('editor-autoClosingBrackets') || 'always'
+    autoClosingBrackets: localStorage.getItem('editor-autoClosingBrackets') || 'always',
+    inlineSuggest: localStorage.getItem('editor-inlineSuggest') !== 'false',
+    cursorStyle: localStorage.getItem('editor-cursorStyle') || 'line',
+    bracketPairs: localStorage.getItem('editor-bracketPairs') !== 'false',
+    stickyScroll: localStorage.getItem('editor-stickyScroll') !== 'false',
+    zoomLevel: parseFloat(localStorage.getItem('editor-zoomLevel') || '0')
   })
 
-  // ── Global Monaco Keybinding Initialization ──
-  useEffect(() => {
-    if (!isMonacoKeybindingsSynced) {
-      isMonacoKeybindingsSynced = true;
-      // Sync on bootstrap
-      syncMonacoKeybindings();
-      
-      // Sync on future changes
-      useShortcutStore.subscribe((state, prevState) => {
-        if (state.shortcuts !== prevState.shortcuts) {
-          syncMonacoKeybindings();
-        }
-      });
-    }
-  }, []);
+
 
   useEffect(() => {
     const handleSettingsChanged = (e) => {
@@ -646,6 +550,24 @@ export const CodeEditor = ({
     }
     window.addEventListener('settings-changed', handleSettingsChanged)
     return () => window.removeEventListener('settings-changed', handleSettingsChanged)
+  }, [])
+
+  // Ctrl+Scroll / Trackpad pinch zoom
+  useEffect(() => {
+    const handleWheel = (e) => {
+      if (!e.ctrlKey) return
+      e.preventDefault()
+      setEditorSettings(prev => {
+        const delta = e.deltaY > 0 ? -0.5 : 0.5
+        const newZoom = Math.max(-3, Math.min(5, (prev.zoomLevel || 0) + delta))
+        localStorage.setItem('editor-zoomLevel', String(newZoom))
+        window.dispatchEvent(new CustomEvent('settings-changed', { detail: { key: 'editor-zoomLevel', value: newZoom } }))
+        return { ...prev, zoomLevel: newZoom }
+      })
+    }
+
+    window.addEventListener('wheel', handleWheel, { passive: false })
+    return () => window.removeEventListener('wheel', handleWheel)
   }, [])
 
 
@@ -673,27 +595,7 @@ export const CodeEditor = ({
     return () => window.removeEventListener('click', closeContextMenu)
   }, [])
 
-  // Listen for global editor actions (from menu, shortcuts, etc)
-  useEffect(() => {
-    const handleEditorAction = (e) => {
-      const actionId = e.detail
-      if (!actionId) return
-      
-      if (editorRef.current) {
-        editorRef.current.focus()
-        
-        // Special case for native undo/redo which map directly to core editor commands
-        if (actionId === 'undo' || actionId === 'redo') {
-          editorRef.current.trigger('keyboard', actionId, null)
-          return
-        }
-        
-        editorRef.current.trigger('keyboard', actionId, null)
-      }
-    }
-    window.addEventListener('editor-action', handleEditorAction)
-    return () => window.removeEventListener('editor-action', handleEditorAction)
-  }, [])
+
 
   // ─── Drag and Drop Handlers ───
   const handleDragStart = (e, idx) => {
@@ -950,14 +852,14 @@ export const CodeEditor = ({
       // or keystrokes to fail. We MUST refocus the editor first!
       editorRef.current.focus()
 
-      const action = editorRef.current.getAction(actionId)
+      const mappedId = mapCustomIdToMonacoCommandId(actionId) || actionId
+
+      const action = editorRef.current.getAction(mappedId)
       if (action) {
         action.run()
-      } else if (actionId === 'cursorUndo' || actionId === 'cursorRedo') {
-        // Fallback for native cursor history commands if they don't have explicit actions in some versions
-        editorRef.current.trigger('keyboard', actionId, null)
       } else {
-        console.warn('Monaco Action not found:', actionId)
+        // Fallback for native cursor history commands and editor core commands
+        editorRef.current.trigger('keyboard', mappedId, null)
       }
     }
 
@@ -1822,6 +1724,15 @@ export const CodeEditor = ({
                   submitInlineAi()
                 } else if (e.key === 'Escape') {
                   setInlineAi(prev => ({ ...prev, visible: false }))
+                  editorRef.current?.focus()
+                }
+              }}
+              onBlur={() => {
+                if (!inlineAi.isLoading) {
+                  // Slight delay to prevent immediate unmount issues
+                  setTimeout(() => {
+                    setInlineAi(prev => ({ ...prev, visible: false }))
+                  }, 100)
                 }
               }}
               disabled={inlineAi.isLoading}
@@ -1934,7 +1845,7 @@ export const CodeEditor = ({
               onMount={handleEditorDidMountWrapper}
               options={{
                 minimap: { enabled: editorSettings.minimap },
-                fontSize: editorSettings.fontSize,
+                fontSize: Math.round(editorSettings.fontSize * Math.pow(1.1, editorSettings.zoomLevel || 0)),
                 fontFamily: editorSettings.fontFamily,
                 wordWrap: editorSettings.wordWrap,
                 padding: { top: 16 },
@@ -1946,9 +1857,12 @@ export const CodeEditor = ({
                 renderWhitespace: editorSettings.renderWhitespace,
                 autoClosingBrackets: editorSettings.autoClosingBrackets,
                 tabSize: editorSettings.tabSize,
+                cursorStyle: editorSettings.cursorStyle,
                 cursorSmoothCaretAnimation: 'on',
                 automaticLayout: true,
-                inlineSuggest: { enabled: true }, // Enable inline ghost text for Copilot
+                inlineSuggest: { enabled: editorSettings.inlineSuggest },
+                'bracketPairColorization.enabled': editorSettings.bracketPairs,
+                stickyScroll: { enabled: editorSettings.stickyScroll },
                 quickSuggestions: true, // Enable classic dropdown on normal keystrokes
                 wordBasedSuggestions: 'off', // Disables dumb word-based guessing
                 suggestOnTriggerCharacters: true, // Pop up on . or :: or Ctrl+Space

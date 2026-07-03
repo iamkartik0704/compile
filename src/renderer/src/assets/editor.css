@@ -323,6 +323,200 @@
   transition: background 0.1s ease;
 }
 
+.close-icon {
+  opacity: 0;
+  transition: opacity 0.1s ease;
+}
+
+.editor-tab:hover .close-icon,
+.editor-tab.active .close-icon {
+  opacity: 1;
+}
+
+.dirty-dot {
+  color: var(--accent-color);
+}
+
+/* File Path Breadcrumb (under editor tabs) */
+.editor-breadcrumb {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 6px 16px;
+  background: var(--bg-deep);
+  border-bottom: 1px solid var(--border-base);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  min-height: 28px;
+  user-select: none;
+}
+
+.git-lens-ghost-text {
+  color: var(--text-muted) !important;
+  font-style: italic !important;
+  padding-left: 20px !important;
+  opacity: 0.6 !important;
+}
+
+.git-lens-test-bg {
+  background-color: rgba(255, 255, 0, 0.2) !important;
+}
+
+.monaco-breakpoint-glyph {
+  background: #ea5c00;
+  border-radius: 50%;
+  width: 11px !important;
+  height: 11px !important;
+  margin-left: 4px;
+  margin-top: 4px;
+  cursor: pointer;
+}
+
+.monaco-breakpoint-hint-glyph {
+  background: #ea5c00;
+  opacity: 0.5;
+  border-radius: 50%;
+  width: 11px !important;
+  height: 11px !important;
+  margin-left: 4px;
+  margin-top: 4px;
+  cursor: pointer;
+}
+
+.breadcrumb-segment {
+  display: inline-flex;
+  align-items: center;
+}
+
+.breadcrumb-sep {
+  margin: 0 4px;
+  color: var(--text-muted);
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+
+.breadcrumb-part {
+  color: var(--text-muted);
+  transition: color 0.15s ease;
+}
+
+.breadcrumb-part:hover {
+  color: var(--text-primary);
+}
+
+.breadcrumb-current {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.editor-body {
+  flex: 1;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.editor-loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--text-muted);
+}
+
+/* AI Edit Highlighting */
+.ai-edit-highlight {
+  background: rgba(46, 160, 67, 0.2);
+  border-left: 3px solid #2ea043;
+  margin-left: 2px;
+}
+
+/* Floating AI Revert Widget */
+.ai-edit-widget {
+  position: absolute;
+  top: 1rem;
+  right: 2rem;
+  z-index: 100;
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  animation: slideInDown 0.2s ease-out;
+}
+
+@keyframes slideInDown {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.ai-edit-widget-text {
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.ai-edit-widget-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.ai-btn-revert {
+  background: transparent;
+  color: #f87171;
+  border: 1px solid #f87171;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.1s ease;
+}
+
+.ai-btn-revert:hover {
+  background: rgba(248, 113, 113, 0.1);
+}
+
+.ai-btn-accept {
+  background: #2ea043;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 12px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+
+.ai-btn-accept:hover {
+  background: #238636;
+}
+
+/* Tabs Context Menu */
+.tab-context-menu {
+  background-color: #252526; /* Solid dark color to ensure contrast */
+  border: 1px solid #454545; /* Distinct border */
+  border-radius: 6px;
+  padding: 4px 0;
+  min-width: 160px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.8);
+  font-size: 13px;
+  color: #cccccc;
+  user-select: none;
+}
+
+.tab-context-menu-item {
+  padding: 6px 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  transition: background 0.1s ease;
+}
+
 .tab-context-menu-item:hover {
   background-color: #04395e; /* distinct hover color */
   color: #ffffff;
@@ -344,45 +538,64 @@
 .inline-ai-widget {
     position: absolute;
     z-index: 1000;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-color);
-    border-radius: 6px;
-    padding: 6px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    background: rgba(45, 45, 45, 0.85);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--border-base);
+    border-radius: 24px;
+    padding: 4px 16px;
+    box-shadow: var(--shadow-lg), 0 0 0 1px rgba(255,255,255,0.05) inset;
     display: flex;
     align-items: center;
-    gap: 8px;
-    min-width: 400px;
-    transform: translateY(-50%); /* Center on the cursor line */
-    animation: slideIn 0.2s ease;
+    gap: 12px;
+    min-width: 450px;
+    transform: translateY(-100%);
+    margin-top: -8px;
+    animation: slideInWidget 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .inline-ai-widget input {
     flex: 1;
-    background: var(--bg-primary);
-    border: 1px solid var(--border-color);
-    color: var(--text-primary);
-    padding: 6px 10px;
-    border-radius: 4px;
+    background: transparent;
+    border: none;
+    color: var(--text-bright);
+    padding: 8px 0;
     font-family: inherit;
-    font-size: 0.9rem;
+    font-size: 0.95rem;
     outline: none;
 }
 
-.inline-ai-widget input:focus {
-    border-color: #60a5fa;
-    box-shadow: 0 0 0 1px #60a5fa;
+.inline-ai-widget input::placeholder {
+    color: var(--text-muted);
 }
 
 .inline-ai-spinner {
-    font-size: 0.8rem;
-    color: #60a5fa;
-    animation: pulse 1.5s infinite;
+    font-size: 0.85rem;
+    color: var(--accent-purple);
+    font-weight: 500;
+    padding: 8px 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 
-@keyframes slideIn {
-    from { opacity: 0; transform: translateY(-30%); }
-    to { opacity: 1; transform: translateY(-50%); }
+.inline-ai-spinner::before {
+    content: '';
+    display: block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--accent-purple);
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spinLoader 0.8s linear infinite;
+}
+
+@keyframes slideInWidget {
+    from { opacity: 0; transform: translateY(-70%); }
+    to { opacity: 1; transform: translateY(-100%); }
+}
+
+@keyframes spinLoader {
+    to { transform: rotate(360deg); }
 }
 
 /* Error Lens Integration */
@@ -408,4 +621,3 @@
 }
 
 .debug-active-line { background-color: rgba(255, 255, 0, 0.2); }
-

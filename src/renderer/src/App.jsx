@@ -333,7 +333,7 @@ function App() {
 
   // ── Editor State ──
   const [editorGroups, setEditorGroups] = useState([
-    { id: 'group-1', openFiles: [], activeFile: null }
+    { id: 'group-1', openFiles: [], activeFile: null, closedFiles: [] }
   ])
   const [activeEditorGroupId, setActiveEditorGroupId] = useState('group-1')
 
@@ -407,8 +407,18 @@ function App() {
   const [debuggerHistory, setDebuggerHistory] = useState([])
   const aiDebuggerStreamRef = useRef('')
 
-  const [autoCompleteEnabled, setAutoCompleteEnabled] = useState(true)
+  const [autoCompleteEnabled, setAutoCompleteEnabled] = useState(localStorage.getItem('editor-inlineSuggest') !== 'false')
   const [autoCompleteDelay, setAutoCompleteDelay] = useState(500)
+
+  useEffect(() => {
+    const handleSettingsChanged = (e) => {
+      if (e.detail.key === 'editor-inlineSuggest') {
+        setAutoCompleteEnabled(e.detail.value)
+      }
+    }
+    window.addEventListener('settings-changed', handleSettingsChanged)
+    return () => window.removeEventListener('settings-changed', handleSettingsChanged)
+  }, [])
 
   const saveActiveFile = async () => {
     if (!activeFile) return
@@ -732,11 +742,30 @@ the new code
   }
 
   const closeFile = (path) => {
-    const newFiles = openFiles.filter(f => f.path !== path)
-    setOpenFiles(newFiles)
-    if (activeFile === path) {
-      setActiveFile(newFiles.length > 0 ? newFiles[newFiles.length - 1].path : null)
-    }
+    setEditorGroups(prev => {
+      const idx = prev.findIndex(g => g.id === activeEditorGroupId)
+      if (idx === -1) return prev
+      const newGroups = [...prev]
+      
+      const fileToClose = newGroups[idx].openFiles.find(f => f.path === path)
+      if (!fileToClose) return prev
+
+      const newFiles = newGroups[idx].openFiles.filter(f => f.path !== path)
+      let newActive = newGroups[idx].activeFile
+      if (newActive === path) {
+        newActive = newFiles.length > 0 ? newFiles[newFiles.length - 1].path : null
+      }
+      
+      const newClosedFiles = [...(newGroups[idx].closedFiles || []), fileToClose].filter(Boolean)
+
+      newGroups[idx] = { 
+        ...newGroups[idx], 
+        openFiles: newFiles, 
+        activeFile: newActive,
+        closedFiles: newClosedFiles
+      }
+      return newGroups
+    })
   }
 
   const markFileDirty = (path) => setOpenFiles(prev => prev.map(f => f.path === path ? { ...f, isDirty: true } : f))
@@ -804,23 +833,27 @@ the new code
     switch (id) {
       case 'general.commandPalette':
         window.dispatchEvent(new CustomEvent('open-command-palette'))
-        break
+        return true
       case 'general.terminal':
         setShowTerminal(prev => !prev)
-        break
+        return true
       case 'general.sidebar':
-        setShowExplorer(prev => !prev)
-        break
+        setActivePanel(useAppStore.getState().activePanel === 'explorer' ? null : 'explorer')
+        return true
       case 'general.zen':
-        setShowExplorer(false)
+        setActivePanel(null)
         setShowTerminal(false)
-        break
+        return true
       case 'general.fullscreen':
-        window.api.toggleFullScreen && window.api.toggleFullScreen()
-        break
+        if (!document.fullscreenElement) {
+          document.documentElement.requestFullscreen().catch(err => console.error(err))
+        } else {
+          document.exitFullscreen().catch(err => console.error(err))
+        }
+        return true
       case 'general.closeWindow':
         window.close()
-        break
+        return true
       case 'file.openFolder':
         if (window.api.selectFolder) {
           window.api.selectFolder().then(p => {
@@ -831,32 +864,32 @@ the new code
             }
           })
         }
-        break
+        return true
       case 'general.shortcuts':
         handleOpenFile('settings:shortcuts', 'Keyboard Shortcuts')
-        break
+        return true
       case 'file.saveAll':
         saveActiveFile()
-        break
+        return true
       case 'file.closeFolder':
         setProjectRoot(null)
-        break
+        return true
       case 'general.run':
       case 'debug.run':
         window.dispatchEvent(new Event('global-run-file'))
-        break
+        return true
       case 'file.new':
         const newId = `untitled:Untitled-${Date.now()}`
         setOpenFiles(prev => [...prev, { name: 'Untitled', path: newId }])
         setActiveFile(newId)
-        break
+        return true
       case 'file.newWindow':
         if (window.api.newWindow) window.api.newWindow()
-        break
+        return true
       case 'file.closeAll':
         setOpenFiles([])
         setActiveFile(null)
-        break
+        return true
       case 'file.open':
         if (window.api.selectFile) {
           window.api.selectFile().then(p => {
@@ -867,26 +900,152 @@ the new code
             }
           })
         }
-        break
+        return true
       case 'file.saveAs':
       case 'file.save':
         saveActiveFile()
-        break
+        return true
       case 'file.close':
         if (activeFile) closeFile(activeFile)
-        break
+        return true
       case 'general.settings':
         handleOpenFile('settings:main', 'Settings')
-        break
+        return true
       case 'general.extensions':
         setActivePanel('extensions')
-        break
+        return true
+      
+      // Mapped unimplemented global features
+      case 'general.split': {
+        const newId = 'group-' + Date.now()
+        setEditorGroups(prev => {
+          const activeGroup = prev.find(g => g.id === activeEditorGroupId) || prev[0]
+          return [...prev, { id: newId, openFiles: [...activeGroup.openFiles], activeFile: activeGroup.activeFile, closedFiles: [] }]
+        })
+        setActiveEditorGroupId(newId)
+        return true
+      }
+      case 'file.reopen': {
+        setEditorGroups(prev => {
+          const idx = prev.findIndex(g => g.id === activeEditorGroupId)
+          if (idx === -1) return prev
+          const activeGroup = prev[idx]
+          if (!activeGroup.closedFiles || activeGroup.closedFiles.length === 0) return prev
+          
+          const newClosed = [...activeGroup.closedFiles]
+          const toRestore = newClosed.pop()
+          if (!toRestore) return prev
+          
+          const newGroups = [...prev]
+          const isAlreadyOpen = activeGroup.openFiles.some(f => f.path === toRestore.path)
+          
+          if (isAlreadyOpen) {
+            newGroups[idx] = { ...activeGroup, activeFile: toRestore.path, closedFiles: newClosed }
+          } else {
+            newGroups[idx] = { 
+              ...activeGroup, 
+              openFiles: [...activeGroup.openFiles, toRestore], 
+              activeFile: toRestore.path, 
+              closedFiles: newClosed 
+            }
+          }
+          return newGroups
+        })
+        return true
+      }
+      case 'nav.switchTab': {
+        setEditorGroups(prev => {
+          const idx = prev.findIndex(g => g.id === activeEditorGroupId)
+          if (idx === -1) return prev
+          const activeGroup = prev[idx]
+          if (activeGroup.openFiles.length <= 1) return prev // no-op for 0 or 1 file
+          
+          const currentFileIdx = activeGroup.openFiles.findIndex(f => f.path === activeGroup.activeFile)
+          const nextFileIdx = (currentFileIdx + 1) % activeGroup.openFiles.length
+          const newGroups = [...prev]
+          newGroups[idx] = { ...activeGroup, activeFile: activeGroup.openFiles[nextFileIdx].path }
+          return newGroups
+        })
+        return true
+      }
+      case 'nav.focusExplorer':
+        setActivePanel('explorer')
+        return true
+      case 'nav.focusTerminal':
+        setShowTerminal(true)
+        setBottomTab('terminal')
+        return true
+      case 'edit.findInFiles':
+        setActivePanel('search')
+        return true
+      case 'ai.chat':
+        setRightPanel('chat')
+        return true
+
+      case 'debug.start':
+      case 'debug.breakpoint':
+      case 'debug.stepOver':
+      case 'debug.stepInto':
+      case 'debug.stepOut':
+      case 'debug.stop':
+        setActivePanel('debug')
+        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: `Debug panel opened. Note: Full debugging requires a language-specific DAP backend.`, type: 'info' } }))
+        return true
+
+      case 'nav.goBack':
+      case 'nav.goForward':
+        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: `Feature '${id}' is not yet implemented in this preview.`, type: 'info' } }))
+        return true
+      case 'nav.goToFile':
+        window.dispatchEvent(new CustomEvent('open-command-palette'))
+        return true
+
+      case 'ai.autocomplete': {
+        const currentState = localStorage.getItem('editor-inlineSuggest') !== 'false';
+        const newState = !currentState;
+        localStorage.setItem('editor-inlineSuggest', newState.toString());
+        window.dispatchEvent(new CustomEvent('settings-changed', { detail: { key: 'editor-inlineSuggest', value: newState } }));
+        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: `AI Autocomplete is now ${newState ? 'ON' : 'OFF'}`, type: 'info' } }));
+        return true;
+      }
+
+      case 'view.zoomIn': {
+        const curZoom = parseFloat(localStorage.getItem('editor-zoomLevel') || '0')
+        const newZoom = Math.min(5, curZoom + 0.5)
+        localStorage.setItem('editor-zoomLevel', String(newZoom))
+        window.dispatchEvent(new CustomEvent('settings-changed', { detail: { key: 'editor-zoomLevel', value: newZoom } }))
+        return true
+      }
+      case 'view.zoomOut': {
+        const curZoom = parseFloat(localStorage.getItem('editor-zoomLevel') || '0')
+        const newZoom = Math.max(-3, curZoom - 0.5)
+        localStorage.setItem('editor-zoomLevel', String(newZoom))
+        window.dispatchEvent(new CustomEvent('settings-changed', { detail: { key: 'editor-zoomLevel', value: newZoom } }))
+        return true
+      }
+      case 'view.zoomReset': {
+        localStorage.setItem('editor-zoomLevel', '0')
+        window.dispatchEvent(new CustomEvent('settings-changed', { detail: { key: 'editor-zoomLevel', value: 0 } }))
+        return true
+      }
+
+      default:
+        if (id.startsWith('edit.') || id.startsWith('ai.') || id.startsWith('nav.')) {
+          window.dispatchEvent(new CustomEvent('editor-action', { detail: id }))
+          return true
+        }
+        return false
     }
   }
 
   useEffect(() => {
     const handleGlobalKeyDown = (e) => {
       if (useShortcutStore.getState().isEditing) return;
+
+      // DEBUG: log Ctrl key combos to diagnose zoom issue
+      if (e.ctrlKey && (e.key === '-' || e.key === '=' || e.key === '+' || e.key === '0' || e.key === 'Subtract' || e.key === 'Add')) {
+        console.log('[ZOOM DEBUG] e.key:', JSON.stringify(e.key), 'e.code:', e.code, 'e.keyCode:', e.keyCode)
+      }
       
       // Focus guard: ignore if typing in an input/textarea (unless it's the Monaco editor)
       const activeEl = document.activeElement;
@@ -896,12 +1055,12 @@ the new code
         }
       }
 
-      const currentKeys = normalizeEventToKeys(e);
-      
-      // Ignore if only modifier keys are pressed
-      if (currentKeys.length === 0 || (currentKeys.length === 1 && ['Ctrl', 'Shift', 'Alt', 'Meta'].includes(currentKeys[0]))) {
+      // Ignore pure modifier presses (wait for the actual key)
+      if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) {
         return;
       }
+
+      const currentKeys = normalizeEventToKeys(e);
 
       const keysToMatch = [...pendingChordRef.current, ...currentKeys];
       const shortcuts = useShortcutStore.getState().shortcuts;
@@ -926,14 +1085,13 @@ the new code
       }
 
       if (matchFound) {
-        // Only prevent default and stop propagation if it's a GLOBAL action.
+        // Only prevent default and stop propagation if it's a GLOBAL action handled by App.jsx.
         // Editor actions are natively handled by Monaco's keybinding registry.
-        const isGlobalAction = ['general', 'file', 'nav', 'ai', 'debug'].includes(matchFound.id.split('.')[0]) && !matchFound.id.startsWith('edit.');
+        const handled = executeGlobalAction(matchFound.id);
         
-        if (isGlobalAction) {
+        if (handled) {
           e.preventDefault();
           e.stopPropagation();
-          executeGlobalAction(matchFound.id);
         }
         
         pendingChordRef.current = [];
@@ -1781,12 +1939,22 @@ the new code
                     const idx = prev.findIndex(g => g.id === group.id)
                     if (idx === -1) return prev
                     const newGroups = [...prev]
+                    
+                    const fileToClose = newGroups[idx].openFiles.find(f => f.path === path)
                     const newFiles = newGroups[idx].openFiles.filter(f => f.path !== path)
                     let newActive = newGroups[idx].activeFile
                     if (newActive === path) {
                       newActive = newFiles.length > 0 ? newFiles[newFiles.length - 1].path : null
                     }
-                    newGroups[idx] = { ...newGroups[idx], openFiles: newFiles, activeFile: newActive }
+                    
+                    const newClosedFiles = [...(newGroups[idx].closedFiles || []), fileToClose].filter(Boolean)
+
+                    newGroups[idx] = { 
+                      ...newGroups[idx], 
+                      openFiles: newFiles, 
+                      activeFile: newActive,
+                      closedFiles: newClosedFiles
+                    }
                     return newGroups
                   })
                 }
@@ -2560,7 +2728,12 @@ the new code
             <span
               className="status-item"
               style={{ cursor: 'pointer', padding: '0 8px', borderLeft: '1px solid var(--border-light)' }}
-              onClick={() => setAutoCompleteEnabled(!autoCompleteEnabled)}
+              onClick={() => {
+                const newState = !autoCompleteEnabled;
+                localStorage.setItem('editor-inlineSuggest', newState.toString());
+                window.dispatchEvent(new CustomEvent('settings-changed', { detail: { key: 'editor-inlineSuggest', value: newState } }));
+                window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: `AI Autocomplete is now ${newState ? 'ON' : 'OFF'}`, type: 'info' } }));
+              }}
               title="Toggle AI Autocomplete"
             >
               πlot Autocomplete: {autoCompleteEnabled ? <span style={{ color: '#10a37f' }}>On</span> : <span style={{ color: 'var(--text-muted)' }}>Off</span>}

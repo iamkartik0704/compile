@@ -20,13 +20,13 @@ export const LSP_REGISTRY = {
   cpp: {
     extensionId: 'ext-lsp-cpp',
     command: 'clangd',
-    args: [],
+    args: ['--query-driver=**'],
     transport: 'stdio'
   },
   c: {
     extensionId: 'ext-lsp-cpp',
     command: 'clangd',
-    args: [],
+    args: ['--query-driver=**'],
     transport: 'stdio'
   },
   go: {

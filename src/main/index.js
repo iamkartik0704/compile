@@ -432,6 +432,22 @@ function createWindow() {
   // Force dark theme so native inputs (like <select> dropdown popups) render correctly
   nativeTheme.themeSource = 'dark'
 
+  // Disable Electron's built-in pinch/Ctrl+Scroll zoom so our custom editor zoom works
+  mainWindow.webContents.on('did-finish-load', () => {
+    mainWindow.webContents.setVisualZoomLevelLimits(1, 1)
+  })
+
+  // Intercept Ctrl+=/Ctrl+-/Ctrl+0 BEFORE Electron consumes them for its own zoom.
+  // Forward them to the renderer so our custom editor zoom handler can process them.
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.control && !input.alt && !input.meta) {
+      if (input.key === '-' || input.key === '=' || input.key === '+' || input.key === '0') {
+        event.preventDefault()
+        mainWindow.webContents.send('zoom-shortcut', input.key)
+      }
+    }
+  })
+
   // Prevent white flash — show only when fully rendered
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()

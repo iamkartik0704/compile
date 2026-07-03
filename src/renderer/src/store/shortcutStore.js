@@ -51,7 +51,7 @@ export const defaultShortcuts = [
       { id: 'edit.moveLineDown', name: 'Move Line Down', keys: ['Alt', 'Down'] },
       { id: 'edit.commentLine', name: 'Comment Line', keys: ['Ctrl', '/'] },
       { id: 'edit.format', name: 'Format Document', keys: ['Shift', 'Alt', 'F'] },
-      { id: 'edit.inlineAi', name: 'Inline AI Edit', keys: ['Ctrl', 'K'] },
+      { id: 'edit.inlineAi', name: 'Inline AI Edit', keys: ['Ctrl', 'I'] },
     ]
   },
   {
@@ -87,6 +87,14 @@ export const defaultShortcuts = [
       { id: 'debug.stepInto', name: 'Step Into', keys: ['F11'] },
       { id: 'debug.stepOut', name: 'Step Out', keys: ['Shift', 'F11'] },
       { id: 'debug.stop', name: 'Stop', keys: ['Shift', 'F5'] },
+    ]
+  },
+  {
+    category: 'View',
+    items: [
+      { id: 'view.zoomIn', name: 'Zoom In', keys: ['Ctrl', '='] },
+      { id: 'view.zoomOut', name: 'Zoom Out', keys: ['Ctrl', '-'] },
+      { id: 'view.zoomReset', name: 'Reset Zoom', keys: ['Ctrl', '0'] },
     ]
   }
 ];

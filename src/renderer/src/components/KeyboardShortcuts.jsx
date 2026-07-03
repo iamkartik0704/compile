@@ -48,24 +48,38 @@ export function KeyboardShortcuts() {
     setIsEditing(false)
   }, [setIsEditing])
 
+  const lastKeyTimeRef = useRef(0)
+
   const handleKeyDown = useCallback((e) => {
     if (!editingId) return;
     
     e.preventDefault();
     e.stopPropagation();
 
-    if (e.key === 'Enter') {
-      saveShortcut();
-      return;
-    }
-    if (e.key === 'Escape') {
+    if (e.key === 'Escape' && recordedKeysRef.current.length === 0) {
       cancelEdit();
       return;
     }
 
-    const keys = normalizeEventToKeys(e);
-    setRecordedKeys(keys);
-    recordedKeysRef.current = keys;
+    // Ignore pure modifier presses (wait for the actual key)
+    if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) {
+      return;
+    }
+
+    const currentKeys = normalizeEventToKeys(e);
+
+    const now = Date.now();
+    // If pressed within 1000ms of the last key, and we already have recorded keys, it's a chord! Appending...
+    if (now - lastKeyTimeRef.current < 1000 && recordedKeysRef.current.length > 0) {
+      const newKeys = [...recordedKeysRef.current, ...currentKeys];
+      setRecordedKeys(newKeys);
+      recordedKeysRef.current = newKeys;
+    } else {
+      setRecordedKeys(currentKeys);
+      recordedKeysRef.current = currentKeys;
+    }
+    
+    lastKeyTimeRef.current = now;
   }, [editingId, saveShortcut, cancelEdit]);
 
   useEffect(() => {
@@ -95,13 +109,13 @@ export function KeyboardShortcuts() {
       <style>{`
         .shortcuts-container {
           padding: 32px 48px;
-          color: var(--text-main);
+          color: var(--text-primary, #e0e0e0);
           width: 100%;
           max-width: 1100px;
           overflow-y: auto;
           height: 100%;
           font-family: var(--font-sans, system-ui, sans-serif);
-          background-color: #0a0a0a;
+          background-color: var(--bg-deep, #0a0a0a);
           box-sizing: border-box;
         }
 
@@ -115,35 +129,35 @@ export function KeyboardShortcuts() {
         .header-icon {
           width: 44px;
           height: 44px;
-          background-color: #141414;
+          background-color: var(--bg-surface, #141414);
           border-radius: 10px;
           display: flex;
           align-items: center;
           justify-content: center;
-          border: 1px solid rgba(255, 255, 255, 0.05);
+          border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.05));
           color: var(--accent-color, #e0a96d);
         }
         .header-title {
           font-size: 22px;
           margin: 0 0 2px 0;
-          color: #f0f0f0;
+          color: var(--text-bright, #f0f0f0);
           font-weight: 600;
           letter-spacing: -0.02em;
         }
         .header-subtitle {
           font-size: 13px;
-          color: #888;
+          color: var(--text-muted, #888);
           display: flex;
           align-items: center;
           gap: 8px;
         }
         .shortcut-counter {
-          background-color: #1a1a1a;
+          background-color: var(--bg-input, #1a1a1a);
           padding: 2px 8px;
           border-radius: 12px;
           font-size: 11px;
-          color: #a0a0a0;
-          border: 1px solid #2a2a2a;
+          color: var(--text-secondary, #a0a0a0);
+          border: 1px solid var(--border-base, #2a2a2a);
           font-weight: 500;
         }
 
@@ -157,34 +171,34 @@ export function KeyboardShortcuts() {
           left: 14px;
           top: 50%;
           transform: translateY(-50%);
-          color: #666;
+          color: var(--text-muted, #666);
         }
         .search-input {
           width: 100%;
           padding: 10px 14px 10px 38px;
-          background-color: #141414;
-          border: 1px solid #222;
+          background-color: var(--bg-input, #141414);
+          border: 1px solid var(--border-base, #222);
           border-radius: 6px;
-          color: #e0e0e0;
+          color: var(--text-primary, #e0e0e0);
           font-size: 13px;
           outline: none;
           transition: border-color 0.15s ease, background-color 0.15s ease;
         }
         .search-input:focus {
           border-color: var(--accent-color, #e0a96d);
-          background-color: #1a1a1a;
+          background-color: var(--bg-surface, #1a1a1a);
         }
         .search-input::placeholder {
-          color: #555;
+          color: var(--text-muted, #555);
         }
 
         /* Grouping */
         .shortcut-group {
-          background-color: #141414;
+          background-color: var(--bg-surface, #141414);
           border-radius: 8px;
           border-left: 3px solid var(--accent-color, #e0a96d);
           margin-bottom: 24px;
-          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
           overflow: hidden;
         }
         .group-header {
@@ -194,15 +208,13 @@ export function KeyboardShortcuts() {
           color: var(--accent-color, #e0a96d);
           text-transform: uppercase;
           letter-spacing: 0.05em;
-          border-bottom: 1px solid #1f1f1f;
+          border-bottom: 1px solid var(--border-subtle, #1f1f1f);
         }
 
         /* Grid for items */
         .group-items {
           display: grid;
           grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
-          background-color: #1f1f1f;
-          gap: 1px;
         }
 
         /* Rows */
@@ -211,19 +223,24 @@ export function KeyboardShortcuts() {
           align-items: center;
           justify-content: space-between;
           padding: 12px 20px;
-          background-color: #141414;
+          background-color: var(--bg-surface, #141414);
           transition: background-color 0.1s ease;
+          border-top: 1px solid var(--border-subtle, #1f1f1f);
+          border-right: 1px solid var(--border-subtle, #1f1f1f);
+        }
+        .shortcut-row:nth-child(even) {
+          border-right: none;
         }
         .shortcut-row:hover {
-          background-color: #1c1c1c;
+          background-color: var(--bg-elevated, #1c1c1c);
         }
         .shortcut-row.editing {
-          background-color: #1a1a1a;
+          background-color: var(--bg-input, #1a1a1a);
           box-shadow: inset 2px 0 0 var(--accent-color, #e0a96d);
         }
         .row-label {
           font-size: 13px;
-          color: #d0d0d0;
+          color: var(--text-primary, #d0d0d0);
           font-weight: 500;
         }
 
@@ -235,7 +252,7 @@ export function KeyboardShortcuts() {
         }
         .edit-btn {
           opacity: 0;
-          color: #666;
+          color: var(--text-muted, #666);
           cursor: pointer;
           padding: 4px;
           border-radius: 4px;
@@ -249,7 +266,7 @@ export function KeyboardShortcuts() {
         }
         .edit-btn:hover {
           color: var(--accent-color, #e0a96d);
-          background-color: rgba(255, 255, 255, 0.05);
+          background-color: var(--bg-activity, rgba(255, 255, 255, 0.05));
         }
         
         .key-container {
@@ -258,22 +275,22 @@ export function KeyboardShortcuts() {
           gap: 6px;
         }
         .key-cap {
-          background-color: #242424;
-          border: 1px solid #111;
-          border-top-color: #333;
-          border-bottom: 2px solid #0a0a0a;
+          background-color: var(--bg-elevated, #242424);
+          border: 1px solid var(--border-base, #111);
+          border-top-color: var(--border-subtle, #333);
+          border-bottom: 2px solid var(--bg-deep, #0a0a0a);
           border-radius: 5px;
           padding: 3px 8px;
           min-width: 28px;
           text-align: center;
           font-size: 11px;
-          color: #e0e0e0;
+          color: var(--text-primary, #e0e0e0);
           font-family: var(--font-mono, "JetBrains Mono", Consolas, monospace);
-          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 1px 2px rgba(0, 0, 0, 0.4);
+          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 1px 2px rgba(0, 0, 0, 0.1);
           font-weight: 500;
         }
         .key-plus {
-          color: #555;
+          color: var(--text-muted, #555);
           font-size: 12px;
           font-weight: 600;
           font-family: var(--font-mono, "JetBrains Mono", Consolas, monospace);
@@ -378,7 +395,7 @@ export function KeyboardShortcuts() {
                       <span className="recording-prompt">Press keys...</span>
                       <div className="key-container">
                         {recordedKeys.length === 0 ? (
-                          <span style={{color: '#666', fontSize: '12px'}}>Listening...</span>
+                          <kbd className="key-cap highlight-cap" style={{ opacity: 0.8, borderStyle: 'dashed' }}>Listening...</kbd>
                         ) : (
                           recordedKeys.map((key, kIdx) => (
                             <React.Fragment key={kIdx}>
@@ -399,12 +416,16 @@ export function KeyboardShortcuts() {
                         <Edit2 size={14} />
                       </div>
                       <div className="key-container">
-                        {(item.keys || []).map((key, kIdx) => (
-                          <React.Fragment key={kIdx}>
-                            <kbd className="key-cap">{key}</kbd>
-                            {kIdx < (item.keys || []).length - 1 && <span className="key-plus">+</span>}
-                          </React.Fragment>
-                        ))}
+                        {(!item.keys || item.keys.length === 0) ? (
+                          <kbd className="key-cap" style={{ opacity: 0.5, fontStyle: 'italic' }}>Unbound</kbd>
+                        ) : (
+                          item.keys.map((key, kIdx) => (
+                            <React.Fragment key={kIdx}>
+                              <kbd className="key-cap">{key}</kbd>
+                              {kIdx < item.keys.length - 1 && <span className="key-plus">+</span>}
+                            </React.Fragment>
+                          ))
+                        )}
                       </div>
                     </div>
                   )}

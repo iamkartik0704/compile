@@ -1,25 +1,37 @@
 import React, { useState, useEffect } from 'react'
-import { Search, ChevronRight, Wand2, Filter, Settings2 } from 'lucide-react'
+import { Search, ChevronRight, Wand2, Filter, Settings2, SearchX } from 'lucide-react'
 import { useAppStore } from '../store/appStore'
+import '../assets/settings.css'
 
 const CATEGORIES = [
   { id: 'text-editor', label: 'Text Editor' },
-  { id: 'workbench', label: 'Workbench' }
+  { id: 'workbench', label: 'Workbench' },
+  { id: 'features', label: 'Features' },
+  { id: 'extensions', label: 'Extensions' }
 ]
 
 export function SettingsEditor() {
   const { autoSave, setAutoSave, activeTheme, setActiveTheme } = useAppStore()
   const [activeCategory, setActiveCategory] = useState('text-editor')
   const [searchQuery, setSearchQuery] = useState('')
-  const [activeTab, setActiveTab] = useState('user') // 'user' or 'workspace'
+  const [activeTab, setActiveTab] = useState('user')
 
   // Local settings state (persisted via localStorage)
   const [fontSize, setFontSize] = useState(() => parseInt(localStorage.getItem('editor-fontSize') || '14'))
-  const [fontFamily, setFontFamily] = useState(() => localStorage.getItem('editor-fontFamily') || "'JetBrains Mono', 'Fira Code', monospace")
+  const [fontFamily, setFontFamily] = useState(() => localStorage.getItem('editor-fontFamily') || "'JetBrains Mono', monospace")
+  const [zoomLevel, setZoomLevel] = useState(() => parseFloat(localStorage.getItem('editor-zoomLevel') || '0'))
   const [tabSize, setTabSize] = useState(() => parseInt(localStorage.getItem('editor-tabSize') || '2'))
   const [wordWrap, setWordWrap] = useState(() => localStorage.getItem('editor-wordWrap') || 'on')
   const [formatOnSave, setFormatOnSave] = useState(() => localStorage.getItem('editor-formatOnSave') === 'true')
   const [minimap, setMinimap] = useState(() => localStorage.getItem('editor-minimap') === 'true')
+  const [inlineSuggest, setInlineSuggest] = useState(() => localStorage.getItem('editor-inlineSuggest') !== 'false')
+  const [lineNumbers, setLineNumbers] = useState(() => localStorage.getItem('editor-lineNumbers') || 'on')
+  const [cursorBlinking, setCursorBlinking] = useState(() => localStorage.getItem('editor-cursorBlinking') || 'blink')
+  const [cursorStyle, setCursorStyle] = useState(() => localStorage.getItem('editor-cursorStyle') || 'line')
+  const [bracketPairs, setBracketPairs] = useState(() => localStorage.getItem('editor-bracketPairs') !== 'false')
+  const [smoothScrolling, setSmoothScrolling] = useState(() => localStorage.getItem('editor-smoothScrolling') === 'true')
+  const [stickyScroll, setStickyScroll] = useState(() => localStorage.getItem('editor-stickyScroll') !== 'false')
+  const [renderWhitespace, setRenderWhitespace] = useState(() => localStorage.getItem('editor-renderWhitespace') || 'none')
 
   // Persist settings to localStorage and dispatch change events
   const updateSetting = (key, value, setter) => {
@@ -29,10 +41,10 @@ export function SettingsEditor() {
   }
 
   const autoSaveOptions = [
-    { value: 'off', label: 'off' },
-    { value: 'afterDelay', label: 'afterDelay' },
-    { value: 'onFocusChange', label: 'onFocusChange' },
-    { value: 'onWindowChange', label: 'onWindowChange' }
+    { value: 'off', label: 'Off' },
+    { value: 'afterDelay', label: 'After Delay' },
+    { value: 'onFocusChange', label: 'On Focus Change' },
+    { value: 'onWindowChange', label: 'On Window Change' }
   ]
 
   const themeOptions = [
@@ -42,7 +54,6 @@ export function SettingsEditor() {
     { value: 'light-modern', label: 'Light Modern' }
   ]
 
-  // Settings definitions per category
   const allSettings = {
     'text-editor': [
       {
@@ -56,19 +67,28 @@ export function SettingsEditor() {
       {
         id: 'editor.fontFamily',
         title: 'Editor: Font Family',
-        description: 'Controls the font family.',
-        type: 'text',
+        description: 'Controls the font family used in the editor.',
+        type: 'select',
         value: fontFamily,
+        options: [
+          { value: "'JetBrains Mono', monospace", label: 'JetBrains Mono' },
+          { value: "'Fira Code', monospace", label: 'Fira Code' },
+          { value: "'Cascadia Code', monospace", label: 'Cascadia Code' },
+          { value: "Consolas, monospace", label: 'Consolas' },
+          { value: "'Source Code Pro', monospace", label: 'Source Code Pro' }
+        ],
         onChange: (v) => updateSetting('editor-fontFamily', v, setFontFamily)
       },
       {
-        id: 'files.autoSave',
-        title: 'Files: Auto Save',
-        description: 'Controls auto save of editors that have unsaved changes.',
-        type: 'select',
-        value: autoSave ? 'afterDelay' : 'off',
-        options: autoSaveOptions,
-        onChange: (v) => { setAutoSave(v !== 'off'); updateSetting('files-autoSave', v, () => {}) }
+        id: 'editor.zoomLevel',
+        title: 'Editor: Zoom Level',
+        description: 'Adjust the zoom level of the editor. Use Ctrl+= / Ctrl+- to zoom in/out.',
+        type: 'range',
+        value: zoomLevel,
+        min: -3,
+        max: 5,
+        step: 0.5,
+        onChange: (v) => updateSetting('editor-zoomLevel', parseFloat(v), setZoomLevel)
       },
       {
         id: 'editor.tabSize',
@@ -85,28 +105,121 @@ export function SettingsEditor() {
         type: 'select',
         value: wordWrap,
         options: [
-          { value: 'off', label: 'off' },
-          { value: 'on', label: 'on' },
-          { value: 'wordWrapColumn', label: 'wordWrapColumn' },
-          { value: 'bounded', label: 'bounded' }
+          { value: 'off', label: 'Off' },
+          { value: 'on', label: 'On' },
+          { value: 'wordWrapColumn', label: 'Word Wrap Column' },
+          { value: 'bounded', label: 'Bounded' }
         ],
         onChange: (v) => updateSetting('editor-wordWrap', v, setWordWrap)
+      },
+      {
+        id: 'editor.lineNumbers',
+        title: 'Editor: Line Numbers',
+        description: 'Controls the display of line numbers.',
+        type: 'select',
+        value: lineNumbers,
+        options: [
+          { value: 'on', label: 'On' },
+          { value: 'off', label: 'Off' },
+          { value: 'relative', label: 'Relative' },
+          { value: 'interval', label: 'Interval' }
+        ],
+        onChange: (v) => updateSetting('editor-lineNumbers', v, setLineNumbers)
+      },
+      {
+        id: 'editor.cursorStyle',
+        title: 'Editor: Cursor Style',
+        description: 'Controls the cursor style.',
+        type: 'select',
+        value: cursorStyle,
+        options: [
+          { value: 'line', label: 'Line' },
+          { value: 'block', label: 'Block' },
+          { value: 'underline', label: 'Underline' },
+          { value: 'line-thin', label: 'Line Thin' },
+          { value: 'block-outline', label: 'Block Outline' },
+          { value: 'underline-thin', label: 'Underline Thin' }
+        ],
+        onChange: (v) => updateSetting('editor-cursorStyle', v, setCursorStyle)
+      },
+      {
+        id: 'editor.cursorBlinking',
+        title: 'Editor: Cursor Blinking',
+        description: 'Controls the cursor animation style.',
+        type: 'select',
+        value: cursorBlinking,
+        options: [
+          { value: 'blink', label: 'Blink' },
+          { value: 'smooth', label: 'Smooth' },
+          { value: 'phase', label: 'Phase' },
+          { value: 'expand', label: 'Expand' },
+          { value: 'solid', label: 'Solid' }
+        ],
+        onChange: (v) => updateSetting('editor-cursorBlinking', v, setCursorBlinking)
+      },
+      {
+        id: 'editor.renderWhitespace',
+        title: 'Editor: Render Whitespace',
+        description: 'Controls how whitespace is rendered in the editor.',
+        type: 'select',
+        value: renderWhitespace,
+        options: [
+          { value: 'none', label: 'None' },
+          { value: 'boundary', label: 'Boundary' },
+          { value: 'selection', label: 'Selection' },
+          { value: 'trailing', label: 'Trailing' },
+          { value: 'all', label: 'All' }
+        ],
+        onChange: (v) => updateSetting('editor-renderWhitespace', v, setRenderWhitespace)
       },
       {
         id: 'editor.minimap',
         title: 'Editor: Minimap Enabled',
         description: 'Controls whether the minimap is shown.',
-        type: 'checkbox',
+        type: 'toggle',
         value: minimap,
         onChange: (v) => updateSetting('editor-minimap', v, setMinimap)
       },
       {
         id: 'editor.formatOnSave',
         title: 'Editor: Format On Save',
-        description: 'Format a file on save. A formatter must be available and the editor must not be shutting down.',
-        type: 'checkbox',
+        description: 'Format a file on save. A formatter must be available.',
+        type: 'toggle',
         value: formatOnSave,
         onChange: (v) => updateSetting('editor-formatOnSave', v, setFormatOnSave)
+      },
+      {
+        id: 'editor.bracketPairs',
+        title: 'Editor: Bracket Pair Colorization',
+        description: 'Controls whether bracket pair colorization is enabled.',
+        type: 'toggle',
+        value: bracketPairs,
+        onChange: (v) => updateSetting('editor-bracketPairs', v, setBracketPairs)
+      },
+      {
+        id: 'editor.smoothScrolling',
+        title: 'Editor: Smooth Scrolling',
+        description: 'Controls whether the editor will scroll using an animation.',
+        type: 'toggle',
+        value: smoothScrolling,
+        onChange: (v) => updateSetting('editor-smoothScrolling', v, setSmoothScrolling)
+      },
+      {
+        id: 'editor.stickyScroll',
+        title: 'Editor: Sticky Scroll',
+        description: 'Shows nested current scopes during scrolling at the top of the editor.',
+        type: 'toggle',
+        value: stickyScroll,
+        onChange: (v) => updateSetting('editor-stickyScroll', v, setStickyScroll)
+      },
+      {
+        id: 'files.autoSave',
+        title: 'Files: Auto Save',
+        description: 'Controls auto save of editors that have unsaved changes.',
+        type: 'select',
+        value: autoSave ? 'afterDelay' : 'off',
+        options: autoSaveOptions,
+        onChange: (v) => { setAutoSave(v !== 'off'); updateSetting('files-autoSave', v, () => {}) }
       }
     ],
     'workbench': [
@@ -120,7 +233,32 @@ export function SettingsEditor() {
         onChange: (v) => setActiveTheme(v)
       }
     ],
+    'features': [
+      {
+        id: 'ai.inlineSuggest',
+        title: 'AI: Inline Suggestions (Pilot)',
+        description: 'Controls whether AI-powered inline suggestions appear as ghost text while you type.',
+        type: 'toggle',
+        value: inlineSuggest,
+        onChange: (v) => {
+          updateSetting('editor-inlineSuggest', v, setInlineSuggest)
+          window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: `AI Autocomplete is now ${v ? 'ON' : 'OFF'}`, type: 'info' } }))
+        }
+      }
+    ],
+    'extensions': []
   }
+
+  // Listen for external settings changes (from keyboard shortcuts, footer toggle, etc.)
+  useEffect(() => {
+    const handleExternal = (e) => {
+      if (e.detail.key === 'editor-inlineSuggest') setInlineSuggest(e.detail.value)
+      if (e.detail.key === 'editor-fontSize') setFontSize(parseInt(e.detail.value) || 14)
+      if (e.detail.key === 'editor-minimap') setMinimap(e.detail.value === true || e.detail.value === 'true')
+    }
+    window.addEventListener('settings-changed', handleExternal)
+    return () => window.removeEventListener('settings-changed', handleExternal)
+  }, [])
 
   // Filter settings based on search query
   const getFilteredSettings = () => {
@@ -131,7 +269,7 @@ export function SettingsEditor() {
     const results = []
     Object.values(allSettings).forEach(settings => {
       settings.forEach(s => {
-        if (s.title.toLowerCase().includes(q) || s.description.toLowerCase().includes(q)) {
+        if (s.title.toLowerCase().includes(q) || s.description.toLowerCase().includes(q) || s.id.toLowerCase().includes(q)) {
           if (!results.find(r => r.id === s.id)) results.push(s)
         }
       })
@@ -144,263 +282,144 @@ export function SettingsEditor() {
     ? `Search Results (${filteredSettings.length})`
     : CATEGORIES.find(c => c.id === activeCategory)?.label || ''
 
-  const renderSetting = (setting) => (
-    <div key={setting.id} style={{ padding: '12px 0 24px 0' }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontSize: '13px', color: 'var(--text-bright)', marginBottom: '4px' }}>
-            {setting.title}
-          </div>
-          <div style={{ fontSize: '12.5px', color: 'var(--text-muted)', marginBottom: '10px', lineHeight: 1.5 }}>
-            {setting.type === 'checkbox' ? (
-              <label style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={setting.value}
-                  onChange={(e) => setting.onChange(e.target.checked)}
-                  style={{ 
-                    marginTop: '2px', 
-                    width: '16px', 
-                    height: '16px', 
-                    accentColor: 'var(--accent-color)',
-                    background: 'var(--bg-input)',
-                    border: '1px solid var(--border-base)',
-                    cursor: 'pointer' 
-                  }}
-                />
-                <span>{setting.description}</span>
-              </label>
-            ) : (
-              setting.description
-            )}
-          </div>
+  const renderSetting = (setting, index) => (
+    <div key={setting.id} className="settings-item" style={{ animationDelay: `${index * 0.04}s` }}>
+      <div className="settings-item-title">{setting.title}</div>
+
+      {setting.type === 'toggle' ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <label className="settings-toggle-label">
+            <input
+              type="checkbox"
+              className="settings-toggle-input"
+              checked={setting.value}
+              onChange={(e) => setting.onChange(e.target.checked)}
+            />
+            <div className="settings-toggle-switch" />
+            <span className="settings-item-desc" style={{ margin: 0 }}>{setting.description}</span>
+          </label>
+        </div>
+      ) : (
+        <>
+          <div className="settings-item-desc">{setting.description}</div>
           {setting.type === 'number' && (
             <input
               type="number"
+              className="settings-input"
               value={setting.value}
               onChange={(e) => setting.onChange(e.target.value)}
-              style={{
-                width: '180px',
-                padding: '6px 8px',
-                background: 'var(--bg-input)',
-                border: '1px solid var(--border-base)',
-                borderRadius: '3px',
-                color: 'var(--text-primary)',
-                fontSize: '13px',
-                outline: 'none',
-                boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.1)'
-              }}
+              style={{ width: '180px' }}
             />
           )}
           {setting.type === 'text' && (
             <input
               type="text"
+              className="settings-input"
               value={setting.value}
               onChange={(e) => setting.onChange(e.target.value)}
-              style={{
-                width: '280px',
-                padding: '6px 8px',
-                background: 'var(--bg-input)',
-                border: '1px solid var(--border-base)',
-                borderRadius: '3px',
-                color: 'var(--text-primary)',
-                fontSize: '13px',
-                outline: 'none',
-                boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.1)'
-              }}
             />
           )}
           {setting.type === 'select' && (
-            <div style={{ position: 'relative', width: '280px' }}>
+            <div className="settings-select-wrapper">
               <select
+                className="settings-select"
                 value={setting.value}
                 onChange={(e) => setting.onChange(e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '6px 8px',
-                  background: 'var(--bg-input)',
-                  border: '1px solid var(--border-base)',
-                  borderRadius: '3px',
-                  color: 'var(--text-primary)',
-                  fontSize: '13px',
-                  outline: 'none',
-                  cursor: 'pointer',
-                  appearance: 'none'
-                }}
               >
                 {setting.options.map(opt => (
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
               </select>
-              <div style={{ 
-                position: 'absolute', 
-                right: '8px', 
-                top: '50%', 
-                transform: 'translateY(-50%)', 
-                pointerEvents: 'none',
-                color: 'var(--text-muted)'
-              }}>
-                <ChevronRight size={14} style={{ transform: 'rotate(90deg)' }} />
+              <div className="settings-select-arrow">
+                <ChevronRight size={14} />
               </div>
             </div>
           )}
-        </div>
-      </div>
+          {setting.type === 'range' && (
+            <div className="settings-range-wrapper">
+              <input
+                type="range"
+                className="settings-range"
+                min={setting.min}
+                max={setting.max}
+                step={setting.step}
+                value={setting.value}
+                onChange={(e) => setting.onChange(e.target.value)}
+              />
+              <span className="settings-range-value">{setting.value > 0 ? `+${setting.value}` : setting.value}</span>
+            </div>
+          )}
+        </>
+      )}
     </div>
   )
 
   return (
-    <div style={{
-      width: '100%',
-      height: '100%',
-      background: 'var(--bg-deep)',
-      display: 'flex',
-      flexDirection: 'column',
-      color: 'var(--text-primary)',
-      fontFamily: 'system-ui, -apple-system, sans-serif'
-    }}>
+    <div className="settings-container">
       {/* Top Search Bar */}
-      <div style={{ padding: '12px 16px', paddingBottom: '0' }}>
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          background: 'var(--bg-input)',
-          border: '1px solid var(--border-base)',
-          borderRadius: '3px',
-          padding: '4px 8px',
-          width: '100%',
-          maxWidth: '800px',
-          height: '32px'
-        }}>
+      <div className="settings-topbar">
+        <div className="settings-search-wrapper">
+          <Search size={16} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
           <input
             type="text"
-            placeholder="Search settings"
+            className="settings-search-input"
+            placeholder="Search settings..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            style={{
-              flex: 1,
-              background: 'transparent',
-              border: 'none',
-              color: 'var(--text-primary)',
-              fontSize: '13px',
-              outline: 'none'
-            }}
           />
-          <div style={{ display: 'flex', gap: '10px', color: 'var(--text-muted)' }}>
-            <Wand2 size={15} style={{ cursor: 'pointer' }} title="AI Settings Search" />
-            <Settings2 size={15} style={{ cursor: 'pointer' }} title="Show modified settings" />
-            <Filter size={15} style={{ cursor: 'pointer' }} title="Filter settings" />
+          <div className="settings-search-icons">
+            <Wand2 size={15} className="settings-search-icon" title="AI Settings Search" />
+            <Settings2 size={15} className="settings-search-icon" title="Show modified settings" />
+            <Filter size={15} className="settings-search-icon" title="Filter settings" />
           </div>
         </div>
       </div>
 
       {/* Tabs and Action Button */}
-      <div style={{ 
-        display: 'flex', 
-        alignItems: 'center', 
-        justifyContent: 'space-between',
-        padding: '12px 16px',
-        borderBottom: '1px solid var(--border-base)',
-        maxWidth: '1200px'
-      }}>
-        <div style={{ display: 'flex', gap: '24px' }}>
-          <div 
+      <div className="settings-tabs-header">
+        <div className="settings-tabs">
+          <div
+            className={`settings-tab ${activeTab === 'user' ? 'active' : ''}`}
             onClick={() => setActiveTab('user')}
-            style={{ 
-              fontSize: '13px', 
-              cursor: 'pointer',
-              color: activeTab === 'user' ? 'var(--text-bright)' : 'var(--text-muted)',
-              borderBottom: activeTab === 'user' ? '1px solid var(--text-bright)' : '1px solid transparent',
-              paddingBottom: '4px'
-            }}
           >
             User
           </div>
-          <div 
+          <div
+            className={`settings-tab ${activeTab === 'workspace' ? 'active' : ''}`}
             onClick={() => setActiveTab('workspace')}
-            style={{ 
-              fontSize: '13px', 
-              cursor: 'pointer',
-              color: activeTab === 'workspace' ? 'var(--text-bright)' : 'var(--text-muted)',
-              borderBottom: activeTab === 'workspace' ? '1px solid var(--text-bright)' : '1px solid transparent',
-              paddingBottom: '4px'
-            }}
           >
             Workspace
           </div>
         </div>
-        <button style={{
-          background: 'var(--accent-color)',
-          color: 'var(--text-bright)',
-          border: 'none',
-          padding: '4px 12px',
-          fontSize: '12px',
-          borderRadius: '3px',
-          cursor: 'pointer'
-        }}>
-          Backup and Sync Settings
-        </button>
+        <button className="settings-sync-btn">Backup and Sync Settings</button>
       </div>
 
       {/* Main Layout */}
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden', maxWidth: '1200px', width: '100%' }}>
+      <div className="settings-layout">
         {/* Sidebar Categories */}
-        <div style={{
-          width: '240px',
-          minWidth: '240px',
-          overflowY: 'auto',
-          padding: '12px 0 12px 16px',
-        }}>
+        <div className="settings-sidebar">
           {CATEGORIES.map(cat => (
             <div
               key={cat.id}
+              className={`settings-category ${activeCategory === cat.id && !searchQuery ? 'active' : ''}`}
               onClick={() => { setActiveCategory(cat.id); setSearchQuery('') }}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                padding: '4px 0px 4px 0px',
-                fontSize: '13px',
-                cursor: 'pointer',
-                color: activeCategory === cat.id && !searchQuery ? 'var(--text-bright)' : 'var(--text-muted)',
-                fontWeight: activeCategory === cat.id && !searchQuery ? '600' : '400',
-              }}
             >
-              {cat.id !== 'text-editor' && cat.id !== 'workbench' && (
-                <ChevronRight size={14} style={{ marginRight: '4px', opacity: 0.7 }} />
-              )}
-              <span style={{ 
-                marginLeft: 0 
-              }}>
-                {cat.label}
-              </span>
+              {cat.label}
             </div>
           ))}
         </div>
 
         {/* Settings Content */}
-        <div style={{ 
-          flex: 1, 
-          overflowY: 'auto', 
-          padding: '12px 40px 40px 16px',
-          borderLeft: '1px solid var(--border-base)' 
-        }}>
-          <h2 style={{
-            fontSize: '22px',
-            fontWeight: 600,
-            color: 'var(--text-bright)',
-            marginBottom: '24px',
-            marginTop: '0'
-          }}>
-            {activeCategoryLabel}
-          </h2>
+        <div className="settings-content">
+          <h2 className="settings-section-title">{activeCategoryLabel}</h2>
 
           {filteredSettings.length === 0 ? (
-            <div style={{ color: 'var(--text-muted)', fontSize: '13px' }}>
-              {searchQuery ? 'No settings found matching your search.' : 'No settings in this category.'}
+            <div className="settings-empty">
+              <SearchX size={18} />
+              {searchQuery ? 'No settings found matching your search.' : 'No settings in this category yet.'}
             </div>
           ) : (
-            filteredSettings.map(renderSetting)
+            filteredSettings.map((s, i) => renderSetting(s, i))
           )}
         </div>
       </div>
