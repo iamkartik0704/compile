@@ -1183,7 +1183,7 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
             }
           }
 
-          contextBlocks.push(`The user is currently working on this active file: ${activeFile}\n\nFile Content:\n\`\`\`\n${fileText}\n\`\`\`${diagnosticsText}\n\nYou should default to editing this file unless requested otherwise.`)
+          contextBlocks.push(`The user is currently working on this active file: ${activeFile}\n\nFile Content:\n\`\`\`\n${fileText}\n\`\`\`${diagnosticsText}\n\nYou should default to editing this file unless requested otherwise.\n\nCRITICAL: If you modify this file, you MUST use the <edit_file path="${activeFile.replace(/\\/g, '/')}"> XML format as instructed above. DO NOT output standard markdown code blocks for file modifications.`)
         } catch (e) {
           console.warn("Could not load active file context:", e)
         }
@@ -1364,7 +1364,28 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
     .filter(([, v]) => v.exists)
     .map(([provider, data]) => ({ ...PROVIDERS[provider], ...data, id: provider }))
 
+  
   useEffect(() => {
+    const handleReload = async () => {
+      if (window.api && window.api.getApiKeys) {
+        const keys = await window.api.getApiKeys()
+        setProviderKeys(keys)
+      }
+      if (window.api && window.api.getCustomConfig) {
+        const config = await window.api.getCustomConfig()
+        if (config) {
+          if (config.customBaseUrl) setCustomBaseUrl(config.customBaseUrl)
+          if (config.customModelId) setCustomModelId(config.customModelId)
+          if (config.customName) setCustomName(config.customName)
+        }
+      }
+      setAutoCompleteEnabled(localStorage.getItem('editor-inlineSuggest') !== 'false')
+    }
+    window.addEventListener('reload-ai-config', handleReload)
+    return () => window.removeEventListener('reload-ai-config', handleReload)
+  }, [])
+
+useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       useAuthStore.getState().setSession(session)
     })
@@ -1977,7 +1998,7 @@ the new code
           </div>
 
           <div style={{ display: 'flex', gap: '16px', color: 'var(--text-muted)', alignItems: 'center' }}>
-            <Settings size={16} style={{ cursor: 'pointer' }} onClick={() => setRightPanel('settings')} title="Settings" />
+            <Settings size={16} style={{ cursor: 'pointer' }} onClick={() => { window.dispatchEvent(new CustomEvent('open-settings', { detail: 'ai-agent' })); handleOpenFile('settings:main', 'Settings'); }} title="Settings" />
           </div>
           
           <button 
@@ -2721,279 +2742,7 @@ the new code
                   </div>
                 )}
 
-                {/* ── Settings Panel ── */}
-                {rightPanel === 'settings' && (
-                  <div className="settings-panel">
-                    <div className="settings-content">
-                      <h2 className="settings-title">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="settings-icon">
-                          <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 11-7.778 7.778 5.5 5.5 0 017.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
-                        </svg>
-                        API Key Management
-                      </h2>
-                      <p className="settings-description">
-                        Add API keys for each provider you use. Keys are encrypted using your operating system&apos;s
-                        credential manager (Windows DPAPI / macOS Keychain / Linux Secret Service) and stored
-                        securely on disk. The raw key never leaves the Node.js process.
-                      </p>
-
-                      {/* ── Configured Keys Overview ── */}
-                      <div className="keys-overview-section">
-                        <h3 className="section-label">
-                          Configured Keys
-                          <span className="key-count-badge">{keyCount}</span>
-                        </h3>
-
-                        {configuredProviders.length === 0 ? (
-                          <div className="no-keys-message">
-                            <span className="no-keys-icon">🔑</span>
-                            <p>No API keys configured yet. Add one below to get started.</p>
-                          </div>
-                        ) : (
-                          <div className="provider-keys-grid">
-                            {configuredProviders.map((p) => (
-                              <div
-                                key={p.id}
-                                className={`provider-key-card ${deletingProvider === p.id ? 'deleting' : ''}`}
-                                style={{ '--provider-color': PROVIDERS[p.id]?.color || '#888' }}
-                              >
-                                <div className="provider-key-main">
-                                  <div className="provider-key-info">
-                                    <span className="provider-key-emoji">{PROVIDERS[p.id]?.emoji || '🔑'}</span>
-                                    <div>
-                                      <span className="provider-key-name">{PROVIDERS[p.id]?.name || p.id}</span>
-                                      <span className="provider-key-hint">{p.hint}</span>
-                                    </div>
-                                  </div>
-                                  <button
-                                    className="provider-delete-btn"
-                                    onClick={() => setDeletingProvider(p.id)}
-                                    title={`Delete ${PROVIDERS[p.id]?.name || p.id} key`}
-                                  >
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                      <polyline points="3 6 5 6 21 6" />
-                                      <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
-                                      <line x1="10" y1="11" x2="10" y2="17" />
-                                      <line x1="14" y1="11" x2="14" y2="17" />
-                                    </svg>
-                                  </button>
-                                </div>
-
-                                {/* ── Delete Confirmation ── */}
-                                {deletingProvider === p.id && (
-                                  <div className="confirm-delete-row">
-                                    <span className="confirm-delete-text">Delete this key?</span>
-                                    <div className="confirm-delete-actions">
-                                      <button
-                                        className="confirm-delete-yes"
-                                        onClick={() => handleDeleteKey(p.id)}
-                                      >
-                                        Delete
-                                      </button>
-                                      <button
-                                        className="confirm-delete-no"
-                                        onClick={() => setDeletingProvider(null)}
-                                      >
-                                        Cancel
-                                      </button>
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* ── Add New Key ── */}
-                      <div className="key-input-section">
-                        <label className="key-label" htmlFor="provider-selector">
-                          Add API Key
-                        </label>
-
-                        {/* Provider Selector */}
-                        <div className="provider-selector-row">
-                          <div className="provider-selector-wrapper">
-                            <select
-                              id="provider-selector"
-                              className="provider-selector"
-                              value={selectedProvider}
-                              onChange={(e) => setSelectedProvider(e.target.value)}
-                            >
-                              {PROVIDER_LIST.map((p) => (
-                                <option key={p.id} value={p.id}>
-                                  {p.emoji} {p.name}
-                                  {providerKeys[p.id]?.exists ? ' (configured)' : ''}
-                                </option>
-                              ))}
-                            </select>
-                            <span className="selector-chevron">▾</span>
-                          </div>
-
-                          {autoDetectedProvider && (
-                            <span className="auto-detect-badge">
-                              ✨ Auto-detected: {PROVIDERS[autoDetectedProvider]?.name}
-                            </span>
-                          )}
-                        </div>
-
-                        {selectedProvider === 'custom' && (
-                          <div className="custom-provider-config" style={{ marginTop: '12px', marginBottom: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                            <label className="key-label" style={{ fontSize: '0.8rem', opacity: 0.8 }}>Base URL</label>
-                            <select
-                              className="key-input"
-                              style={{ padding: '8px', cursor: 'pointer', appearance: 'auto', border: '1px solid var(--border-color)' }}
-                              value={
-                                ['https://openrouter.ai/api/v1', 'https://api.together.xyz/v1', 'http://localhost:1234/v1', 'http://localhost:11434/v1'].includes(customBaseUrl) ? customBaseUrl : 'other'
-                              }
-                              onChange={e => {
-                                if (e.target.value === 'other') setCustomBaseUrl('')
-                                else setCustomBaseUrl(e.target.value)
-                              }}
-                            >
-                              <option value="https://openrouter.ai/api/v1">OpenRouter (https://openrouter.ai/api/v1)</option>
-                              <option value="https://api.together.xyz/v1">Together AI (https://api.together.xyz/v1)</option>
-                              <option value="http://localhost:1234/v1">LM Studio (Local)</option>
-                              <option value="http://localhost:11434/v1">Ollama (Local)</option>
-                              <option value="https://api.groq.com/openai/v1">Groq</option>
-                              <option value="other">Other (Manual Entry)</option>
-                            </select>
-                            {!['https://openrouter.ai/api/v1', 'https://api.together.xyz/v1', 'http://localhost:1234/v1', 'http://localhost:11434/v1', 'https://api.groq.com/openai/v1'].includes(customBaseUrl) && (
-                              <input
-                                type="text"
-                                className="key-input"
-                                value={customBaseUrl}
-                                onChange={e => setCustomBaseUrl(e.target.value)}
-                                placeholder="https://api.yourprovider.com/v1"
-                                style={{ marginTop: '4px' }}
-                              />
-                            )}
-                            <label className="key-label" style={{ fontSize: '0.8rem', opacity: 0.8 }}>Provider Name (Optional)</label>
-                            <input
-                              type="text"
-                              className="key-input"
-                              value={customName}
-                              onChange={e => setCustomName(e.target.value)}
-                              placeholder="e.g. My OpenRouter"
-                            />
-                            <label className="key-label" style={{ fontSize: '0.8rem', opacity: 0.8 }}>Model ID</label>
-                            <input
-                              type="text"
-                              className="key-input"
-                              value={customModelId}
-                              onChange={e => setCustomModelId(e.target.value)}
-                              placeholder="llama3-70b-8192"
-                            />
-                          </div>
-                        )}
-
-                        {/* Key Input + Save */}
-                        <div className="key-input-row">
-                          <input
-                            id="api-key-input"
-                            type="password"
-                            className={`key-input ${autoDetectedProvider ? 'auto-detected' : ''}`}
-                            value={apiKeyInput}
-                            onChange={(e) => setApiKeyInput(e.target.value)}
-                            placeholder={PROVIDERS[selectedProvider]?.placeholder || 'your-api-key-here'}
-                            disabled={keySaving}
-                            onKeyDown={(e) => e.key === 'Enter' && handleSaveKey()}
-                          />
-                          <button
-                            id="save-key-btn"
-                            className="key-save-btn"
-                            onClick={handleSaveKey}
-                            disabled={keySaving || !apiKeyInput.trim()}
-                          >
-                            {keySaving ? (
-                              <span className="save-loader"></span>
-                            ) : (
-                              <>
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="save-icon">
-                                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                                  <polyline points="17 21 17 13 7 13 7 21" />
-                                  <polyline points="7 3 7 8 15 8" />
-                                </svg>
-                                Save
-                              </>
-                            )}
-                          </button>
-                        </div>
-
-                        {providerKeys[selectedProvider]?.exists && (
-                          <p className="key-replace-hint">
-                            ⚠ {PROVIDERS[selectedProvider]?.name} already has a key configured. Saving will replace it.
-                          </p>
-                        )}
-
-                        {keyMessage && (
-                          <p className={`key-message ${keyMessage.includes('Error') ? 'error' : 'success'}`}>
-                            {keyMessage}
-                          </p>
-                        )}
-                      </div>
-
-                      {/* ── Security Info ── */}
-                      <div className="security-info">
-                        <h3>Security Architecture</h3>
-                        <div className="security-grid">
-                          <div className="security-item">
-                            <span className="security-badge">🔐</span>
-                            <div>
-                              <strong>Encrypted at Rest</strong>
-                              <p>safeStorage.encryptString() → OS credential manager</p>
-                            </div>
-                          </div>
-                          <div className="security-item">
-                            <span className="security-badge">🛡️</span>
-                            <div>
-                              <strong>Isolated from Renderer</strong>
-                              <p>Key never crosses the contextBridge — stays in Node.js memory</p>
-                            </div>
-                          </div>
-                          <div className="security-item">
-                            <span className="security-badge">🔒</span>
-                            <div>
-                              <strong>Context Isolation</strong>
-                              <p>contextIsolation: true · nodeIntegration: false</p>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* ── AI Auto-Complete Settings ── */}
-                      <div className="security-info" style={{ marginTop: '24px' }}>
-                        <h3>✨ AI Auto-Complete</h3>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '12px' }}>
-                          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                            <input
-                              type="checkbox"
-                              checked={autoCompleteEnabled}
-                              onChange={e => setAutoCompleteEnabled(e.target.checked)}
-                            />
-                            Enable Inline Auto-Complete (Ghost Text)
-                          </label>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                            <label style={{ fontSize: '0.9rem', display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)' }}>
-                              <span>Trigger Delay (Speed)</span>
-                              <span>{autoCompleteDelay}ms</span>
-                            </label>
-                            <input
-                              type="range"
-                              min="100"
-                              max="2000"
-                              step="100"
-                              value={autoCompleteDelay}
-                              onChange={e => setAutoCompleteDelay(Number(e.target.value))}
-                              style={{ cursor: 'pointer' }}
-                            />
-                            <small style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Lower delay = faster suggestions (uses more API calls)</small>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
+                
               </div>
             </>
           )}

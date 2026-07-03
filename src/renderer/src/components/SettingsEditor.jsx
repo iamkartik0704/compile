@@ -2,12 +2,18 @@ import React, { useState, useEffect } from 'react'
 import { Search, ChevronRight, Wand2, Filter, Settings2, SearchX } from 'lucide-react'
 import { useAppStore } from '../store/appStore'
 import '../assets/settings.css'
+import { AIAgentSettings } from './AIAgentSettings'
+import { AuthPanel } from './AuthPanel'
+import { supabase } from '../lib/supabase'
+import { collectLocalSettings, pullFromCloud, syncToCloud, mergeSettings, applySettingsLocally } from '../services/settingsSyncService'
+
 
 const CATEGORIES = [
   { id: 'text-editor', label: 'Text Editor' },
   { id: 'workbench', label: 'Workbench' },
   { id: 'features', label: 'Features' },
-  { id: 'extensions', label: 'Extensions' }
+  { id: 'extensions', label: 'Extensions' },
+  { id: 'ai-agent', label: 'AI Agent' }
 ]
 
 export function SettingsEditor() {
@@ -15,6 +21,77 @@ export function SettingsEditor() {
   const [activeCategory, setActiveCategory] = useState('text-editor')
   const [searchQuery, setSearchQuery] = useState('')
   const [activeTab, setActiveTab] = useState('user')
+  const [syncStatus, setSyncStatus] = useState('idle') // idle, syncing, success, error
+  const [showAuth, setShowAuth] = useState(false)
+  const [syncConflict, setSyncConflict] = useState(null) // { local, remote }
+
+  const handleSyncSettings = async () => {
+    try {
+      setSyncStatus('syncing')
+      
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        setSyncStatus('idle')
+        setShowAuth(true)
+        return
+      }
+
+      // 1. Collect local settings
+      const localSettings = await collectLocalSettings()
+      
+      // 2. Fetch remote settings
+      let remoteSettings = null
+      try {
+        remoteSettings = await pullFromCloud()
+      } catch (err) {
+        console.warn('Could not pull from cloud, will treat as empty', err)
+      }
+
+      // 3. Merge logic
+      if (remoteSettings) {
+        const { action, merged } = mergeSettings(localSettings, remoteSettings)
+        if (action === 'prompt_conflict') {
+          setSyncConflict({ local: localSettings, remote: remoteSettings })
+          setSyncStatus('idle')
+          return
+        } else if (action === 'apply_remote') {
+          applySettingsLocally(merged)
+          setSyncStatus('success')
+          setTimeout(() => setSyncStatus('idle'), 2000)
+          return
+        }
+      }
+
+      // 4. Push to cloud (if remote is older, missing, or just no conflict)
+      await syncToCloud(localSettings)
+      setSyncStatus('success')
+      setTimeout(() => setSyncStatus('idle'), 2000)
+
+    } catch (err) {
+      console.error('Sync failed:', err)
+      setSyncStatus('error')
+    }
+  }
+
+  const resolveConflict = async (resolution) => {
+    if (!syncConflict) return
+    try {
+      setSyncStatus('syncing')
+      setSyncConflict(null)
+      if (resolution === 'remote') {
+        applySettingsLocally(syncConflict.remote)
+        setSyncStatus('success')
+      } else {
+        await syncToCloud(syncConflict.local)
+        setSyncStatus('success')
+      }
+      setTimeout(() => setSyncStatus('idle'), 2000)
+    } catch (err) {
+      console.error('Conflict resolution sync failed:', err)
+      setSyncStatus('error')
+    }
+  }
+
 
   // Local settings state (persisted via localStorage)
   const [fontSize, setFontSize] = useState(() => parseInt(localStorage.getItem('editor-fontSize') || '14'))
@@ -249,6 +326,18 @@ export function SettingsEditor() {
     'extensions': []
   }
 
+
+  useEffect(() => {
+    const handleOpenSettings = (e) => {
+      if (e.detail) {
+        setActiveCategory(e.detail)
+        setSearchQuery('')
+      }
+    }
+    window.addEventListener('open-settings', handleOpenSettings)
+    return () => window.removeEventListener('open-settings', handleOpenSettings)
+  }, [])
+
   // Listen for external settings changes (from keyboard shortcuts, footer toggle, etc.)
   useEffect(() => {
     const handleExternal = (e) => {
@@ -391,7 +480,18 @@ export function SettingsEditor() {
             Workspace
           </div>
         </div>
-        <button className="settings-sync-btn">Backup and Sync Settings</button>
+        
+        <button 
+          className={`settings-sync-btn ${syncStatus}`}
+          onClick={handleSyncSettings}
+          disabled={syncStatus === 'syncing'}
+        >
+          {syncStatus === 'syncing' ? 'Syncing...' :
+           syncStatus === 'success' ? 'Synced ✓' :
+           syncStatus === 'error' ? 'Sync failed — retry' :
+           'Backup and Sync Settings'}
+        </button>
+
       </div>
 
       {/* Main Layout */}
@@ -413,7 +513,9 @@ export function SettingsEditor() {
         <div className="settings-content">
           <h2 className="settings-section-title">{activeCategoryLabel}</h2>
 
-          {filteredSettings.length === 0 ? (
+          {activeCategory === 'ai-agent' ? (
+            <AIAgentSettings />
+          ) : filteredSettings.length === 0 ? (
             <div className="settings-empty">
               <SearchX size={18} />
               {searchQuery ? 'No settings found matching your search.' : 'No settings in this category yet.'}
@@ -423,6 +525,30 @@ export function SettingsEditor() {
           )}
         </div>
       </div>
+
+      {/* Auth Modal */}
+      {showAuth && (
+        <div className="settings-modal-overlay">
+          <div className="settings-modal-content">
+            <button className="settings-modal-close" onClick={() => setShowAuth(false)}>×</button>
+            <AuthPanel />
+          </div>
+        </div>
+      )}
+
+      {/* Conflict Modal */}
+      {syncConflict && (
+        <div className="settings-modal-overlay">
+          <div className="settings-modal-content conflict-modal">
+            <h3>Sync Conflict</h3>
+            <p>Your local settings were modified more recently than the cloud version.</p>
+            <div className="conflict-actions">
+              <button className="conflict-btn primary" onClick={() => resolveConflict('local')}>Overwrite Cloud</button>
+              <button className="conflict-btn secondary" onClick={() => resolveConflict('remote')}>Keep Cloud Version</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
