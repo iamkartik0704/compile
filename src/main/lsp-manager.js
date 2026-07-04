@@ -2,7 +2,45 @@ import { spawn } from 'child_process'
 import { ipcMain } from 'electron'
 import { LSP_REGISTRY } from './lsp-config.js'
 import { detectCppCompilers, getCompilerConfig, saveCompilerConfig, validateHostToolchain, getMacOsSdkPath, getResolvedQueryDriverArg, clearToolchainCache } from './compiler-detection.js'
+import fs from 'fs'
+import path from 'path'
+import url from 'url'
 
+const normalizeCanonicalPath = (filePath) => {
+  if (!filePath || typeof filePath !== 'string') return '';
+  let cleaned = filePath;
+  try {
+    cleaned = decodeURIComponent(filePath);
+  } catch (e) {
+    cleaned = filePath;
+  }
+  return cleaned
+    .replace(/^file:\/\/\//i, '')
+    .replace(/^file:\/\//i, '')
+    .replace(/\\/g, '/')
+    .replace(/\/$/, '')
+    .toLowerCase()
+    .trim();
+};
+
+const diagnosticCache = new Map();
+
+const uriToPath = (uri) => {
+  if (!uri) return ''
+  let p = uri.replace(/^file:\/\//, '')
+  if (process.platform === 'win32' && p.match(/^\/[a-zA-Z]:\//)) {
+    p = p.substring(1)
+  }
+  return path.normalize(p)
+}
+
+const pathToUri = (p) => {
+  if (!p) return ''
+  let formatted = p.replace(/\\/g, '/')
+  if (!formatted.startsWith('/')) formatted = '/' + formatted
+  formatted = formatted.replace(/^\/([A-Z]):\//, (match, drive) => `/${drive.toLowerCase()}:/`)
+  return `file://${formatted}`
+}
 // Map to track running language servers: { language: { process, buffer, status } }
 const lspProcesses = new Map()
 
@@ -45,11 +83,25 @@ function parseAndForwardMessages(language, entry, onMessage, setStatus) {
 
     try {
       const message = JSON.parse(messageBuffer.toString('utf8'))
-      if (onMessage) onMessage(message)
-      else sendToWindow('lsp-server-message', { language, message })
       
-      if (setStatus && entry.status === 'starting') {
-        setStatus('ready')
+      if (entry.status === 'starting' && message.id === entry.initId) {
+        sendToLanguageServer(language, { jsonrpc: '2.0', method: 'initialized', params: {} })
+        if (setStatus) setStatus('ready')
+        if (entry.requestQueue && entry.requestQueue.length > 0) {
+          for (const req of entry.requestQueue) {
+            sendToLanguageServer(language, req)
+          }
+          entry.requestQueue = []
+        }
+      } else {
+        if (message.method === 'textDocument/publishDiagnostics' && message.params && message.params.uri) {
+          const filePath = uriToPath(message.params.uri)
+          const canonicalPath = normalizeCanonicalPath(filePath)
+          diagnosticCache.set(canonicalPath, message.params.diagnostics || [])
+          sendToWindow('lsp:diagnostics', { filePath: canonicalPath, diagnostics: message.params.diagnostics || [] })
+        }
+        if (onMessage) onMessage(message)
+        else sendToWindow('lsp-server-message', { language, message })
       }
     } catch (e) {
       console.error(`[LSP ${language}] JSON parse error:`, e)
@@ -58,7 +110,7 @@ function parseAndForwardMessages(language, entry, onMessage, setStatus) {
   entry.buffer = buffer
 }
 
-export async function startLanguageServer(language, onMessage, onError, onStatusChange) {
+export async function startLanguageServer(language, rootUri = null, onMessage, onError, onStatusChange) {
   if (lspProcesses.has(language)) {
     const entry = lspProcesses.get(language)
     if (entry.status === 'starting' || entry.status === 'ready') {
@@ -94,8 +146,16 @@ export async function startLanguageServer(language, onMessage, onError, onStatus
       return { success: false, error: validation.error }
     }
     
-    // Explicitly inject --query-driver dynamically
-    args = [await getResolvedQueryDriverArg()]
+    // Industrial-grade command-line flags for clangd
+    args = [
+      '--background-index',
+      '--clang-tidy',
+      '--suggest-missing-includes',
+      '--completion-style=detailed',
+      '--header-insertion=iwyu',
+      '--fallback-style=llvm',
+      '--query-driver=**/*'
+    ]
     
     // Sandbox environment for macOS
     if (process.platform === 'darwin') {
@@ -115,9 +175,29 @@ export async function startLanguageServer(language, onMessage, onError, onStatus
       env: spawnEnv
     })
 
-    const entry = { process: child, buffer: Buffer.alloc(0), status: 'starting' }
+    const entry = { process: child, buffer: Buffer.alloc(0), status: 'starting', requestQueue: [], initId: 1, openDocs: new Map() }
     lspProcesses.set(language, entry)
     setStatus('starting')
+
+    sendToLanguageServer(language, {
+      jsonrpc: '2.0',
+      id: entry.initId,
+      method: 'initialize',
+      params: {
+        processId: process.pid,
+        rootUri: rootUri,
+        capabilities: {
+          textDocument: {
+            completion: { completionItem: { snippetSupport: false, labelDetailsSupport: true }, contextSupport: true },
+            hover: { contentFormat: ['markdown', 'plaintext'] },
+            publishDiagnostics: { relatedInformation: true },
+            synchronization: { didSave: true, willSave: false, willSaveWaitUntil: false, dynamicRegistration: false }
+          },
+          workspace: {}
+        },
+        initializationOptions: {}
+      }
+    })
 
     child.on('error', (err) => {
       console.error(`[LSP ${language}] Process error:`, err)
@@ -201,11 +281,102 @@ export function setupLspIpcHandlers() {
   })
 
   ipcMain.on('lsp-client-message', (_event, { language, message }) => {
-    sendToLanguageServer(language, JSON.parse(message))
+    const entry = lspProcesses.get(language)
+    const parsed = JSON.parse(message)
+    if (entry && entry.status === 'starting') {
+      entry.requestQueue.push(parsed)
+    } else {
+      sendToLanguageServer(language, parsed)
+    }
+  })
+
+  ipcMain.on('lsp:document-open', async (event, { filePath, text, languageId }) => {
+    if (!filePath) return
+    const language = languageId || 'plaintext' // fallback
+    
+    if (language === 'cpp' || language === 'c') {
+      const validation = await validateHostToolchain()
+      if (!validation.success) {
+        if (event && event.sender && !event.sender.isDestroyed()) {
+          event.sender.send('show-missing-toolchain-modal', validation)
+        }
+        return
+      }
+    }
+
+    let actualText = text
+    if (!actualText || actualText.trim() === '') {
+      try {
+        if (fs.existsSync(filePath)) {
+          actualText = fs.readFileSync(filePath, 'utf8')
+          console.log(`[LSP Manager] Empty buffer intercepted. Read ${actualText.length} bytes directly from disk for: ${filePath}`)
+        }
+      } catch (e) {
+        console.error(`[LSP Manager] Disk read fallback failed for ${filePath}:`, e)
+        return
+      }
+    }
+
+    const uri = pathToUri(filePath)
+    const msg = {
+      jsonrpc: '2.0',
+      method: 'textDocument/didOpen',
+      params: {
+        textDocument: { uri, languageId: language, version: 1, text: actualText }
+      }
+    }
+
+    let entry = lspProcesses.get(language)
+    if (!entry) {
+      let rootUri = null
+      const parts = filePath.replace(/\\/g, '/').split('/')
+      parts.pop()
+      rootUri = pathToUri(parts.join('/'))
+      await startLanguageServer(language, rootUri)
+      entry = lspProcesses.get(language)
+    }
+
+    if (entry) {
+      entry.openDocs.set(uri, 1)
+      if (entry.status === 'starting') {
+        entry.requestQueue.push(msg)
+      } else {
+        sendToLanguageServer(language, msg)
+      }
+    }
+  })
+
+  ipcMain.on('lsp:document-close', (_event, { filePath, languageId }) => {
+    if (!filePath) return
+    const language = languageId || 'plaintext'
+    const entry = lspProcesses.get(language)
+    
+    const canonicalKey = normalizeCanonicalPath(filePath);
+    diagnosticCache.delete(canonicalKey);
+    
+    if (entry) {
+      const uri = pathToUri(filePath)
+      entry.openDocs.delete(uri)
+      const msg = {
+        jsonrpc: '2.0',
+        method: 'textDocument/didClose',
+        params: { textDocument: { uri } }
+      }
+      if (entry.status === 'starting') {
+        entry.requestQueue.push(msg)
+      } else {
+        sendToLanguageServer(language, msg)
+      }
+    }
   })
 
   ipcMain.handle('lsp-status', (_event, language) => {
     return getLanguageServerStatusForLanguage(language)
+  })
+
+  ipcMain.handle('lsp:get-cached-diagnostics', async (_event, { filePath }) => {
+    const canonicalKey = normalizeCanonicalPath(filePath);
+    return diagnosticCache.get(canonicalKey) || []
   })
 
   ipcMain.handle('list-available-lsp', () => {

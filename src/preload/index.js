@@ -13,6 +13,8 @@ const api = {
   maximizeWindow: () => ipcRenderer.invoke('window-maximize-toggle'),
   closeWindow: () => ipcRenderer.invoke('window-close'),
   newWindow: () => ipcRenderer.invoke('create-new-window'),
+  send: (channel, data) => ipcRenderer.send(channel, data),
+  invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
 
   // ── File Operations ──
 
@@ -53,6 +55,14 @@ const api = {
   setCppCompiler: (config) => ipcRenderer.invoke('lsp:set-cpp-compiler', config),
   ensureCompilationDb: (args) => ipcRenderer.invoke('lsp:ensure-compilation-db', args),
   recheckToolchainStatus: (language) => ipcRenderer.invoke('lsp:recheck-toolchain-status', language),
+
+  onLspDiagnostics: (callback) => {
+    ipcRenderer.removeAllListeners('lsp:diagnostics')
+    ipcRenderer.on('lsp:diagnostics', (_event, data) => callback(data))
+  },
+  removeLspDiagnostics: () => {
+    ipcRenderer.removeAllListeners('lsp:diagnostics')
+  },
 
   onLspMessage: (callback) => {
     ipcRenderer.removeAllListeners('lsp-server-message')

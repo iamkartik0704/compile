@@ -90,8 +90,8 @@ class LspClient {
     this.requestId = 0
     this.pendingRequests = new Map()
     this.onDiagnostics = null
+    this.onDiagnostics = null
     this.initialized = false
-    this.openDocVersions = new Map()
   }
 
   // Called by the global message dispatcher
@@ -131,50 +131,10 @@ class LspClient {
     window.api.sendLspMessage(this.language, JSON.stringify(msg))
   }
 
-  async initialize(rootUri) {
-    const result = await this.sendRequest('initialize', {
-      processId: null,
-      rootUri,
-      capabilities: {
-        textDocument: {
-          completion: {
-            completionItem: { snippetSupport: false, labelDetailsSupport: true },
-            contextSupport: true
-          },
-          hover: { contentFormat: ['markdown', 'plaintext'] },
-          publishDiagnostics: { relatedInformation: true },
-          synchronization: { didSave: true, willSave: false, willSaveWaitUntil: false, dynamicRegistration: false }
-        },
-        workspace: {}
-      },
-      initializationOptions: {}
-    })
-    this.sendNotification('initialized', {})
-    this.initialized = true
-    console.log(`LSP [${this.language}] initialized.`)
-    return result
-  }
-
-  didOpen(uri, languageId, text) {
-    this.openDocVersions.set(uri, 1)
-    this.sendNotification('textDocument/didOpen', {
-      textDocument: { uri, languageId, version: 1, text }
-    })
-  }
-
-  didChange(uri, text) {
-    const version = (this.openDocVersions.get(uri) || 1) + 1
-    this.openDocVersions.set(uri, version)
+  didChange(uri, text, version) {
     this.sendNotification('textDocument/didChange', {
       textDocument: { uri, version },
       contentChanges: [{ text }]
-    })
-  }
-
-  didClose(uri) {
-    this.openDocVersions.delete(uri)
-    this.sendNotification('textDocument/didClose', {
-      textDocument: { uri }
     })
   }
 
@@ -569,6 +529,84 @@ const EditorTab = ({ file, isActive, isDragging, onDragStart, onDragOver, onDrop
   )
 }
 
+const findMonacoModel = (targetFilePath) => {
+  if (!targetFilePath || !window.monaco || !window.monaco.editor) return null;
+  
+  // Universal URL-decoding and path cleaning utility
+  const clean = (str) => {
+    if (!str || typeof str !== 'string') return '';
+    let decoded = str;
+    try {
+      decoded = decodeURIComponent(str);
+    } catch (e) {
+      decoded = str;
+    }
+    return decoded
+      .replace(/^file:\/\/\//i, '')
+      .replace(/^file:\/\//i, '')
+      .replace(/\\/g, '/')
+      .replace(/\/$/, '')
+      .toLowerCase()
+      .trim();
+  };
+
+  const targetClean = clean(targetFilePath);
+  const allModels = window.monaco.editor.getModels();
+
+  // 🔍 THE DIAGNOSTIC X-RAY: Log all open models in RAM so we can see exactly what Monaco is holding
+  const availableModelPaths = allModels.map(m => ({
+    fsPath: m.uri.fsPath,
+    path: m.uri.path,
+    str: m.uri.toString()
+  }));
+  console.log(`[Monaco X-Ray] Seeking: "${targetClean}" | Active Models in RAM (${allModels.length}):`, availableModelPaths);
+
+  // Perform ultra-fuzzy matching across all three Monaco URI properties
+  return allModels.find((model) => {
+    const u = model.uri;
+    const candidate1 = clean(u.fsPath);
+    const candidate2 = clean(u.path);
+    const candidate3 = clean(u.toString());
+
+    // Check exact match or boundary ending match across any of the three properties
+    return candidate1 === targetClean || candidate2 === targetClean || candidate3 === targetClean ||
+           candidate1.endsWith(targetClean) || candidate2.endsWith(targetClean) || candidate3.endsWith(targetClean) ||
+           targetClean.endsWith(candidate1) || targetClean.endsWith(candidate2) || targetClean.endsWith(candidate3);
+  });
+};
+
+const formatLspDiagnosticsToMonaco = (diagnostics) => {
+  if (!Array.isArray(diagnostics)) return [];
+
+  return diagnostics.map((diag) => {
+    const range = diag.range || {};
+    const start = range.start || { line: 0, character: 0 };
+    const end = range.end || { line: start.line, character: start.character + 1 };
+
+    // DEFENSIVE MATH: LSP is 0-indexed; Monaco strictly mandates >= 1 integers.
+    const startLineNumber = Math.max(1, Math.floor((typeof start.line === 'number' ? start.line : 0) + 1));
+    const startColumn = Math.max(1, Math.floor((typeof start.character === 'number' ? start.character : 0) + 1));
+    const endLineNumber = Math.max(1, Math.floor((typeof end.line === 'number' ? end.line : startLineNumber - 1) + 1));
+    const endColumn = Math.max(1, Math.floor((typeof end.character === 'number' ? end.character : startColumn) + 1));
+
+    // Map LSP severity integers (1=Error, 2=Warning, 3=Info, 4=Hint) to Monaco severities
+    let monacoSeverity = window.monaco ? window.monaco.MarkerSeverity.Error : 8;
+    if (diag.severity === 2) monacoSeverity = window.monaco ? window.monaco.MarkerSeverity.Warning : 4;
+    if (diag.severity === 3) monacoSeverity = window.monaco ? window.monaco.MarkerSeverity.Info : 2;
+    if (diag.severity === 4) monacoSeverity = window.monaco ? window.monaco.MarkerSeverity.Hint : 1;
+
+    return {
+      severity: monacoSeverity,
+      startLineNumber: startLineNumber,
+      startColumn: startColumn,
+      endLineNumber: endLineNumber,
+      endColumn: endColumn,
+      message: diag.message || 'Syntax Error',
+      source: diag.source || 'clangd'
+    };
+  });
+};
+
 // ─── Component ─────────────────────────────────────────────────────
 export const CodeEditor = ({
   openFiles,
@@ -671,6 +709,15 @@ export const CodeEditor = ({
   const [editorContextMenu, setEditorContextMenu] = useState(null)
   const [showContextInspector, setShowContextInspector] = useState(false)
   const editorRef = useRef(null)
+  const pendingDiagnosticsRef = useRef(null)
+  const coldBootTimerRef = useRef(null)
+
+  useEffect(() => {
+    return () => {
+      if (coldBootTimerRef.current) clearTimeout(coldBootTimerRef.current)
+    }
+  }, [])
+
   // Accumulator for smooth trackpad pinch
   const accumulatedDeltaRef = useRef(0)
   
@@ -746,6 +793,47 @@ export const CodeEditor = ({
   useEffect(() => {
     globalFileContents = fileContents
   }, [fileContents])
+
+  useEffect(() => {
+    if (editorRef.current && activeFile && fileContents && fileContents[activeFile]?.content?.trim() !== '') {
+      // Small 50ms debounce guarantees Monaco's internal .setValue() finishes before we re-apply markers
+      const restoreTimer = setTimeout(() => {
+        restoreCachedDiagnostics(activeFile);
+      }, 50);
+      return () => clearTimeout(restoreTimer);
+    }
+  }, [fileContents, activeFile]);
+
+  useEffect(() => {
+    const handleLiveDiagnostics = ({ filePath, diagnostics }) => {
+      // Ignore live IPC diagnostics for JS/TS if Monaco native workers are managing them
+      if (filePath.endsWith('.js') || filePath.endsWith('.ts')) return;
+
+      console.log(`[Live IPC Receiver] Received ${diagnostics ? diagnostics.length : 0} diagnostics for: ${filePath}`);
+
+      const targetModel = findMonacoModel(filePath);
+      if (targetModel) {
+        console.log(`[Live IPC Receiver] ✅ MATCHED MODEL! Injecting ${diagnostics ? diagnostics.length : 0} markers into: ${targetModel.uri.toString()}`);
+        const formattedMarkers = formatLspDiagnosticsToMonaco(diagnostics);
+        window.monaco.editor.setModelMarkers(targetModel, 'backend-lsp-engine', formattedMarkers);
+
+        if (editorRef.current && editorRef.current.getModel() === targetModel) {
+          requestAnimationFrame(() => editorRef.current.layout());
+        }
+      } else {
+        console.warn(`[Live IPC Receiver] ❌ FAILED MATCH for: ${filePath}`);
+      }
+    };
+
+    if (window.api && window.api.onLspDiagnostics) {
+      window.api.onLspDiagnostics(handleLiveDiagnostics);
+    }
+    return () => {
+      if (window.api && window.api.removeLspDiagnostics) {
+        window.api.removeLspDiagnostics(handleLiveDiagnostics);
+      }
+    }
+  }, []);
 
   useEffect(() => {
     globalActiveFile = activeFile
@@ -943,115 +1031,108 @@ export const CodeEditor = ({
 
   // ─── LSP lifecycle (multi-language) ──────────────────────────
   useEffect(() => {
+    if (!activeFile) return
     const monacoLang = getLanguageFromPath(activeFile)
     const lspKey = lspLanguageKey(monacoLang)
     if (!lspKey) return // No LSP for this language (e.g. html, json — Monaco handles those natively)
 
-    const fileUri = pathToUri(activeFile)
-
     installGlobalIpcListener()
 
-    const bootLsp = async () => {
-      // For C/C++, make sure the compilation database entry for
-      // this exact file is on disk BEFORE we send didOpen. If we
-      // race clangd here it will parse the file with default
-      // flags, cache the diagnostics, and keep serving stale
-      // errors until the next edit — which is the classic
-      // "correct code shows red squiggles" symptom.
-      if (
-        (lspKey === 'c' || lspKey === 'cpp') &&
-        projectRoot &&
-        window.api?.ensureCompilationDb
-      ) {
-        try {
-          await window.api.ensureCompilationDb({
-            filepath: activeFile,
-            workspaceRoot: projectRoot
-          })
-        } catch (err) {
-          console.error('Failed to ensure compilation db:', err)
-        }
-      }
+    if (!lspClients.has(lspKey)) {
+      const client = new LspClient(lspKey)
+      client.initialized = true // backend owns initialize handshake now
+      lspClients.set(lspKey, client)
 
-      if (!lspClients.has(lspKey)) {
-        const res = await window.api.startLanguageServer(lspKey)
-        if (!res.success) {
-          console.warn(`No LSP available for ${lspKey}: ${res.error}`)
-          return
-        }
-
-        const client = new LspClient(lspKey)
-        lspClients.set(lspKey, client)
-
-        // Wire diagnostics to Monaco markers AND to the central
-        // diagnostics store so the sidebar / tabs can render error
-        // counts even for files the user hasn't opened yet.
-        client.onDiagnostics = (params) => {
-          const markers = (params.diagnostics || []).map(d => ({
-            severity: severityMap[d.severity] || monaco.MarkerSeverity.Error,
+      // Wire diagnostics to Monaco markers AND to the central
+      // diagnostics store so the sidebar / tabs can render error
+      // counts even for files the user hasn't opened yet.
+      client.onDiagnostics = (params) => {
+        // Markers are managed globally by handleLiveDiagnostics now.
+        // We only feed the diagnostics store here for sidebar counts.
+        useDiagnosticsStore.getState().setDiagnostics(
+          params.uri,
+          `lsp-${lspKey}`,
+          (params.diagnostics || []).map(d => ({
+            severity: lspSeverityToString(d.severity),
             message: d.message,
-            startLineNumber: d.range.start.line + 1,
-            startColumn: d.range.start.character + 1,
-            endLineNumber: d.range.end.line + 1,
-            endColumn: d.range.end.character + 1,
+            line: (d.range?.start?.line ?? 0) + 1,
+            column: (d.range?.start?.character ?? 0) + 1,
             source: d.source || lspKey
           }))
-
-          const targetUri = monaco.Uri.parse(params.uri).toString().toLowerCase()
-          const models = monaco.editor.getModels()
-          const model = models.find(m => m.uri.toString().toLowerCase() === targetUri)
-          if (model) {
-            monaco.editor.setModelMarkers(model, lspKey, markers)
-          }
-
-          // Feed the workspace-wide diagnostics store — this is
-          // what powers the badges next to filenames in the tree
-          // and tab strip. It works whether or not the file is
-          // currently visible in an editor.
-          useDiagnosticsStore.getState().setDiagnostics(
-            params.uri,
-            `lsp-${lspKey}`,
-            (params.diagnostics || []).map(d => ({
-              severity: lspSeverityToString(d.severity),
-              message: d.message,
-              line: (d.range?.start?.line ?? 0) + 1,
-              column: (d.range?.start?.character ?? 0) + 1,
-              source: d.source || lspKey
-            }))
-          )
-        }
-
-        // Determine workspace root — prefer the actual project root
-        // over the file's directory so LSPs like typescript-language-server
-        // and pyright can find tsconfig.json / pyproject.toml.
-        let rootUri
-        if (projectRoot) {
-          rootUri = pathToUri(projectRoot)
-        } else {
-          const parts = activeFile.replace(/\\/g, '/').split('/')
-          parts.pop()
-          rootUri = pathToUri(parts.join('/'))
-        }
-
-        await client.initialize(rootUri)
-        registerProvidersForLanguage(monacoLang)
+        )
       }
 
-      // Tell the LSP about the open document
-      const content = fileContents[activeFile]?.content || currentValue || ''
-      const client = lspClients.get(lspKey)
-      if (client && client.initialized) {
-        client.didOpen(fileUri, monacoLang, content)
-      }
+      registerProvidersForLanguage(monacoLang)
     }
 
-    bootLsp()
+    const content = fileContents[activeFile]?.content || currentValue || ''
+    
+    // Trigger immediate backend sync on tab open
+    window.api.send('lsp:document-open', {
+      filePath: activeFile,
+      text: content,
+      languageId: lspKey
+    })
+
+    // Immediately attempt to pull existing diagnostics
+    restoreCachedDiagnostics(activeFile);
+
+    // If opening a C/C++ file, spin up an adaptive poller to catch delayed heavy header compilation
+    if (activeFile.endsWith('.cpp') || activeFile.endsWith('.c') || activeFile.endsWith('.h')) {
+      let attempts = 0;
+      const maxAttempts = 10; // Poll every 2s for up to 20s total
+
+      const adaptivePoller = setInterval(async () => {
+        attempts++;
+        if (!editorRef.current) {
+          clearInterval(adaptivePoller);
+          return;
+        }
+
+        const targetModel = findMonacoModel(activeFile);
+        if (!targetModel) return;
+
+        // Check if markers are currently rendered on this model
+        const currentMarkers = window.monaco.editor.getModelMarkers({ resource: targetModel.uri });
+
+        // If markers are found, our job is done! Cancel the poller immediately.
+        if (currentMarkers && currentMarkers.length > 0) {
+          console.log(`[Adaptive Poller] Diagnostics detected on attempt ${attempts}. Shutting down poller.`);
+          clearInterval(adaptivePoller);
+          return;
+        }
+
+        // Otherwise, pull from backend cache in case live IPC broadcast was missed during mount
+        try {
+          const cached = await window.api.invoke('lsp:get-cached-diagnostics', { filePath: activeFile });
+          if (cached && cached.length > 0) {
+            console.log(`[Adaptive Poller] Caught delayed C++ diagnostics on attempt ${attempts}! Applying ${cached.length} markers.`);
+            const formatted = formatLspDiagnosticsToMonaco(cached);
+            window.monaco.editor.setModelMarkers(targetModel, 'backend-lsp-engine', formatted);
+            requestAnimationFrame(() => editorRef.current.layout());
+            clearInterval(adaptivePoller);
+          }
+        } catch (err) {
+          console.error('[Adaptive Poller] Cache pull error:', err);
+        }
+
+        // Stop polling after 20 seconds to prevent background CPU cycles
+        if (attempts >= maxAttempts) {
+          console.log('[Adaptive Poller] Max attempts reached. Ending polling cycle.');
+          clearInterval(adaptivePoller);
+        }
+      }, 2000);
+
+      return () => {
+        clearInterval(adaptivePoller);
+        // Intentionally omitted: we do not emit 'lsp:document-close' on tab switch 
+        // so the language server keeps the AST and diagnostics in RAM.
+      };
+    }
 
     return () => {
-      const client = lspClients.get(lspKey)
-      if (client) {
-        client.didClose(fileUri)
-      }
+      // Intentionally omitted: we do not emit 'lsp:document-close' on tab switch 
+      // so the language server keeps the AST and diagnostics in RAM.
     }
   }, [activeFile])
 
@@ -1211,7 +1292,9 @@ export const CodeEditor = ({
 
       // Update LSP server on type
       editor.onDidChangeModelContent(() => {
-        client.didChange(uri, editor.getValue())
+        const activeModel = editor.getModel()
+        const version = activeModel ? activeModel.getVersionId() : 1
+        client.didChange(uri, editor.getValue(), version)
 
         // Clear active AI edit if the user starts typing manually
         if (hasActiveAiEdit) {
@@ -1355,6 +1438,11 @@ export const CodeEditor = ({
       jsx: monacoInstance.languages.typescript.JsxEmit.React
     })
 
+    monacoInstance.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
+      noSemanticValidation: false,
+      noSyntaxValidation: false,
+    })
+
     monacoInstance.languages.typescript.typescriptDefaults.setCompilerOptions({
       target: monacoInstance.languages.typescript.ScriptTarget.ESNext,
       allowNonTsExtensions: true,
@@ -1367,8 +1455,34 @@ export const CodeEditor = ({
     })
   }
 
+  const restoreCachedDiagnostics = async (filePath) => {
+    if (!filePath || !window.monaco) return;
+    try {
+      const cachedDiagnostics = await window.api.invoke('lsp:get-cached-diagnostics', { filePath });
+      if (!cachedDiagnostics || cachedDiagnostics.length === 0) return;
+
+      const targetModel = findMonacoModel(filePath);
+      if (targetModel) {
+        const formattedMarkers = formatLspDiagnosticsToMonaco(cachedDiagnostics);
+        window.monaco.editor.setModelMarkers(targetModel, 'backend-lsp-engine', formattedMarkers);
+
+        // If this model is currently active in the editor widget, force an immediate visual layout update
+        if (editorRef.current && editorRef.current.getModel() === targetModel) {
+          requestAnimationFrame(() => editorRef.current.layout());
+        }
+      }
+    } catch (err) {
+      console.error('[Frontend] Diagnostic restoration failed:', err);
+    }
+  };
+
   const handleEditorDidMountWrapper = (editor, monacoInstance) => {
+    editorRef.current = editor
     monacoRef.current = monacoInstance
+    
+    editor.onDidChangeModel(() => {
+      if (activeFile) restoreCachedDiagnostics(activeFile);
+    });
     
     editor.onContextMenu((e) => {
       e.event.preventDefault()
