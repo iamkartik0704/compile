@@ -1,6 +1,7 @@
 import { spawn } from 'child_process'
 import { ipcMain } from 'electron'
 import { LSP_REGISTRY } from './lsp-config.js'
+import { detectCppCompilers, getCompilerConfig, saveCompilerConfig, validateHostToolchain, getMacOsSdkPath, getResolvedQueryDriverArg, clearToolchainCache } from './compiler-detection.js'
 
 // Map to track running language servers: { language: { process, buffer, status } }
 const lspProcesses = new Map()
@@ -57,7 +58,7 @@ function parseAndForwardMessages(language, entry, onMessage, setStatus) {
   entry.buffer = buffer
 }
 
-export function startLanguageServer(language, onMessage, onError, onStatusChange) {
+export async function startLanguageServer(language, onMessage, onError, onStatusChange) {
   if (lspProcesses.has(language)) {
     const entry = lspProcesses.get(language)
     if (entry.status === 'starting' || entry.status === 'ready') {
@@ -82,13 +83,36 @@ export function startLanguageServer(language, onMessage, onError, onStatusChange
     }
   }
 
-  const { command, args } = config
+  let { command, args } = config
+
+  // Pre-flight Validation for C/C++
+  let spawnEnv = { ...process.env };
+  if (language === 'cpp' || language === 'c') {
+    const validation = await validateHostToolchain()
+    if (!validation.success) {
+      sendToWindow('show-missing-toolchain-modal', validation)
+      return { success: false, error: validation.error }
+    }
+    
+    // Explicitly inject --query-driver dynamically
+    args = [await getResolvedQueryDriverArg()]
+    
+    // Sandbox environment for macOS
+    if (process.platform === 'darwin') {
+      const sdkPath = await getMacOsSdkPath()
+      if (sdkPath) {
+        spawnEnv.SDKROOT = sdkPath
+      }
+    }
+  }
+
   console.log(`[LSP] Starting ${language}: ${command} ${args.join(' ')}`)
 
   try {
     const child = spawn(command, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      shell: process.platform === 'win32'
+      shell: process.platform === 'win32',
+      env: spawnEnv
     })
 
     const entry = { process: child, buffer: Buffer.alloc(0), status: 'starting' }
@@ -131,17 +155,26 @@ export function startLanguageServer(language, onMessage, onError, onStatusChange
 }
 
 export function killLanguageServer(language) {
-  if (lspProcesses.has(language)) {
-    console.log(`[LSP] Killing ${language} server`)
-    const entry = lspProcesses.get(language)
-    if (entry.process) {
-      entry.process.kill()
+  return new Promise((resolve) => {
+    if (lspProcesses.has(language)) {
+      console.log(`[LSP] Killing ${language} server`)
+      const entry = lspProcesses.get(language)
+      if (entry.process && !entry.process.killed) {
+        entry.process.once('exit', () => {
+          lspProcesses.delete(language)
+          sendToWindow('lsp-status-change', { language, status: 'idle' })
+          resolve(true)
+        })
+        entry.process.kill()
+      } else {
+        lspProcesses.delete(language)
+        sendToWindow('lsp-status-change', { language, status: 'idle' })
+        resolve(true)
+      }
+    } else {
+      resolve(false)
     }
-    lspProcesses.delete(language)
-    sendToWindow('lsp-status-change', { language, status: 'idle' })
-    return true
-  }
-  return false
+  })
 }
 
 export function sendToLanguageServer(language, message) {
@@ -182,4 +215,58 @@ export function setupLspIpcHandlers() {
   ipcMain.handle('kill-lsp', (_event, language) => {
     return killLanguageServer(language)
   })
+
+  ipcMain.handle('lsp:get-cpp-compilers', async () => {
+    return {
+      compilers: await detectCppCompilers(),
+      config: getCompilerConfig()
+    }
+  })
+
+  ipcMain.handle('lsp:recheck-toolchain-status', async (_event, language) => {
+    clearToolchainCache() // Reset macOS SDK cache in case it was just installed
+    const validation = await validateHostToolchain()
+    if (validation.success) {
+      // Validated, now spawn the language servers without requiring restart
+      if (language === 'c' || language === 'cpp') {
+        // start both since they share the toolchain
+        startLanguageServer('c')
+        startLanguageServer('cpp')
+      } else {
+        startLanguageServer(language)
+      }
+      return { success: true }
+    }
+    return { success: false, validation }
+  })
+
+  let isRestartingCpp = false
+  ipcMain.handle('lsp:set-cpp-compiler', async (_event, configUpdate) => {
+    if (isRestartingCpp) return { success: false, error: 'Already restarting' }
+    isRestartingCpp = true
+    try {
+      const config = getCompilerConfig()
+      saveCompilerConfig({ ...config, ...configUpdate })
+      
+      // Tell renderer to clear diagnostics for cpp and c
+      sendToWindow('lsp-server-reset', { language: 'cpp' })
+      sendToWindow('lsp-server-reset', { language: 'c' })
+      
+      // Kill both gracefully
+      await Promise.all([
+        killLanguageServer('cpp'),
+        killLanguageServer('c')
+      ])
+      
+      // Restart if they were open (we can just start them if we want, or let renderer restart them)
+      // Actually let's just start them to be safe
+      startLanguageServer('cpp')
+      startLanguageServer('c')
+      
+      return { success: true }
+    } finally {
+      isRestartingCpp = false
+    }
+  })
+
 }

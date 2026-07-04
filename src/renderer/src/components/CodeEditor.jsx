@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react'
-import Editor, { loader, DiffEditor } from '@monaco-editor/react'
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
+import Editor, { loader, DiffEditor, useMonaco } from '@monaco-editor/react'
 import * as monaco from 'monaco-editor'
 import { applyDiff } from '../diffUtils'
 import { X, Save, Circle, Sparkles, ChevronRight, AlertTriangle, Info, CheckCircle, Loader2, Code2 } from 'lucide-react'
@@ -13,6 +13,17 @@ import { EXTENSIONS } from '../utils/extensionRegistry'
 import { runEsLint, runPrettier, formatWithPrettier, isExtensionEnabled } from '../utils/linterService'
 import { diffLines } from 'diff'
 import { useShortcutStore, defaultShortcuts } from '../store/shortcutStore'
+import {
+  useDiagnosticsStore,
+  useFileCounts,
+  useFolderCounts,
+  lspSeverityToString,
+  monacoSeverityToString
+} from '../store/diagnosticsStore'
+import {
+  installSharedLspDispatcher,
+  subscribeToLspMessages
+} from '../services/workspaceDiagnosticsScanner'
 
 // --- Monaco Workers ---
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
@@ -304,10 +315,39 @@ function installGlobalIpcListener() {
   if (ipcListenerInstalled) return
   ipcListenerInstalled = true
 
-  window.api.onLspMessage((language, raw) => {
-    const client = lspClients.get(language)
+  // Use the shared LSP dispatcher instead of taking over the raw
+  // IPC channel with removeAllListeners. The workspace diagnostics
+  // scanner also needs to see publishDiagnostics, and preload's
+  // onLspMessage clobbers previous listeners, so both parties MUST
+  // route through this fan-out.
+  installSharedLspDispatcher()
+
+  // Subscribe the per-language editor client for every LSP we know
+  // about. Editor clients are created lazily on-demand, so we just
+  // dispatch when one exists.
+  const editorHandler = (lspKey) => (raw) => {
+    const client = lspClients.get(lspKey)
     if (client) client.handleMessage(raw)
-  })
+  }
+  for (const key of ['javascript', 'typescript', 'python', 'c', 'cpp', 'go', 'rust', 'java']) {
+    subscribeToLspMessages(key, editorHandler(key))
+  }
+
+  if (window.api.onLspServerReset) {
+    window.api.onLspServerReset((language) => {
+      // Clear markers for all models belonging to this language
+      const models = monaco.editor.getModels()
+      models.forEach(model => {
+        if (lspLanguageKey(model.getLanguageId()) === language) {
+          monaco.editor.setModelMarkers(model, `lsp-${language}`, [])
+        }
+      })
+      // Also drop this LSP's contribution from the workspace store
+      // so stale error badges don't linger after the user changes
+      // compilers or restarts a server.
+      useDiagnosticsStore.getState().clearSource(`lsp-${language}`)
+    })
+  }
 }
 
 function registerProvidersForLanguage(monacoLangId) {
@@ -493,6 +533,42 @@ COMPLETION:`
   })
 }
 
+// ─── Editor Tab (with diagnostic badge) ────────────────────────────
+// Own its own subscription to `useFileCounts` so a single file's
+// diagnostics change doesn't force every tab in the strip to re-render.
+const EditorTab = ({ file, isActive, isDragging, onDragStart, onDragOver, onDrop, onClick, onContextMenu, onClose }) => {
+  const counts = useFileCounts(file.path)
+  const hasError = counts.error > 0
+  const hasWarn = counts.warning > 0
+  return (
+    <div
+      className={`editor-tab ${isActive ? 'active' : ''} ${isDragging ? 'dragging' : ''} ${hasError ? 'has-error' : hasWarn ? 'has-warning' : ''}`}
+      draggable
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      onClick={onClick}
+      onContextMenu={onContextMenu}
+    >
+      <span className="tab-name">{file.name}</span>
+      {(hasError || hasWarn) && (
+        <span className={`diagnostic-badge ${hasError ? 'error' : 'warning'}`} title={`${counts.error} error${counts.error === 1 ? '' : 's'}, ${counts.warning} warning${counts.warning === 1 ? '' : 's'}`}>
+          {hasError ? counts.error : counts.warning}
+        </span>
+      )}
+      <div
+        className="tab-action"
+        onClick={(e) => {
+          e.stopPropagation()
+          onClose()
+        }}
+      >
+        {file.isDirty ? <Circle size={10} className="dirty-dot" fill="currentColor" /> : <X size={14} className="close-icon" />}
+      </div>
+    </div>
+  )
+}
+
 // ─── Component ─────────────────────────────────────────────────────
 export const CodeEditor = ({
   openFiles,
@@ -507,14 +583,115 @@ export const CodeEditor = ({
   onRun,
   groupId,
   onSplitRight,
-  onCloseGroup
+  onCloseGroup,
+  onDropToTerminal
 }) => {
+  const monaco = useMonaco()
+  
+  useEffect(() => {
+    if (monaco) {
+      monaco.languages.typescript.javascriptDefaults.setEagerModelSync(true)
+      monaco.languages.typescript.typescriptDefaults.setEagerModelSync(true)
+      
+      monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
+        noSemanticValidation: false,
+        noSyntaxValidation: false,
+      })
+
+      monaco.languages.typescript.javascriptDefaults.setCompilerOptions({
+        target: monaco.languages.typescript.ScriptTarget.ESNext,
+        allowNonTsExtensions: true,
+        moduleResolution: monaco.languages.typescript.ModuleResolutionKind.NodeJs,
+        module: monaco.languages.typescript.ModuleKind.ESNext,
+        noEmit: true,
+        allowJs: true,
+        checkJs: true,
+        noUnusedLocals: true,
+        noUnusedParameters: true,
+        jsx: monaco.languages.typescript.JsxEmit.React
+      })
+
+      monaco.languages.typescript.typescriptDefaults.setCompilerOptions({
+        target: monaco.languages.typescript.ScriptTarget.ESNext,
+        allowNonTsExtensions: true,
+        moduleResolution: monaco.languages.typescript.ModuleResolutionKind.NodeJs,
+        module: monaco.languages.typescript.ModuleKind.ESNext,
+        noEmit: true,
+        noUnusedLocals: true,
+        noUnusedParameters: true,
+        jsx: monaco.languages.typescript.JsxEmit.React
+      })
+
+      // ─── Global marker bridge ───────────────────────────────
+      // Monaco's built-in TS/JS/JSON/CSS/HTML workers publish
+      // diagnostics via `setModelMarkers`, NOT via our LSP
+      // pipeline. Without this bridge the file-tree badges would
+      // silently miss every worker error and the user would only
+      // see them by opening the file. Every marker change — from
+      // any owner — flows into the diagnostics store so the
+      // sidebar and tabs stay in sync with what Monaco actually
+      // renders.
+      const disposable = monaco.editor.onDidChangeMarkers((uris) => {
+        for (const uri of uris) {
+          const all = monaco.editor.getModelMarkers({ resource: uri })
+          const uriStr = uri.toString()
+          // Group markers by owner so we can update per-source
+          // buckets cleanly (LSP has its own path already).
+          const byOwner = new Map()
+          for (const m of all) {
+            const owner = m.owner || 'monaco'
+            if (owner.startsWith('lsp-')) continue // Handled by LSP client directly.
+            if (!byOwner.has(owner)) byOwner.set(owner, [])
+            byOwner.get(owner).push({
+              severity: monacoSeverityToString(m.severity),
+              message: m.message,
+              line: m.startLineNumber,
+              column: m.startColumn,
+              source: owner
+            })
+          }
+          const known = ['monaco', 'typescript', 'javascript', 'json', 'css', 'html', 'eslint']
+          for (const owner of known) {
+            useDiagnosticsStore.getState().setDiagnostics(
+              uriStr,
+              owner === 'eslint' ? 'eslint' : `monaco-${owner}`,
+              byOwner.get(owner) || []
+            )
+          }
+        }
+      })
+      return () => disposable.dispose()
+    }
+  }, [monaco])
+
   const [fileContents, setFileContents] = useState({})
   const [currentValue, setCurrentValue] = useState('')
   const [draggedTabIdx, setDraggedTabIdx] = useState(null)
   const [contextMenu, setContextMenu] = useState(null)
+  const [editorContextMenu, setEditorContextMenu] = useState(null)
   const [showContextInspector, setShowContextInspector] = useState(false)
   const editorRef = useRef(null)
+  // Accumulator for smooth trackpad pinch
+  const accumulatedDeltaRef = useRef(0)
+  
+  const handleWheelCapture = (e) => {
+    if (!e.ctrlKey) return
+    e.preventDefault()
+    e.stopPropagation()
+    
+    accumulatedDeltaRef.current += e.deltaY
+    if (Math.abs(accumulatedDeltaRef.current) < 40) return
+    
+    const step = accumulatedDeltaRef.current > 0 ? -0.5 : 0.5
+    accumulatedDeltaRef.current = 0
+    
+    setEditorSettings(prev => {
+      const newZoom = Math.max(-3, Math.min(5, (prev.zoomLevel || 0) + step))
+      localStorage.setItem('editor-zoomLevel', String(newZoom))
+      window.dispatchEvent(new CustomEvent('settings-changed', { detail: { key: 'editor-zoomLevel', value: newZoom } }))
+      return { ...prev, zoomLevel: newZoom }
+    })
+  }
 
   // Use global app store for extensions and theme
   const { extensions, toggleExtension, activeTheme, setActiveTheme, autoSave } = useAppStore()
@@ -552,23 +729,9 @@ export const CodeEditor = ({
     return () => window.removeEventListener('settings-changed', handleSettingsChanged)
   }, [])
 
-  // Ctrl+Scroll / Trackpad pinch zoom
-  useEffect(() => {
-    const handleWheel = (e) => {
-      if (!e.ctrlKey) return
-      e.preventDefault()
-      setEditorSettings(prev => {
-        const delta = e.deltaY > 0 ? -0.5 : 0.5
-        const newZoom = Math.max(-3, Math.min(5, (prev.zoomLevel || 0) + delta))
-        localStorage.setItem('editor-zoomLevel', String(newZoom))
-        window.dispatchEvent(new CustomEvent('settings-changed', { detail: { key: 'editor-zoomLevel', value: newZoom } }))
-        return { ...prev, zoomLevel: newZoom }
-      })
-    }
 
-    window.addEventListener('wheel', handleWheel, { passive: false })
-    return () => window.removeEventListener('wheel', handleWheel)
-  }, [])
+
+
 
 
 
@@ -586,11 +749,30 @@ export const CodeEditor = ({
 
   useEffect(() => {
     globalActiveFile = activeFile
-  }, [activeFile])
+
+    // NOTE: Historically this block was guarded by `window.api.invoke`
+    // which does not exist on the preload API — so `ensureCompilationDb`
+    // never actually ran, and clangd was left with no compile_commands.json
+    // entries. That produced red squiggles on perfectly valid C/C++ code
+    // because clangd fell back to default flags and couldn't resolve
+    // system headers. The correct guard is on `ensureCompilationDb` itself.
+    if (activeFile && projectRoot && window.api?.ensureCompilationDb) {
+      const ext = activeFile.split('.').pop().toLowerCase()
+      if (['c', 'cpp', 'cc', 'cxx', 'c++', 'h', 'hpp', 'hxx', 'hh', 'inl', 'ipp'].includes(ext)) {
+        window.api.ensureCompilationDb({
+          filepath: activeFile,
+          workspaceRoot: projectRoot
+        }).catch(err => console.error('Failed to ensure compilation db:', err))
+      }
+    }
+  }, [activeFile, projectRoot])
 
   // Close context menu on outside click
   useEffect(() => {
-    const closeContextMenu = () => setContextMenu(null)
+    const closeContextMenu = () => {
+      setContextMenu(null)
+      setEditorContextMenu(null)
+    }
     window.addEventListener('click', closeContextMenu)
     return () => window.removeEventListener('click', closeContextMenu)
   }, [])
@@ -682,6 +864,48 @@ export const CodeEditor = ({
     setContextMenu(null)
   }
 
+  const handleEditorContextAction = async (actionId, e) => {
+    e.stopPropagation()
+    setEditorContextMenu(null)
+    if (editorRef.current) {
+      editorRef.current.focus()
+      
+      if (actionId === 'editor.action.clipboardPasteAction') {
+        try {
+          const text = await navigator.clipboard.readText()
+          editorRef.current.executeEdits("context-menu", [{
+            range: editorRef.current.getSelection(),
+            text: text,
+            forceMoveMarkers: true
+          }])
+        } catch (err) {
+          console.error('Clipboard paste failed:', err)
+        }
+        return
+      }
+      if (actionId === 'editor.action.clipboardCopyAction' || actionId === 'editor.action.clipboardCutAction') {
+        const text = editorRef.current.getModel().getValueInRange(editorRef.current.getSelection());
+        if (text) {
+          navigator.clipboard.writeText(text);
+          if (actionId === 'editor.action.clipboardCutAction') {
+            editorRef.current.executeEdits("context-menu", [{
+              range: editorRef.current.getSelection(),
+              text: ""
+            }])
+          }
+        }
+        return
+      }
+      
+      const action = editorRef.current.getAction(actionId)
+      if (action) {
+        action.run()
+      } else {
+        editorRef.current.trigger('keyboard', actionId, null)
+      }
+    }
+  }
+
   // Load file content when active file changes
   useEffect(() => {
     if (!activeFile) return
@@ -728,6 +952,27 @@ export const CodeEditor = ({
     installGlobalIpcListener()
 
     const bootLsp = async () => {
+      // For C/C++, make sure the compilation database entry for
+      // this exact file is on disk BEFORE we send didOpen. If we
+      // race clangd here it will parse the file with default
+      // flags, cache the diagnostics, and keep serving stale
+      // errors until the next edit — which is the classic
+      // "correct code shows red squiggles" symptom.
+      if (
+        (lspKey === 'c' || lspKey === 'cpp') &&
+        projectRoot &&
+        window.api?.ensureCompilationDb
+      ) {
+        try {
+          await window.api.ensureCompilationDb({
+            filepath: activeFile,
+            workspaceRoot: projectRoot
+          })
+        } catch (err) {
+          console.error('Failed to ensure compilation db:', err)
+        }
+      }
+
       if (!lspClients.has(lspKey)) {
         const res = await window.api.startLanguageServer(lspKey)
         if (!res.success) {
@@ -738,7 +983,9 @@ export const CodeEditor = ({
         const client = new LspClient(lspKey)
         lspClients.set(lspKey, client)
 
-        // Wire diagnostics to Monaco markers
+        // Wire diagnostics to Monaco markers AND to the central
+        // diagnostics store so the sidebar / tabs can render error
+        // counts even for files the user hasn't opened yet.
         client.onDiagnostics = (params) => {
           const markers = (params.diagnostics || []).map(d => ({
             severity: severityMap[d.severity] || monaco.MarkerSeverity.Error,
@@ -756,12 +1003,35 @@ export const CodeEditor = ({
           if (model) {
             monaco.editor.setModelMarkers(model, lspKey, markers)
           }
+
+          // Feed the workspace-wide diagnostics store — this is
+          // what powers the badges next to filenames in the tree
+          // and tab strip. It works whether or not the file is
+          // currently visible in an editor.
+          useDiagnosticsStore.getState().setDiagnostics(
+            params.uri,
+            `lsp-${lspKey}`,
+            (params.diagnostics || []).map(d => ({
+              severity: lspSeverityToString(d.severity),
+              message: d.message,
+              line: (d.range?.start?.line ?? 0) + 1,
+              column: (d.range?.start?.character ?? 0) + 1,
+              source: d.source || lspKey
+            }))
+          )
         }
 
-        // Determine workspace root
-        const parts = activeFile.replace(/\\/g, '/').split('/')
-        parts.pop()
-        const rootUri = pathToUri(parts.join('/'))
+        // Determine workspace root — prefer the actual project root
+        // over the file's directory so LSPs like typescript-language-server
+        // and pyright can find tsconfig.json / pyproject.toml.
+        let rootUri
+        if (projectRoot) {
+          rootUri = pathToUri(projectRoot)
+        } else {
+          const parts = activeFile.replace(/\\/g, '/').split('/')
+          parts.pop()
+          rootUri = pathToUri(parts.join('/'))
+        }
 
         await client.initialize(rootUri)
         registerProvidersForLanguage(monacoLang)
@@ -837,6 +1107,19 @@ export const CodeEditor = ({
         if (model) {
           monaco.editor.setModelMarkers(model, 'eslint', lintRes.markers)
         }
+        // Feed the workspace-wide diagnostics store so the sidebar
+        // badge for this file updates instantly on save.
+        useDiagnosticsStore.getState().setDiagnostics(
+          activeFile,
+          'eslint',
+          lintRes.markers.map(m => ({
+            severity: monacoSeverityToString(m.severity),
+            message: m.message,
+            line: m.startLineNumber,
+            column: m.startColumn,
+            source: 'eslint'
+          }))
+        )
       }
     }
   }
@@ -1053,8 +1336,48 @@ export const CodeEditor = ({
   const breakpointsRef = useRef(new Map())
   const breakpointDecorationsCollectionRef = useRef(null)
 
+  const handleEditorBeforeMount = (monacoInstance) => {
+    monacoInstance.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
+      noSemanticValidation: false,
+      noSyntaxValidation: false,
+    })
+
+    monacoInstance.languages.typescript.javascriptDefaults.setCompilerOptions({
+      target: monacoInstance.languages.typescript.ScriptTarget.ESNext,
+      allowNonTsExtensions: true,
+      moduleResolution: monacoInstance.languages.typescript.ModuleResolutionKind.NodeJs,
+      module: monacoInstance.languages.typescript.ModuleKind.ESNext,
+      noEmit: true,
+      allowJs: true,
+      checkJs: true,
+      noUnusedLocals: true,
+      noUnusedParameters: true,
+      jsx: monacoInstance.languages.typescript.JsxEmit.React
+    })
+
+    monacoInstance.languages.typescript.typescriptDefaults.setCompilerOptions({
+      target: monacoInstance.languages.typescript.ScriptTarget.ESNext,
+      allowNonTsExtensions: true,
+      moduleResolution: monacoInstance.languages.typescript.ModuleResolutionKind.NodeJs,
+      module: monacoInstance.languages.typescript.ModuleKind.ESNext,
+      noEmit: true,
+      noUnusedLocals: true,
+      noUnusedParameters: true,
+      jsx: monacoInstance.languages.typescript.JsxEmit.React
+    })
+  }
+
   const handleEditorDidMountWrapper = (editor, monacoInstance) => {
     monacoRef.current = monacoInstance
+    
+    editor.onContextMenu((e) => {
+      e.event.preventDefault()
+      setEditorContextMenu({
+        x: e.event.browserEvent.clientX,
+        y: e.event.browserEvent.clientY
+      })
+    })
+
     decorationsCollectionRef.current = editor.createDecorationsCollection([])
     gitDecorationsCollectionRef.current = editor.createDecorationsCollection([])
     errorLensDecorationsCollectionRef.current = editor.createDecorationsCollection([])
@@ -1182,7 +1505,7 @@ export const CodeEditor = ({
 
         setInlineAi({
           visible: true,
-          top: pixelPos.top + 20, // slightly below cursor
+          top: pixelPos.top,
           left: pixelPos.left,
           prompt: '',
           isLoading: false,
@@ -1620,27 +1943,18 @@ export const CodeEditor = ({
           {openFiles.map((file, idx) => {
             const isActive = file.path === activeFile
             return (
-              <div
+              <EditorTab
                 key={file.path}
-                className={`editor-tab ${isActive ? 'active' : ''} ${draggedTabIdx === idx ? 'dragging' : ''}`}
-                draggable
+                file={file}
+                isActive={isActive}
+                isDragging={draggedTabIdx === idx}
                 onDragStart={(e) => handleDragStart(e, idx)}
                 onDragOver={handleDragOver}
                 onDrop={(e) => handleDrop(e, idx)}
                 onClick={() => setActiveFile(file.path)}
                 onContextMenu={(e) => handleContextMenu(e, file, idx)}
-              >
-                <span className="tab-name">{file.name}</span>
-                <div
-                  className="tab-action"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    closeFile(file.path)
-                  }}
-                >
-                  {file.isDirty ? <Circle size={10} className="dirty-dot" fill="currentColor" /> : <X size={14} className="close-icon" />}
-                </div>
-              </div>
+                onClose={() => closeFile(file.path)}
+              />
             )
           })}
         </div>
@@ -1664,7 +1978,7 @@ export const CodeEditor = ({
               e.stopPropagation()
               if (onRun) onRun()
             }}
-            style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#10a37f', color: '#fff', padding: '4px 12px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 500, fontSize: '0.85rem' }}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'var(--accent-color)', color: 'var(--bg-deep)', padding: '4px 12px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 500, fontSize: '0.85rem' }}
           >
             ▶ Run
           </button>
@@ -1753,11 +2067,11 @@ export const CodeEditor = ({
         )
       })()}
 
-      <div className="editor-body">
+      <div className="editor-body" onWheelCapture={handleWheelCapture}>
         {inlineAi.visible && (
           <div
             className="inline-ai-widget"
-            style={{ top: inlineAi.top, left: inlineAi.left }}
+            style={{ top: inlineAi.top, left: Math.max(10, inlineAi.left), transform: inlineAi.top < 40 ? 'translateY(24px)' : 'translateY(calc(-100% - 4px))' }}
           >
             <input
               autoFocus
@@ -1869,10 +2183,11 @@ export const CodeEditor = ({
               language={getLanguageFromPath(activeFile)}
               theme={monacoTheme}
               onMount={handleDiffEditorMountWrapper}
+              beforeMount={handleEditorBeforeMount}
               options={{
                 renderSideBySide: true,
                 minimap: { enabled: editorSettings.minimap },
-                fontSize: editorSettings.fontSize,
+                fontSize: Math.round(editorSettings.fontSize * Math.pow(1.1, editorSettings.zoomLevel || 0)),
                 fontFamily: editorSettings.fontFamily,
                 readOnly: !isGitDiff,
                 padding: { top: 16 },
@@ -1889,6 +2204,7 @@ export const CodeEditor = ({
               value={currentValue}
               onChange={handleEditorChange}
               onMount={handleEditorDidMountWrapper}
+              beforeMount={handleEditorBeforeMount}
               options={{
                 minimap: { enabled: editorSettings.minimap },
                 fontSize: Math.round(editorSettings.fontSize * Math.pow(1.1, editorSettings.zoomLevel || 0)),

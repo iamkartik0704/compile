@@ -47,6 +47,13 @@ const api = {
   listAvailableLsp: () => ipcRenderer.invoke('list-available-lsp'),
   killLsp: (language) => ipcRenderer.invoke('kill-lsp', language),
   sendLspMessage: (language, message) => ipcRenderer.send('lsp-client-message', { language, message }),
+  
+  // New LSP robust methods
+  getCppCompilers: () => ipcRenderer.invoke('lsp:get-cpp-compilers'),
+  setCppCompiler: (config) => ipcRenderer.invoke('lsp:set-cpp-compiler', config),
+  ensureCompilationDb: (args) => ipcRenderer.invoke('lsp:ensure-compilation-db', args),
+  recheckToolchainStatus: (language) => ipcRenderer.invoke('lsp:recheck-toolchain-status', language),
+
   onLspMessage: (callback) => {
     ipcRenderer.removeAllListeners('lsp-server-message')
     ipcRenderer.on('lsp-server-message', (_event, { language, message }) => callback(language, message))
@@ -54,6 +61,13 @@ const api = {
   onLspStatusChange: (callback) => {
     ipcRenderer.removeAllListeners('lsp-status-change')
     ipcRenderer.on('lsp-status-change', (_event, { language, status }) => callback(language, status))
+  },
+  onLspServerReset: (callback) => {
+    ipcRenderer.on('lsp-server-reset', (_event, { language }) => callback(language))
+  },
+  onShowMissingToolchainModal: (callback) => {
+    ipcRenderer.removeAllListeners('show-missing-toolchain-modal')
+    ipcRenderer.on('show-missing-toolchain-modal', (_event, validation) => callback(validation))
   },
 
   // ── AI Communication ──

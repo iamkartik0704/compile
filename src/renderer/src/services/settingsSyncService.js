@@ -5,7 +5,6 @@ import { useAppStore } from '../store/appStore'
 const EDITOR_SETTING_KEYS = [
   'editor-fontSize',
   'editor-fontFamily',
-  'editor-zoomLevel',
   'editor-tabSize',
   'editor-wordWrap',
   'editor-formatOnSave',
@@ -17,6 +16,7 @@ const EDITOR_SETTING_KEYS = [
   'editor-bracketPairs',
   'editor-smoothScrolling',
   'editor-stickyScroll',
+  'editor-zoomLevel',
   'editor-renderWhitespace'
 ]
 

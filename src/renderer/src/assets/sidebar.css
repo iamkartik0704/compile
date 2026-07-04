@@ -199,6 +199,47 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+/* ─── Diagnostic badges next to filenames ────────────────── */
+/* A file (or folder) whose subtree contains errors gets a subtle
+   colored label so the user can spot problems while scrolling
+   the tree, matching what VS Code / JetBrains do. */
+.tree-node.has-error .tree-label {
+  color: #f14c4c;
+}
+.tree-node.has-warning .tree-label {
+  color: #cca700;
+}
+
+.tree-diagnostic-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+
+.tree-badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  min-width: 16px;
+  padding: 0 5px;
+  height: 15px;
+  line-height: 15px;
+  border-radius: 8px;
+  text-align: center;
+  color: #fff;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+}
+.tree-badge.error {
+  background: #f14c4c;
+}
+.tree-badge.warning {
+  background: #cca700;
+  color: #1e1e1e;
 }
 
 .tree-loading {

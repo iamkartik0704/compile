@@ -1,3 +1,5 @@
+import { getResolvedQueryDriverArg } from './compiler-detection.js'
+
 export const LSP_REGISTRY = {
   javascript: {
     extensionId: 'ext-lsp-typescript',
@@ -20,13 +22,13 @@ export const LSP_REGISTRY = {
   cpp: {
     extensionId: 'ext-lsp-cpp',
     command: 'clangd',
-    args: ['--query-driver=**'],
+    get args() { return [getResolvedQueryDriverArg()] },
     transport: 'stdio'
   },
   c: {
     extensionId: 'ext-lsp-cpp',
     command: 'clangd',
-    args: ['--query-driver=**'],
+    get args() { return [getResolvedQueryDriverArg()] },
     transport: 'stdio'
   },
   go: {

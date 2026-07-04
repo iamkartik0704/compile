@@ -7,6 +7,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { terminalManager } from './terminal-manager.js'
 import { setupLspIpcHandlers, setMainWindowLspRef } from './lsp-manager.js'
 import { DapManager } from './dap-manager.js'
+import { setupCompilationDbHandlers } from './compilation-db.js'
 
 const exec = promisify(execCallback)
 
@@ -695,6 +696,7 @@ ipcMain.handle('window-is-maximized', (event) => BrowserWindow.fromWebContents(e
   })
 
   setupLspIpcHandlers()
+  setupCompilationDbHandlers()
 
   /**
    * Handler: AI Prompt → Auto Mode + SDK Router + Streaming

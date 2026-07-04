@@ -548,8 +548,6 @@
     align-items: center;
     gap: 12px;
     min-width: 450px;
-    transform: translateY(-100%);
-    margin-top: -8px;
     animation: slideInWidget 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -621,3 +619,37 @@
 }
 
 .debug-active-line { background-color: rgba(255, 255, 0, 0.2); }
+
+/* ─── Tab diagnostic badges ───────────────────────────── */
+/* Mirror the sidebar treatment: tint the tab label to hint at
+   severity and show a compact numeric pill so users can spot
+   files that need attention without opening them first. */
+.editor-tab.has-error .tab-name {
+  color: #f14c4c;
+}
+.editor-tab.has-warning .tab-name {
+  color: #cca700;
+}
+.diagnostic-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.68rem;
+  font-weight: 600;
+  min-width: 15px;
+  padding: 0 4px;
+  height: 14px;
+  line-height: 14px;
+  border-radius: 7px;
+  color: #fff;
+  margin-left: 6px;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+}
+.diagnostic-badge.error {
+  background: #f14c4c;
+}
+.diagnostic-badge.warning {
+  background: #cca700;
+  color: #1e1e1e;
+}
+

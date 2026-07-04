@@ -9,7 +9,7 @@ import ReactMarkdown from 'react-markdown'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { applyDiff, unescapeXml } from './diffUtils'
-import { Play, Bug, Maximize2, Minimize2, Trash2, CheckCircle, Circle, RefreshCw, Command, ChevronRight, ChevronDown, File, Code, Cpu, Activity, Info, LogOut, ArrowRight, X, Search, Settings, User, LayoutGrid, PanelLeft, PanelBottom, PanelRight, Square, Minus } from 'lucide-react'
+import { Play, Bug, Maximize2, Minimize2, Trash2, CheckCircle, Circle, RefreshCw, Command, ChevronRight, ChevronDown, File, Code, Cpu, Activity, Info, LogOut, ArrowRight, X, Search, Settings, User, LayoutGrid, PanelLeft, PanelBottom, PanelRight, Square, Minus, Terminal, Key, ShieldCheck, Sparkles } from 'lucide-react'
 import { getEnclosingScope } from './utils/astParser'
 import { CodebaseVisualizer } from './components/CodebaseVisualizer'
 import { ActivityBar } from './components/ActivityBar'
@@ -28,6 +28,8 @@ import './assets/sidebar.css'
 import './assets/editor.css'
 import './assets/themes.css'
 import { useShortcutStore, normalizeEventToKeys } from './store/shortcutStore'
+import { scanWorkspaceForDiagnostics } from './services/workspaceDiagnosticsScanner'
+import { useDiagnosticsStore } from './store/diagnosticsStore'
 
 const renderMessageParts = (content) => {
   const parts = []
@@ -153,7 +155,7 @@ function detectProviderFromKey(key) {
 // ============================================================
 const MODEL_GROUPS = [
   {
-    label: '⚡ Fast',
+    label: 'Fast',
     models: [
       { id: 'auto', name: 'Auto Mode', badge: 'DEFAULT' },
       { id: 'gemini-flash', name: 'Gemini Flash', provider: 'google' },
@@ -162,7 +164,7 @@ const MODEL_GROUPS = [
     ]
   },
   {
-    label: '🧠 Balanced',
+    label: 'Balanced',
     models: [
       { id: 'claude-sonnet', name: 'Claude Sonnet', provider: 'anthropic' },
       { id: 'gemini-pro', name: 'Gemini Pro', provider: 'google' },
@@ -171,21 +173,21 @@ const MODEL_GROUPS = [
     ]
   },
   {
-    label: '🚀 Deep Reasoning',
+    label: 'Deep Reasoning',
     models: [
       { id: 'claude-opus', name: 'Claude Opus', provider: 'anthropic' },
       { id: 'deepseek-r1', name: 'DeepSeek R1', provider: 'deepseek' }
     ]
   },
   {
-    label: '🔓 Open Source',
+    label: 'Open Source',
     models: [
       { id: 'gpt-oss-120b', name: 'GPT-OSS 120B', provider: 'oss' },
       { id: 'llama-4', name: 'Llama 4', provider: 'meta' }
     ]
   },
   {
-    label: '🔌 Custom',
+    label: 'Custom',
     models: [
       { id: 'custom', name: 'Custom Model', provider: 'custom' }
     ]
@@ -198,6 +200,7 @@ MODEL_GROUPS.forEach((g) => g.models.forEach((m) => (MODEL_MAP[m.id] = m)))
 
 function App() {
   // ── Chat State ──
+
   const [messages, setMessages] = useState([])
   const [prompt, setPrompt] = useState('')
   const [attachments, setAttachments] = useState([])
@@ -226,13 +229,13 @@ function App() {
       try {
         const stored = localStorage.getItem('recent-projects')
         let recents = stored ? JSON.parse(stored) : []
-        
+
         // Remove if it already exists to move it to the top
         recents = recents.filter(p => p.path !== projectRoot)
-        
+
         const name = projectRoot.split(/[/\\]/).pop() || projectRoot
         recents.unshift({ name, path: projectRoot, timestamp: Date.now() })
-        
+
         // Keep only top 15
         recents = recents.slice(0, 15)
         localStorage.setItem('recent-projects', JSON.stringify(recents))
@@ -242,11 +245,33 @@ function App() {
     }
   }, [projectRoot])
 
+  // ── Kick off the workspace diagnostics scanner whenever the
+  //    project root changes. This is what populates the "3" / "!"
+  //    badges next to filenames in the sidebar without requiring
+  //    the user to open every file first. The scanner drops all
+  //    previous counts and rebuilds them from scratch, so switching
+  //    between projects always gives a clean, correct view.
+  useEffect(() => {
+    if (!projectRoot) {
+      useDiagnosticsStore.getState().clearAll()
+      return
+    }
+    // Small delay so the LSP processes have time to spawn if the
+    // user just landed in a fresh project.
+    const timer = setTimeout(() => {
+      scanWorkspaceForDiagnostics(projectRoot).catch((err) => {
+        console.error('Workspace diagnostics scan failed:', err)
+      })
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [projectRoot])
+
   // ── UI State ──
   const [showExplorer, setShowExplorer] = useState(true)
   const [rightPanel, setRightPanel] = useState(null)
   const [showVisualizer, setShowVisualizer] = useState(false)
   const [toast, setToast] = useState(null)
+  const [missingToolchain, setMissingToolchain] = useState(null)
   const [activeMenu, setActiveMenu] = useState(null)
   const [activeSubmenu, setActiveSubmenu] = useState(null)
 
@@ -268,6 +293,14 @@ function App() {
     }
     window.addEventListener('show-toast', handleShowToast)
     return () => window.removeEventListener('show-toast', handleShowToast)
+  }, [])
+
+  useEffect(() => {
+    if (window.api && window.api.onShowMissingToolchainModal) {
+      window.api.onShowMissingToolchainModal((validation) => {
+        setMissingToolchain(validation)
+      })
+    }
   }, [])
 
   // ── Live Server State ──
@@ -1009,27 +1042,14 @@ the new code
         return true;
       }
 
-      case 'view.zoomIn': {
-        const curZoom = parseFloat(localStorage.getItem('editor-zoomLevel') || '0')
-        const newZoom = Math.min(5, curZoom + 0.5)
-        localStorage.setItem('editor-zoomLevel', String(newZoom))
-        window.dispatchEvent(new CustomEvent('settings-changed', { detail: { key: 'editor-zoomLevel', value: newZoom } }))
-        return true
-      }
-      case 'view.zoomOut': {
-        const curZoom = parseFloat(localStorage.getItem('editor-zoomLevel') || '0')
-        const newZoom = Math.max(-3, curZoom - 0.5)
-        localStorage.setItem('editor-zoomLevel', String(newZoom))
-        window.dispatchEvent(new CustomEvent('settings-changed', { detail: { key: 'editor-zoomLevel', value: newZoom } }))
-        return true
-      }
-      case 'view.zoomReset': {
-        localStorage.setItem('editor-zoomLevel', '0')
-        window.dispatchEvent(new CustomEvent('settings-changed', { detail: { key: 'editor-zoomLevel', value: 0 } }))
-        return true
-      }
-
       default:
+        // CRITICAL FIX: Exclude native clipboard actions from being intercepted and run programmatically.
+        // We MUST let the browser fire native 'copy', 'cut', and 'paste' DOM events natively 
+        // so Monaco can natively handle the clipboard securely (otherwise it fails silently).
+        if (['edit.copy', 'edit.cut', 'edit.paste'].includes(id)) {
+          return false
+        }
+        
         if (id.startsWith('edit.') || id.startsWith('ai.') || id.startsWith('nav.')) {
           window.dispatchEvent(new CustomEvent('editor-action', { detail: id }))
           return true
@@ -2766,8 +2786,7 @@ the new code
           </div>
           <div className="status-right">
             <span
-              className="status-item"
-              style={{ cursor: 'pointer', padding: '0 8px', borderLeft: '1px solid var(--border-light)' }}
+              className="status-item clickable"
               onClick={() => {
                 const newState = !autoCompleteEnabled;
                 localStorage.setItem('editor-inlineSuggest', newState.toString());
@@ -2776,21 +2795,20 @@ the new code
               }}
               title="Toggle AI Autocomplete"
             >
-              πlot Autocomplete: {autoCompleteEnabled ? <span style={{ color: '#10a37f' }}>On</span> : <span style={{ color: 'var(--text-muted)' }}>Off</span>}
+              <Sparkles size={12} /> πlot Autocomplete: {autoCompleteEnabled ? <span style={{ color: 'var(--accent-color)' }}>On</span> : <span>Off</span>}
             </span>
             <span
-              className="status-item"
-              style={{ cursor: 'pointer', padding: '0 8px', borderLeft: '1px solid var(--border-light)' }}
+              className="status-item clickable"
               onClick={() => setShowTerminal(!showTerminal)}
               title="Toggle Terminal (Ctrl+Shift+`)"
             >
-              Terminal {showTerminal ? '▾' : '▴'}
+              <Terminal size={12} /> Terminal
             </span>
             {isLiveServerEnabled && (
               <span style={{ display: 'flex', alignItems: 'center' }}>
                 <span
-                  className="status-item"
-                  style={{ cursor: 'pointer', padding: '0 8px', borderLeft: '1px solid var(--border-light)', display: 'flex', alignItems: 'center', gap: '4px', color: isLiveServerRunning ? '#10a37f' : 'inherit' }}
+                  className="status-item clickable"
+                  style={{ color: isLiveServerRunning ? '#10a37f' : 'inherit' }}
                   onClick={handleToggleLiveServer}
                   title={isLiveServerRunning ? `Server running at ${liveServerUrl}. Click to open active file in browser.` : "Start Live Server and open active file"}
                 >
@@ -2798,8 +2816,8 @@ the new code
                 </span>
                 {isLiveServerRunning && (
                   <span
-                    className="status-item"
-                    style={{ cursor: 'pointer', padding: '0 8px', borderLeft: '1px solid var(--border-light)', display: 'flex', alignItems: 'center', color: 'var(--error-color)' }}
+                    className="status-item clickable"
+                    style={{ color: 'var(--error-color)', padding: '0 4px', margin: '0' }}
                     onClick={handleStopLiveServer}
                     title="Stop Live Server"
                   >
@@ -2808,14 +2826,15 @@ the new code
                 )}
               </span>
             )}
-            <span className="status-item">
+            <span className="status-item" style={{ cursor: 'pointer' }} onClick={() => setShowSettings(true)} title="Settings">
               {keyCount > 0 ? (
-                <span className="status-key-ok">🔑 {keyCount} key{keyCount > 1 ? 's' : ''}</span>
+                <span className="status-key-ok"><Key size={12} /> {keyCount} key{keyCount > 1 ? 's' : ''}</span>
               ) : (
-                <span className="status-key-none">⚠ No API Keys</span>
+                <span className="status-key-none"><Key size={12} /> No Keys</span>
               )}
             </span>
-            <span className="status-item status-security">
+            <span className="status-item status-security" title="Context Isolation is enabled for security">
+              <ShieldCheck size={12} className="on" />
               contextIsolation: <span className="on">true</span>
             </span>
           </div>
@@ -2839,16 +2858,61 @@ the new code
           bottom: '40px',
           right: '20px',
           padding: '12px 24px',
-          backgroundColor: toast.type === 'error' ? '#ef4444' : toast.type === 'warning' ? '#eab308' : '#3b82f6',
-          color: 'white',
-          borderRadius: '6px',
-          boxShadow: '0 4px 6px rgba(0,0,0,0.2)',
+          backgroundColor: 'var(--bg-elevated)',
+          color: 'var(--text-primary)',
+          border: '1px solid var(--border-subtle)',
+          borderLeft: `4px solid ${toast.type === 'error' ? 'var(--accent-rose, #ef4444)' : toast.type === 'warning' ? '#eab308' : 'var(--accent-color)'}`,
+          borderRadius: 'var(--radius-sm)',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
           zIndex: 9999,
-          fontSize: '14px',
-          fontWeight: 500,
           animation: 'slideIn 0.3s ease-out forwards'
         }}>
           {toast.message}
+        </div>
+      )}
+      
+      {missingToolchain && (
+        <div style={{
+          position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 10000,
+          display: 'flex', justifyContent: 'center', alignItems: 'center'
+        }}>
+          <div style={{
+            backgroundColor: 'var(--bg-elevated)', padding: '24px', borderRadius: '8px',
+            maxWidth: '500px', border: '1px solid var(--border-subtle)', boxShadow: '0 8px 32px rgba(0,0,0,0.5)'
+          }}>
+            <h2 style={{ margin: '0 0 16px 0', color: 'var(--accent-rose, #ef4444)' }}>
+              {missingToolchain.reason === 'outdated_compiler' ? 'Outdated Compiler Detected' : 'Toolchain Missing'}
+            </h2>
+            <p style={{ margin: '0 0 16px 0', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
+              {missingToolchain.error}
+            </p>
+            <div style={{ backgroundColor: 'var(--bg-inset)', padding: '12px', borderRadius: '4px', marginBottom: '16px', fontFamily: 'monospace' }}>
+              {missingToolchain.remediationCommand}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+              <button 
+                onClick={() => setMissingToolchain(null)}
+                style={{ padding: '8px 16px', backgroundColor: 'transparent', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)', borderRadius: '4px', cursor: 'pointer' }}
+              >
+                Dismiss
+              </button>
+              <button 
+                onClick={async () => {
+                  const res = await window.api.recheckToolchainStatus('cpp')
+                  if (res.success) {
+                    setMissingToolchain(null)
+                    setToast({ message: 'Toolchain verified successfully! C++ features are now active.', type: 'success' })
+                  } else {
+                    setToast({ message: 'Toolchain still not found. Please run the command.', type: 'error' })
+                  }
+                }}
+                style={{ padding: '8px 16px', backgroundColor: 'var(--accent-color)', border: 'none', color: '#fff', borderRadius: '4px', cursor: 'pointer' }}
+              >
+                Retry / Re-check Toolchain
+              </button>
+            </div>
+          </div>
         </div>
       )}
       </div>

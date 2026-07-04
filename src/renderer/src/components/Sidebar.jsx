@@ -1,5 +1,27 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { Folder, FolderOpen, FileCode, ChevronRight, ChevronDown, FolderSearch, FilePlus, FolderPlus, RefreshCw, Minimize2 , Database } from 'lucide-react'
+import { useFileCounts, useFolderCounts } from '../store/diagnosticsStore'
+
+// Renders a compact "3" or "!" pill next to a tree node. Kept as a
+// tiny leaf component so it only rerenders when its own file's
+// counts change — the file tree can have thousands of nodes so
+// broad rerenders would tank scroll performance.
+const DiagnosticBadge = ({ path, isDirectory }) => {
+  // Hooks must be unconditional — call both and pick the value we need.
+  const fileCounts = useFileCounts(isDirectory ? '' : path)
+  const folderCounts = useFolderCounts(isDirectory ? path : '')
+  const counts = isDirectory ? folderCounts : fileCounts
+  if (!counts.error && !counts.warning) return null
+  const errText = counts.error > 99 ? '99+' : counts.error
+  const warnText = counts.warning > 99 ? '99+' : counts.warning
+  const title = `${counts.error} error${counts.error === 1 ? '' : 's'}, ${counts.warning} warning${counts.warning === 1 ? '' : 's'}`
+  return (
+    <span className="tree-diagnostic-badges" title={title}>
+      {counts.error > 0 && <span className="tree-badge error">{errText}</span>}
+      {counts.error === 0 && counts.warning > 0 && <span className="tree-badge warning">{warnText}</span>}
+    </span>
+  )
+}
 
 // Helper to get parent path
 const getParentPath = (path) => {
@@ -44,8 +66,44 @@ const NewItemInput = ({ type, onSubmit, onCancel, level }) => {
   )
 }
 
+// Row-level view for a tree node. Split into its own component so
+// the diagnostic-count subscription is scoped narrowly — a single
+// file changing its error count only rerenders that row, not the
+// whole subtree.
+const TreeNodeRow = ({ item, level, isSelected, isOpen, onClick }) => {
+  // Direct subscriptions so this row updates the instant its
+  // diagnostic status changes.
+  const fileCounts = useFileCounts(item.isDirectory ? '' : item.path)
+  const folderCounts = useFolderCounts(item.isDirectory ? item.path : '')
+  const counts = item.isDirectory ? folderCounts : fileCounts
+  const hasError = counts.error > 0
+  const hasWarn = counts.warning > 0
+  const stateClass = hasError ? 'has-error' : hasWarn ? 'has-warning' : ''
+  return (
+    <div
+      className={`tree-node ${item.isDirectory ? 'folder' : 'file'} ${isSelected ? 'selected' : ''} ${stateClass}`}
+      style={{ paddingLeft: `${level * 16 + 8}px` }}
+      onClick={onClick}
+    >
+      <div className="tree-icon">
+        {item.isDirectory ? (
+          isOpen ? <ChevronDown size={14} className="chevron" /> : <ChevronRight size={14} className="chevron" />
+        ) : <span className="chevron-placeholder"></span>}
+
+        {item.isDirectory ? (
+          isOpen ? <FolderOpen size={16} className="icon-folder" /> : <Folder size={16} className="icon-folder" />
+        ) : (
+          <FileCode size={16} className="icon-file" />
+        )}
+      </div>
+      <span className="tree-label">{item.name}</span>
+      <DiagnosticBadge path={item.path} isDirectory={item.isDirectory} />
+    </div>
+  )
+}
+
 // Recursive Tree Node Component
-const FileTreeNode = ({ 
+const FileTreeNode = ({
   item, level = 0, 
   selectedPath, setSelectedPath, selectedIsFolder, setSelectedIsFolder,
   creatingItem, onSubmitCreate, onCancelCreate,
@@ -102,24 +160,13 @@ const FileTreeNode = ({
 
   return (
     <div className="tree-node-container">
-      <div 
-        className={`tree-node ${item.isDirectory ? 'folder' : 'file'} ${isSelected ? 'selected' : ''}`} 
-        style={{ paddingLeft: `${level * 16 + 8}px` }}
+      <TreeNodeRow
+        item={item}
+        level={level}
+        isSelected={isSelected}
+        isOpen={isOpen}
         onClick={handleClick}
-      >
-        <div className="tree-icon">
-          {item.isDirectory ? (
-            isOpen ? <ChevronDown size={14} className="chevron" /> : <ChevronRight size={14} className="chevron" />
-          ) : <span className="chevron-placeholder"></span>}
-          
-          {item.isDirectory ? (
-            isOpen ? <FolderOpen size={16} className="icon-folder" /> : <Folder size={16} className="icon-folder" />
-          ) : (
-            <FileCode size={16} className="icon-file" />
-          )}
-        </div>
-        <span className="tree-label">{item.name}</span>
-      </div>
+      />
 
       {item.isDirectory && isOpen && (
         <div className="tree-children">

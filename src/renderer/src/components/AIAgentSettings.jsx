@@ -215,7 +215,7 @@ export function AIAgentSettings() {
                       justifyContent: 'space-between', 
                       padding: '12px 16px', 
                       backgroundColor: 'rgba(255, 255, 255, 0.02)', 
-                      border: '1px solid var(--border-subtle)', 
+                      border: '1px solid var(--accent-color)', 
                       borderRadius: 'var(--radius-sm)',
                     }}
                   >
@@ -280,7 +280,7 @@ export function AIAgentSettings() {
                   style={{ 
                     width: '100%', padding: '8px 12px', fontSize: '13px', 
                     backgroundColor: 'rgba(255, 255, 255, 0.02)', color: 'var(--text-primary)', 
-                    border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)',
+                    border: '1px solid var(--accent-color)', borderRadius: 'var(--radius-sm)',
                     appearance: 'none', cursor: 'pointer', outline: 'none'
                   }}
                 >
@@ -297,7 +297,7 @@ export function AIAgentSettings() {
             </div>
 
             {selectedProvider === 'custom' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', padding: '16px', backgroundColor: 'rgba(255, 255, 255, 0.02)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', padding: '16px', backgroundColor: 'rgba(255, 255, 255, 0.02)', border: '1px solid var(--accent-color)', borderRadius: 'var(--radius-sm)' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   <label style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Base URL</label>
                   <select
@@ -308,7 +308,7 @@ export function AIAgentSettings() {
                       if (e.target.value === 'other') setCustomBaseUrl('')
                       else setCustomBaseUrl(e.target.value)
                     }}
-                    style={{ padding: '8px 12px', fontSize: '13px', backgroundColor: 'var(--bg-deep)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', outline: 'none' }}
+                    style={{ padding: '8px 12px', fontSize: '13px', backgroundColor: 'var(--bg-deep)', color: 'var(--text-primary)', border: '1px solid var(--accent-color)', borderRadius: 'var(--radius-sm)', outline: 'none' }}
                   >
                     <option value="https://openrouter.ai/api/v1">OpenRouter</option>
                     <option value="https://api.together.xyz/v1">Together AI</option>
@@ -323,7 +323,7 @@ export function AIAgentSettings() {
                       value={customBaseUrl}
                       onChange={e => setCustomBaseUrl(e.target.value)}
                       placeholder="https://api.yourprovider.com/v1"
-                      style={{ padding: '8px 12px', fontSize: '13px', backgroundColor: 'var(--bg-deep)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', outline: 'none', marginTop: '4px' }}
+                      style={{ padding: '8px 12px', fontSize: '13px', backgroundColor: 'var(--bg-deep)', color: 'var(--text-primary)', border: '1px solid var(--accent-color)', borderRadius: 'var(--radius-sm)', outline: 'none', marginTop: '4px' }}
                     />
                   )}
                 </div>
@@ -334,7 +334,7 @@ export function AIAgentSettings() {
                     value={customName}
                     onChange={e => setCustomName(e.target.value)}
                     placeholder="e.g. Local LLM"
-                    style={{ padding: '8px 12px', fontSize: '13px', backgroundColor: 'var(--bg-deep)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', outline: 'none' }}
+                    style={{ padding: '8px 12px', fontSize: '13px', backgroundColor: 'var(--bg-deep)', color: 'var(--text-primary)', border: '1px solid var(--accent-color)', borderRadius: 'var(--radius-sm)', outline: 'none' }}
                   />
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -344,7 +344,7 @@ export function AIAgentSettings() {
                     value={customModelId}
                     onChange={e => setCustomModelId(e.target.value)}
                     placeholder="llama3-70b"
-                    style={{ padding: '8px 12px', fontSize: '13px', backgroundColor: 'var(--bg-deep)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', outline: 'none' }}
+                    style={{ padding: '8px 12px', fontSize: '13px', backgroundColor: 'rgba(255, 255, 255, 0.02)', color: 'var(--text-primary)', border: '1px solid var(--accent-color)', borderRadius: 'var(--radius-sm)', outline: 'none', width: '100%', fontFamily: 'var(--font-mono)' }}
                   />
                 </div>
               </div>
@@ -363,11 +363,11 @@ export function AIAgentSettings() {
                   style={{ 
                     flex: 1, padding: '8px 12px', fontSize: '13px', fontFamily: 'var(--font-mono)',
                     backgroundColor: 'rgba(255, 255, 255, 0.02)', color: 'var(--text-primary)', 
-                    border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)',
+                    border: '1px solid var(--accent-color)', borderRadius: 'var(--radius-sm)',
                     outline: 'none', transition: 'border-color var(--duration-fast)'
                   }}
                   onFocus={(e) => e.target.style.borderColor = 'var(--border-focus)'}
-                  onBlur={(e) => e.target.style.borderColor = 'var(--border-subtle)'}
+                  onBlur={(e) => e.target.style.borderColor = 'var(--accent-color)'}
                 />
                 <button
                   onClick={handleSaveKey}

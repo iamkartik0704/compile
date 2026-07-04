@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react'
-import { Search, ChevronRight, Wand2, Filter, Settings2, SearchX } from 'lucide-react'
+import { Search, ChevronRight, Settings2, SearchX } from 'lucide-react'
 import { useAppStore } from '../store/appStore'
 import '../assets/settings.css'
 import { AIAgentSettings } from './AIAgentSettings'
+import { CppCompilerSettings } from './CppCompilerSettings'
 import { AuthPanel } from './AuthPanel'
 import { supabase } from '../lib/supabase'
 import { collectLocalSettings, pullFromCloud, syncToCloud, mergeSettings, applySettingsLocally } from '../services/settingsSyncService'
@@ -11,15 +12,15 @@ import { collectLocalSettings, pullFromCloud, syncToCloud, mergeSettings, applyS
 const CATEGORIES = [
   { id: 'text-editor', label: 'Text Editor' },
   { id: 'workbench', label: 'Workbench' },
-  { id: 'features', label: 'Features' },
-  { id: 'extensions', label: 'Extensions' },
-  { id: 'ai-agent', label: 'AI Agent' }
+  { id: 'ai-agent', label: 'AI Agent' },
+  { id: 'cpp', label: 'C/C++' }
 ]
 
 export function SettingsEditor() {
   const { autoSave, setAutoSave, activeTheme, setActiveTheme } = useAppStore()
   const [activeCategory, setActiveCategory] = useState('text-editor')
   const [searchQuery, setSearchQuery] = useState('')
+  const [showModifiedOnly, setShowModifiedOnly] = useState(false)
   const [activeTab, setActiveTab] = useState('user')
   const [syncStatus, setSyncStatus] = useState('idle') // idle, syncing, success, error
   const [showAuth, setShowAuth] = useState(false)
@@ -96,7 +97,6 @@ export function SettingsEditor() {
   // Local settings state (persisted via localStorage)
   const [fontSize, setFontSize] = useState(() => parseInt(localStorage.getItem('editor-fontSize') || '14'))
   const [fontFamily, setFontFamily] = useState(() => localStorage.getItem('editor-fontFamily') || "'JetBrains Mono', monospace")
-  const [zoomLevel, setZoomLevel] = useState(() => parseFloat(localStorage.getItem('editor-zoomLevel') || '0'))
   const [tabSize, setTabSize] = useState(() => parseInt(localStorage.getItem('editor-tabSize') || '2'))
   const [wordWrap, setWordWrap] = useState(() => localStorage.getItem('editor-wordWrap') || 'on')
   const [formatOnSave, setFormatOnSave] = useState(() => localStorage.getItem('editor-formatOnSave') === 'true')
@@ -108,6 +108,7 @@ export function SettingsEditor() {
   const [bracketPairs, setBracketPairs] = useState(() => localStorage.getItem('editor-bracketPairs') !== 'false')
   const [smoothScrolling, setSmoothScrolling] = useState(() => localStorage.getItem('editor-smoothScrolling') === 'true')
   const [stickyScroll, setStickyScroll] = useState(() => localStorage.getItem('editor-stickyScroll') !== 'false')
+  const [zoomLevel, setZoomLevel] = useState(() => parseFloat(localStorage.getItem('editor-zoomLevel') || '0'))
   const [renderWhitespace, setRenderWhitespace] = useState(() => localStorage.getItem('editor-renderWhitespace') || 'none')
 
   // Persist settings to localStorage and dispatch change events
@@ -135,6 +136,7 @@ export function SettingsEditor() {
     'text-editor': [
       {
         id: 'editor.fontSize',
+        default: 14,
         title: 'Editor: Font Size',
         description: 'Controls the font size in pixels.',
         type: 'number',
@@ -143,6 +145,7 @@ export function SettingsEditor() {
       },
       {
         id: 'editor.fontFamily',
+        default: "'JetBrains Mono', monospace",
         title: 'Editor: Font Family',
         description: 'Controls the font family used in the editor.',
         type: 'select',
@@ -157,18 +160,8 @@ export function SettingsEditor() {
         onChange: (v) => updateSetting('editor-fontFamily', v, setFontFamily)
       },
       {
-        id: 'editor.zoomLevel',
-        title: 'Editor: Zoom Level',
-        description: 'Adjust the zoom level of the editor. Use Ctrl+= / Ctrl+- to zoom in/out.',
-        type: 'range',
-        value: zoomLevel,
-        min: -3,
-        max: 5,
-        step: 0.5,
-        onChange: (v) => updateSetting('editor-zoomLevel', parseFloat(v), setZoomLevel)
-      },
-      {
         id: 'editor.tabSize',
+        default: 2,
         title: 'Editor: Tab Size',
         description: 'The number of spaces a tab is equal to.',
         type: 'number',
@@ -177,6 +170,7 @@ export function SettingsEditor() {
       },
       {
         id: 'editor.wordWrap',
+        default: 'on',
         title: 'Editor: Word Wrap',
         description: 'Controls how lines should wrap.',
         type: 'select',
@@ -205,6 +199,7 @@ export function SettingsEditor() {
       },
       {
         id: 'editor.cursorStyle',
+        default: 'line',
         title: 'Editor: Cursor Style',
         description: 'Controls the cursor style.',
         type: 'select',
@@ -221,6 +216,7 @@ export function SettingsEditor() {
       },
       {
         id: 'editor.cursorBlinking',
+        default: 'blink',
         title: 'Editor: Cursor Blinking',
         description: 'Controls the cursor animation style.',
         type: 'select',
@@ -236,6 +232,7 @@ export function SettingsEditor() {
       },
       {
         id: 'editor.renderWhitespace',
+        default: 'none',
         title: 'Editor: Render Whitespace',
         description: 'Controls how whitespace is rendered in the editor.',
         type: 'select',
@@ -251,6 +248,7 @@ export function SettingsEditor() {
       },
       {
         id: 'editor.minimap',
+        default: true,
         title: 'Editor: Minimap Enabled',
         description: 'Controls whether the minimap is shown.',
         type: 'toggle',
@@ -259,6 +257,7 @@ export function SettingsEditor() {
       },
       {
         id: 'editor.formatOnSave',
+        default: false,
         title: 'Editor: Format On Save',
         description: 'Format a file on save. A formatter must be available.',
         type: 'toggle',
@@ -290,7 +289,19 @@ export function SettingsEditor() {
         onChange: (v) => updateSetting('editor-stickyScroll', v, setStickyScroll)
       },
       {
+        id: 'editor.zoomLevel',
+        type: 'range',
+        title: 'Editor: Zoom Level',
+        description: 'Adjust the zoom level of the editor.',
+        min: -3,
+        max: 5,
+        step: 0.5,
+        value: zoomLevel,
+        onChange: (v) => updateSetting('editor-zoomLevel', parseFloat(v), setZoomLevel)
+      },
+      {
         id: 'files.autoSave',
+        default: 'off',
         title: 'Files: Auto Save',
         description: 'Controls auto save of editors that have unsaved changes.',
         type: 'select',
@@ -349,20 +360,37 @@ export function SettingsEditor() {
     return () => window.removeEventListener('settings-changed', handleExternal)
   }, [])
 
-  // Filter settings based on search query
+  // Filter settings based on search query and modified flag
   const getFilteredSettings = () => {
-    if (!searchQuery.trim()) {
-      return allSettings[activeCategory] || []
+    let settingsToFilter = allSettings[activeCategory] || []
+    
+    // If searching, search across all categories
+    if (searchQuery.trim()) {
+      settingsToFilter = []
+      Object.values(allSettings).forEach(cats => {
+        settingsToFilter.push(...cats)
+      })
     }
+    
     const q = searchQuery.toLowerCase()
     const results = []
-    Object.values(allSettings).forEach(settings => {
-      settings.forEach(s => {
-        if (s.title.toLowerCase().includes(q) || s.description.toLowerCase().includes(q) || s.id.toLowerCase().includes(q)) {
-          if (!results.find(r => r.id === s.id)) results.push(s)
+    
+    settingsToFilter.forEach(s => {
+      // Check modified
+      if (showModifiedOnly && s.value === s.default) return
+      
+      // Check search
+      if (q) {
+        if (!s.title.toLowerCase().includes(q) && 
+            !s.description.toLowerCase().includes(q) && 
+            !s.id.toLowerCase().includes(q)) {
+          return
         }
-      })
+      }
+      
+      if (!results.find(r => r.id === s.id)) results.push(s)
     })
+    
     return results
   }
 
@@ -457,9 +485,14 @@ export function SettingsEditor() {
             onChange={(e) => setSearchQuery(e.target.value)}
           />
           <div className="settings-search-icons">
-            <Wand2 size={15} className="settings-search-icon" title="AI Settings Search" />
-            <Settings2 size={15} className="settings-search-icon" title="Show modified settings" />
-            <Filter size={15} className="settings-search-icon" title="Filter settings" />
+            <div 
+              className="settings-search-icon" 
+              title="Show modified settings"
+              style={{ color: showModifiedOnly ? 'var(--accent-purple)' : undefined }}
+              onClick={() => setShowModifiedOnly(!showModifiedOnly)}
+            >
+              <Settings2 size={15} />
+            </div>
           </div>
         </div>
       </div>
@@ -515,6 +548,8 @@ export function SettingsEditor() {
 
           {activeCategory === 'ai-agent' ? (
             <AIAgentSettings />
+          ) : activeCategory === 'cpp' ? (
+            <CppCompilerSettings />
           ) : filteredSettings.length === 0 ? (
             <div className="settings-empty">
               <SearchX size={18} />
