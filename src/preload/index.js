@@ -32,6 +32,12 @@ const api = {
   getProjectTree: (path) => ipcRenderer.invoke('get-project-tree', path),
   createFile: (path) => ipcRenderer.invoke('create-file', path),
   createFolder: (path) => ipcRenderer.invoke('create-folder', path),
+  renameItem: (oldPath, newPath, workspaceRoot) => ipcRenderer.invoke('rename-item', oldPath, newPath, workspaceRoot),
+  deleteItem: (itemPath, workspaceRoot) => ipcRenderer.invoke('delete-item', itemPath, workspaceRoot),
+  deleteItemPermanent: (itemPath, workspaceRoot) => ipcRenderer.invoke('delete-item-permanent', itemPath, workspaceRoot),
+  revealInExplorer: (itemPath) => ipcRenderer.invoke('reveal-in-explorer', itemPath),
+  writeClipboardText: (text) => ipcRenderer.invoke('write-clipboard', text),
+  copyItem: (src, dest, workspaceRoot, mode) => ipcRenderer.invoke('copy-item', src, dest, workspaceRoot, mode),
   watchProject: (path) => ipcRenderer.invoke('watch-project', path),
   onFsChanged: (callback) => {
     ipcRenderer.removeAllListeners('fs-changed')

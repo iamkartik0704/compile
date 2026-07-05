@@ -994,6 +994,14 @@ body {
   margin: 0 2px;
 }
 
+button.status-item {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  outline: none;
+  font-family: inherit;
+}
+
 .status-item.clickable {
   cursor: pointer;
 }

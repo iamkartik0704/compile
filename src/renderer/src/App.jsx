@@ -9,7 +9,7 @@ import ReactMarkdown from 'react-markdown'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { applyDiff, unescapeXml } from './diffUtils'
-import { Play, Bug, Maximize2, Minimize2, Trash2, CheckCircle, Circle, RefreshCw, Command, ChevronRight, ChevronDown, File, Code, Cpu, Activity, Info, LogOut, ArrowRight, X, Search, Settings, User, LayoutGrid, PanelLeft, PanelBottom, PanelRight, Square, Minus, Terminal, Key, ShieldCheck, Sparkles } from 'lucide-react'
+import { Play, Bug, Maximize2, Minimize2, Trash2, CheckCircle, Circle, RefreshCw, Command, ChevronRight, ChevronDown, File, Code, Cpu, Activity, Info, LogOut, ArrowRight, X, Search, Settings, User, LayoutGrid, PanelLeft, PanelBottom, PanelRight, Square, Minus, Terminal, Key, ShieldCheck, Sparkles, Folder, GitBranch } from 'lucide-react'
 import { getEnclosingScope } from './utils/astParser'
 import { CodebaseVisualizer } from './components/CodebaseVisualizer'
 import { ActivityBar } from './components/ActivityBar'
@@ -23,11 +23,12 @@ import DebugPanel from './components/DebugPanel'
 import { useAppStore } from './store/appStore'
 import { AuthPanel } from './components/AuthPanel'
 import { supabase } from './lib/supabase'
+import * as monaco from 'monaco-editor'
 import { useAuthStore } from './store/authStore'
 import './assets/sidebar.css'
 import './assets/editor.css'
 import './assets/themes.css'
-import { useShortcutStore, normalizeEventToKeys } from './store/shortcutStore'
+import { useShortcutStore, normalizeEventToKeys, defaultShortcuts } from './store/shortcutStore'
 import { scanWorkspaceForDiagnostics } from './services/workspaceDiagnosticsScanner'
 import { useDiagnosticsStore } from './store/diagnosticsStore'
 
@@ -531,6 +532,96 @@ function App() {
     }
   }, [])
 
+  // File Explorer Context Menu Global Sync (Rename / Delete)
+  useEffect(() => {
+    const handleFileRenamed = (e) => {
+      const { oldPath, newPath } = e.detail
+      
+      setEditorGroups(prevGroups => {
+        return prevGroups.map(group => {
+          let updatedOpenFiles = [...group.openFiles]
+          let updatedActiveFile = group.activeFile
+          let modified = false
+          
+          const isAffected = (p) => p && (p === oldPath || p.startsWith(oldPath + '/') || p.startsWith(oldPath + '\\'))
+          const getNewPath = (p) => p === oldPath ? newPath : newPath + p.substring(oldPath.length)
+
+          updatedOpenFiles = updatedOpenFiles.map(f => {
+            if (isAffected(f.path)) {
+              modified = true
+              const newFilePath = getNewPath(f.path)
+              const newFileName = newFilePath.split(/[/\\]/).pop()
+              
+              // Handle Monaco model sync without visually closing tab
+              try {
+                const oldUri = monaco.Uri.file(f.path)
+                let model = monaco.editor.getModel(oldUri)
+                
+                if (model) {
+                  const content = model.getValue()
+                  const lang = model.getLanguageId()
+                  model.dispose()
+                  
+                  const newUri = monaco.Uri.file(newFilePath)
+                  monaco.editor.createModel(content, lang, newUri)
+                }
+              } catch (err) {
+                console.error('Failed to sync monaco model on rename', err)
+              }
+              
+              return { ...f, path: newFilePath, name: newFileName }
+            }
+            return f
+          })
+          
+          if (isAffected(updatedActiveFile)) {
+            updatedActiveFile = getNewPath(updatedActiveFile)
+          }
+
+          if (modified) {
+            return { ...group, openFiles: updatedOpenFiles, activeFile: updatedActiveFile }
+          }
+          return group
+        })
+      })
+    }
+    
+    const handleFileDeleted = (e) => {
+      const { path } = e.detail
+      setEditorGroups(prevGroups => {
+        return prevGroups.map(group => {
+          const isAffected = (p) => p && (p === path || p.startsWith(path + '/') || p.startsWith(path + '\\'))
+          const stillOpen = group.openFiles.filter(f => !isAffected(f.path))
+          
+          if (stillOpen.length !== group.openFiles.length) {
+            const closedFiles = group.openFiles.filter(f => isAffected(f.path))
+            closedFiles.forEach(f => {
+              try {
+                const uri = monaco.Uri.file(f.path)
+                const model = monaco.editor.getModel(uri)
+                if (model) model.dispose()
+              } catch (err) {}
+            })
+            
+            let newActive = group.activeFile
+            if (isAffected(group.activeFile)) {
+              newActive = stillOpen.length > 0 ? stillOpen[stillOpen.length - 1].path : null
+            }
+            return { ...group, openFiles: stillOpen, activeFile: newActive }
+          }
+          return group
+        })
+      })
+    }
+
+    window.addEventListener('file-renamed', handleFileRenamed)
+    window.addEventListener('file-deleted', handleFileDeleted)
+    return () => {
+      window.removeEventListener('file-renamed', handleFileRenamed)
+      window.removeEventListener('file-deleted', handleFileDeleted)
+    }
+  }, [])
+
   const handleFixWithAi = async () => {
     const activeTerminal = terminalPanelRefs.current[activeTerminalId]
     if (!activeTerminal || !activeFile) return
@@ -861,6 +952,7 @@ the new code
   }, [messages])
 
   const pendingChordRef = useRef([])
+  const [currentChordDisplay, setCurrentChordDisplay] = useState('')
 
   const executeGlobalAction = (id) => {
     switch (id) {
@@ -1043,13 +1135,6 @@ the new code
       }
 
       default:
-        // CRITICAL FIX: Exclude native clipboard actions from being intercepted and run programmatically.
-        // We MUST let the browser fire native 'copy', 'cut', and 'paste' DOM events natively 
-        // so Monaco can natively handle the clipboard securely (otherwise it fails silently).
-        if (['edit.copy', 'edit.cut', 'edit.paste'].includes(id)) {
-          return false
-        }
-        
         if (id.startsWith('edit.') || id.startsWith('ai.') || id.startsWith('nav.')) {
           window.dispatchEvent(new CustomEvent('editor-action', { detail: id }))
           return true
@@ -1105,6 +1190,52 @@ the new code
       }
 
       if (matchFound) {
+        if (matchFound.id.startsWith('custom.')) {
+          e.preventDefault()
+          e.stopPropagation()
+          const cmd = matchFound.command
+          if (cmd) {
+            let targetTerminal = terminalPanelRefs.current[activeTerminalId]
+            
+            // If active isn't ready/spawned, try to find any recently used one
+            if (!targetTerminal || !targetTerminal.executeCommand) {
+              const availableKeys = Object.keys(terminalPanelRefs.current).reverse()
+              for (const k of availableKeys) {
+                if (terminalPanelRefs.current[k] && terminalPanelRefs.current[k].executeCommand) {
+                  targetTerminal = terminalPanelRefs.current[k]
+                  setActiveTerminalId(k)
+                  break
+                }
+              }
+            }
+
+            setShowTerminal(true)
+
+            if (targetTerminal && targetTerminal.executeCommand) {
+              targetTerminal.executeCommand(cmd)
+            } else {
+              // No terminal exists at all, create one
+              handleAddTerminal()
+              // Wait for it to spawn before executing
+              const checkReady = setInterval(() => {
+                const newTerm = terminalPanelRefs.current[activeTerminalId]
+                // Note: activeTerminalId might not be updated immediately in this closure, 
+                // so we scan the refs for the newly added one.
+                const allKeys = Object.keys(terminalPanelRefs.current)
+                const latestTerm = terminalPanelRefs.current[allKeys[allKeys.length - 1]]
+                
+                if (latestTerm && latestTerm.executeCommand) {
+                  clearInterval(checkReady)
+                  latestTerm.executeCommand(cmd)
+                }
+              }, 100)
+              // Clear interval after 5 seconds to prevent memory leaks if spawn fails
+              setTimeout(() => clearInterval(checkReady), 5000)
+            }
+          }
+          return
+        }
+
         // Only prevent default and stop propagation if it's a GLOBAL action handled by App.jsx.
         // Editor actions are natively handled by Monaco's keybinding registry.
         const handled = executeGlobalAction(matchFound.id);
@@ -1115,18 +1246,61 @@ the new code
         }
         
         pendingChordRef.current = [];
+        setCurrentChordDisplay('');
       } else if (partialMatch) {
         e.preventDefault();
         e.stopPropagation();
         pendingChordRef.current = keysToMatch;
-        setTimeout(() => { pendingChordRef.current = []; }, 2000);
+        setCurrentChordDisplay(keysToMatch.join(' '));
+        
+        // Use a unique symbol or counter to avoid clearing the wrong chord if they keep typing
+        const currentRef = pendingChordRef.current;
+        setTimeout(() => { 
+          if (pendingChordRef.current === currentRef) {
+            pendingChordRef.current = [];
+            setCurrentChordDisplay('');
+          }
+        }, 3000);
       } else {
+        // Dynamically suppress old default keybindings that the user has remapped.
+        // Build a set of all default keybinding strings, then subtract the current ones.
+        // Any default key combo that's no longer assigned to anything should be blocked
+        // so Monaco doesn't fire its built-in action for it.
+        const matchStr = keysToMatch.join('+').toLowerCase();
+        const currentKeySet = new Set();
+        for (const group of shortcuts) {
+          for (const item of group.items) {
+            currentKeySet.add(item.keys.join('+').toLowerCase());
+          }
+        }
+        const defaultKeySet = new Set();
+        for (const group of defaultShortcuts) {
+          for (const item of group.items) {
+            defaultKeySet.add(item.keys.join('+').toLowerCase());
+          }
+        }
+        // "Orphaned" = was a default but is no longer assigned to any shortcut
+        if (defaultKeySet.has(matchStr) && !currentKeySet.has(matchStr)) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        
         pendingChordRef.current = [];
+        setCurrentChordDisplay('');
       }
     }
 
     window.addEventListener('keydown', handleGlobalKeyDown, { capture: true })
-    return () => window.removeEventListener('keydown', handleGlobalKeyDown, { capture: true })
+    
+    const handleExecuteGlobalAction = (e) => {
+      executeGlobalAction(e.detail)
+    }
+    window.addEventListener('execute-global-action', handleExecuteGlobalAction)
+    
+    return () => {
+      window.removeEventListener('keydown', handleGlobalKeyDown, { capture: true })
+      window.removeEventListener('execute-global-action', handleExecuteGlobalAction)
+    }
   }, [activeFile, setActivePanel])
 
   // ── Auto-detect provider from key input ──
@@ -2773,6 +2947,11 @@ the new code
         {/* ── Status Bar ── */}
         <footer className="status-bar">
           <div className="status-left">
+            {currentChordDisplay && (
+              <div className="status-item" style={{ color: 'var(--accent-color)', fontWeight: 'bold' }}>
+                {currentChordDisplay}
+              </div>
+            )}
             <span className="status-item">
               <span className={`status-dot-sm ${isStreaming ? 'streaming' : 'ready'}`}></span>
               {isStreaming ? 'Streaming' : 'Ready'}
@@ -2832,10 +3011,6 @@ the new code
               ) : (
                 <span className="status-key-none"><Key size={12} /> No Keys</span>
               )}
-            </span>
-            <span className="status-item status-security" title="Context Isolation is enabled for security">
-              <ShieldCheck size={12} className="on" />
-              contextIsolation: <span className="on">true</span>
             </span>
           </div>
         </footer>

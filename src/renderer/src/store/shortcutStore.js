@@ -24,6 +24,7 @@ export const defaultShortcuts = [
       { id: 'file.new', name: 'New File', keys: ['Ctrl', 'N'] },
       { id: 'file.open', name: 'Open File', keys: ['Ctrl', 'O'] },
       { id: 'file.openFolder', name: 'Open Folder', keys: ['Ctrl', 'K', 'Ctrl', 'O'] },
+      { id: 'file.closeFolder', name: 'Close Folder', keys: ['Ctrl', 'K', 'F'] },
       { id: 'file.save', name: 'Save', keys: ['Ctrl', 'S'] },
       { id: 'file.saveAs', name: 'Save As', keys: ['Ctrl', 'Shift', 'S'] },
       { id: 'file.saveAll', name: 'Save All', keys: ['Ctrl', 'K', 'S'] },
@@ -93,6 +94,10 @@ export const defaultShortcuts = [
     category: 'View',
     items: [
     ]
+  },
+  {
+    category: 'Custom',
+    items: []
   }
 ];
 
@@ -137,13 +142,19 @@ export const useShortcutStore = create(
 
       // Check for conflicts
       detectConflict: (keys) => {
+        return get().getBindingConflict(keys, null);
+      },
+
+      getBindingConflict: (keys, excludeId) => {
+        if (!keys || keys.length === 0) return null;
         const keysStr = keys.join('+').toLowerCase();
         
         // 1. Check in our customized store
         const { shortcuts } = get();
         for (const group of shortcuts) {
           for (const item of group.items) {
-            if (item.keys.join('+').toLowerCase() === keysStr) {
+            if (item.id === excludeId) continue;
+            if (item.keys && item.keys.length > 0 && item.keys.join('+').toLowerCase() === keysStr) {
               return { type: 'custom', name: item.name, id: item.id };
             }
           }
@@ -151,12 +162,42 @@ export const useShortcutStore = create(
 
         // 2. Check Monaco native registry
         for (const native of monacoNativeBindings) {
+          if (native.id === excludeId) continue;
           if (native.keys.join('+').toLowerCase() === keysStr) {
             return { type: 'monaco', name: native.name, id: native.id };
           }
         }
 
         return null; // No conflict
+      },
+
+      addCustomShortcut: (name, command) => {
+        if (!command || !command.trim()) return null;
+        const id = `custom.${crypto.randomUUID()}`;
+        const newItem = { id, name: name || 'Unnamed Command', keys: [], command: command.trim() };
+        
+        set((state) => {
+          const newShortcuts = state.shortcuts.map(group => {
+            if (group.category === 'Custom') {
+              return { ...group, items: [...group.items, newItem] };
+            }
+            return group;
+          });
+          return { shortcuts: newShortcuts };
+        });
+        return newItem;
+      },
+
+      deleteCustomShortcut: (id) => {
+        set((state) => {
+          const newShortcuts = state.shortcuts.map(group => {
+            if (group.category === 'Custom') {
+              return { ...group, items: group.items.filter(i => i.id !== id) };
+            }
+            return group;
+          });
+          return { shortcuts: newShortcuts };
+        });
       }
     }),
     {
@@ -167,6 +208,11 @@ export const useShortcutStore = create(
           const persistedGroup = persistedState.shortcuts.find(g => g.category === defaultGroup.category);
           if (!persistedGroup) return defaultGroup;
           
+          if (defaultGroup.category === 'Custom') {
+            // Preserve all custom entries from persistence
+            return { ...defaultGroup, items: persistedGroup.items || [] };
+          }
+
           return {
             ...defaultGroup,
             items: defaultGroup.items.map(defaultItem => {

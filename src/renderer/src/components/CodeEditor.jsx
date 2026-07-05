@@ -145,11 +145,37 @@ const parseToMonacoKeybinding = (keys, monacoObj) => {
 const syncMonacoKeybindings = (shortcuts, monacoObj) => {
   if (!monacoObj || !monacoObj.editor) return;
   const rules = [];
+
+  // Build a lookup of default keys per shortcut id
+  const defaultKeysById = {};
+  defaultShortcuts.forEach(group => {
+    group.items.forEach(item => {
+      defaultKeysById[item.id] = item.keys;
+    });
+  });
   
   shortcuts.forEach(group => {
     group.items.forEach(item => {
       const monacoCommandId = mapCustomIdToMonacoCommandId(item.id);
       if (monacoCommandId) {
+        // If the user changed the keys from the default, unbind the old default
+        const defaultKeys = defaultKeysById[item.id];
+        if (defaultKeys) {
+          const defaultStr = defaultKeys.join('+').toLowerCase();
+          const currentStr = item.keys.join('+').toLowerCase();
+          if (defaultStr !== currentStr) {
+            const oldKeybinding = parseToMonacoKeybinding(defaultKeys, monacoObj);
+            if (oldKeybinding !== 0) {
+              // Unbind old default by setting command to '-commandId'
+              rules.push({
+                keybinding: oldKeybinding,
+                command: '-' + monacoCommandId
+              });
+            }
+          }
+        }
+
+        // Bind the current (possibly new) keybinding
         const keybinding = parseToMonacoKeybinding(item.keys, monacoObj);
         if (keybinding !== 0) {
           rules.push({
@@ -1339,7 +1365,7 @@ export const CodeEditor = ({
 
   // Handle Editor Action Events from the Menu
   useEffect(() => {
-    const handleEditorAction = (e) => {
+    const handleEditorAction = async (e) => {
       const actionId = e.detail
       if (!editorRef.current) return
       
@@ -1347,6 +1373,35 @@ export const CodeEditor = ({
       // which causes interactive prompts (like Go to Line) to instantly close
       // or keystrokes to fail. We MUST refocus the editor first!
       editorRef.current.focus()
+
+      // Manually handle clipboard actions because native ones fail in Electron without an explicit edit menu
+      if (actionId === 'edit.paste') {
+        try {
+          const text = await navigator.clipboard.readText()
+          editorRef.current.executeEdits("keyboard-shortcut", [{
+            range: editorRef.current.getSelection(),
+            text: text,
+            forceMoveMarkers: true
+          }])
+        } catch (err) {
+          console.error('Clipboard paste failed:', err)
+        }
+        return
+      }
+
+      if (actionId === 'edit.copy' || actionId === 'edit.cut') {
+        const text = editorRef.current.getModel().getValueInRange(editorRef.current.getSelection());
+        if (text) {
+          navigator.clipboard.writeText(text);
+          if (actionId === 'edit.cut') {
+            editorRef.current.executeEdits("keyboard-shortcut", [{
+              range: editorRef.current.getSelection(),
+              text: ""
+            }])
+          }
+        }
+        return
+      }
 
       const mappedId = mapCustomIdToMonacoCommandId(actionId) || actionId
 
@@ -2179,6 +2234,55 @@ export const CodeEditor = ({
     }
   }
 
+  const renderEmptyAction = (id, fallback, label) => {
+    let keys = getShortcut(id);
+    if (!keys) {
+      keys = fallback.split(' ').reduce((acc, curr) => acc.concat(curr.split('+')), []);
+    }
+    
+    const chords = [];
+    let currentChord = [];
+    const modifiers = ['Ctrl', 'Alt', 'Shift', 'Meta', 'Cmd'];
+    let seenNonModifier = false;
+    
+    for (const key of keys) {
+      if (modifiers.includes(key)) {
+        if (seenNonModifier) {
+          chords.push(currentChord);
+          currentChord = [];
+          seenNonModifier = false;
+        }
+        currentChord.push(key);
+      } else {
+        currentChord.push(key);
+        seenNonModifier = true;
+      }
+    }
+    if (currentChord.length > 0) chords.push(currentChord);
+
+    return (
+      <div 
+        key={id}
+        className="empty-action-item" 
+        onClick={() => window.dispatchEvent(new CustomEvent('execute-global-action', { detail: id }))}
+      >
+        <span className="empty-action-label">{label}</span>
+        <span className="empty-action-keys">
+          {chords.map((chord, cIdx) => (
+            <span key={cIdx} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginLeft: cIdx > 0 ? '8px' : '0' }}>
+              {chord.map((key, kIdx) => (
+                <React.Fragment key={kIdx}>
+                  <span className="empty-keybind">{key}</span>
+                  {kIdx < chord.length - 1 && <span style={{ opacity: 0.8, fontSize: '12px', margin: '0 2px' }}>+</span>}
+                </React.Fragment>
+              ))}
+            </span>
+          ))}
+        </span>
+      </div>
+    )
+  }
+
   if (openFiles.length === 0) {
     return (
       <div className="editor-empty">
@@ -2197,7 +2301,10 @@ export const CodeEditor = ({
         </div>
         
         <div className="editor-empty-actions">
-          <p>Press <span className="empty-keybind">Ctrl</span> + <span className="empty-keybind">P</span> to search files</p>
+          {renderEmptyAction('file.openFolder', 'Ctrl+K Ctrl+O', 'Open Folder')}
+          {renderEmptyAction('file.open', 'Ctrl+O', 'Open File')}
+          {renderEmptyAction('ai.chat', 'Ctrl+L', 'Open AI Agent')}
+          {renderEmptyAction('general.settings', 'Ctrl+,', 'Open Settings')}
         </div>
       </div>
     )

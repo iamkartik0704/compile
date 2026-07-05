@@ -1,5 +1,5 @@
 import { app, shell, BrowserWindow, ipcMain, safeStorage, dialog, nativeTheme } from 'electron'
-import { join } from 'path'
+import { join, resolve, sep } from 'path'
 import { readFileSync, writeFileSync, existsSync, chmodSync, promises as fsPromises } from 'fs'
 import { exec as execCallback } from 'child_process'
 import { promisify } from 'util'
@@ -430,6 +430,19 @@ function createWindow() {
   mainWindow.on('maximize', () => mainWindow.webContents.send('window-maximized-changed', true))
   mainWindow.on('unmaximize', () => mainWindow.webContents.send('window-maximized-changed', false))
 
+  // Allow native clipboard reading (fixes Monaco pasting via context menu)
+  mainWindow.webContents.session.setPermissionCheckHandler((webContents, permission) => {
+    return true
+  })
+  mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
+    callback(true)
+  })
+
+  // Log renderer console messages to terminal
+  mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+    console.log(`[Renderer Console] ${message} (at ${sourceId}:${line})`)
+  })
+
   // Force dark theme so native inputs (like <select> dropdown popups) render correctly
   nativeTheme.themeSource = 'dark'
 
@@ -585,6 +598,99 @@ ipcMain.handle('create-folder', async (event, folderPath) => {
     return { success: false, error: error.message }
   }
 })
+
+// --- Native Context Menu IPC Handlers ---
+function assertInWorkspace(targetPath, workspaceRoot) {
+  const resolvedPath = resolve(targetPath)
+  const root = resolve(workspaceRoot)
+  if (resolvedPath !== root && !resolvedPath.startsWith(root + sep)) {
+    throw new Error('Path is outside the workspace root')
+  }
+  return resolvedPath
+}
+
+ipcMain.handle('rename-item', async (event, oldPath, newPath, workspaceRoot) => {
+  try {
+    assertInWorkspace(oldPath, workspaceRoot)
+    assertInWorkspace(newPath, workspaceRoot)
+    try {
+      await fsPromises.access(newPath)
+      return { success: false, error: 'exists' }
+    } catch (e) {
+      // expected, does not exist
+    }
+    await fsPromises.rename(oldPath, newPath)
+    return { success: true, oldPath, newPath }
+  } catch (error) {
+    return { success: false, error: error.message }
+  }
+})
+
+ipcMain.handle('delete-item', async (event, itemPath, workspaceRoot) => {
+  try {
+    assertInWorkspace(itemPath, workspaceRoot)
+    await shell.trashItem(itemPath)
+    return { success: true }
+  } catch (error) {
+    return { success: false, error: error.message }
+  }
+})
+
+ipcMain.handle('delete-item-permanent', async (event, itemPath, workspaceRoot) => {
+  try {
+    assertInWorkspace(itemPath, workspaceRoot)
+    await fsPromises.rm(itemPath, { recursive: true, force: true })
+    return { success: true }
+  } catch (error) {
+    return { success: false, error: error.message }
+  }
+})
+
+ipcMain.handle('copy-item', async (event, src, dest, workspaceRoot, mode) => {
+  try {
+    assertInWorkspace(src, workspaceRoot)
+    const resolvedDest = assertInWorkspace(dest, workspaceRoot)
+    const resolvedSrc = resolve(src)
+    
+    // Prevent copying into its own subtree
+    if (resolvedDest.startsWith(resolvedSrc + sep)) {
+      return { success: false, error: 'destination is inside source' }
+    }
+
+    if (mode !== 'overwrite') {
+      try {
+        await fsPromises.access(dest)
+        return { success: false, error: 'exists' }
+      } catch (e) {
+        // does not exist
+      }
+    }
+    await fsPromises.cp(src, dest, { recursive: true })
+    return { success: true }
+  } catch (error) {
+    return { success: false, error: error.message }
+  }
+})
+
+ipcMain.handle('reveal-in-explorer', async (event, itemPath) => {
+  try {
+    shell.showItemInFolder(require('path').normalize(itemPath))
+    return { success: true }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+})
+
+ipcMain.handle('write-clipboard', async (event, text) => {
+  try {
+    const { clipboard } = require('electron')
+    clipboard.writeText(text)
+    return { success: true }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+})
+
 
 ipcMain.handle('watch-project', async (event, rootPath) => {
   const id = event.sender.id;

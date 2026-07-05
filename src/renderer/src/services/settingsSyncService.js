@@ -51,6 +51,21 @@ export async function collectLocalSettings() {
     }
   }
 
+  // Collect keyboard shortcuts (excluding 'Custom' category)
+  const shortcutsVal = localStorage.getItem('shortcut-storage')
+  if (shortcutsVal) {
+    try {
+      const parsedShortcuts = JSON.parse(shortcutsVal)
+      if (parsedShortcuts && parsedShortcuts.state && parsedShortcuts.state.shortcuts) {
+        // Exclude Custom category explicitly so arbitrary commands are not synced
+        const syncedShortcuts = parsedShortcuts.state.shortcuts.filter(g => g.category !== 'Custom')
+        settings.shortcuts = syncedShortcuts
+      }
+    } catch (e) {
+      console.error('Failed to parse shortcuts for sync', e)
+    }
+  }
+
   return settings
 }
 
@@ -129,7 +144,27 @@ export function applySettingsLocally(settings) {
     localStorage.setItem('ide-sync-remote-providers', JSON.stringify(settings.configured_providers))
   }
 
-  // 4. Update sync timestamp
+  // 4. Apply synced keyboard shortcuts (merging with local Custom)
+  if (settings.shortcuts) {
+    const localShortcutsStr = localStorage.getItem('shortcut-storage');
+    let mergedState = { state: { shortcuts: settings.shortcuts }, version: 0 };
+    if (localShortcutsStr) {
+      try {
+        const localParsed = JSON.parse(localShortcutsStr);
+        if (localParsed && localParsed.state && localParsed.state.shortcuts) {
+          const localCustom = localParsed.state.shortcuts.find(g => g.category === 'Custom');
+          if (localCustom) {
+            mergedState.state.shortcuts.push(localCustom);
+          }
+        }
+      } catch(e) {}
+    }
+    localStorage.setItem('shortcut-storage', JSON.stringify(mergedState));
+    // Dispatch an event so shortcutStore can rehydrate if needed
+    window.dispatchEvent(new Event('shortcuts-changed'));
+  }
+
+  // 5. Update sync timestamp
   if (settings.updated_at) {
     localStorage.setItem(SYNC_UPDATED_AT_KEY, settings.updated_at)
   }

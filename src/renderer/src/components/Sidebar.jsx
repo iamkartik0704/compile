@@ -39,6 +39,20 @@ const NewItemInput = ({ type, onSubmit, onCancel, level }) => {
     inputRef.current?.focus()
   }, [])
 
+  useEffect(() => {
+    const handleGlobalPointerDown = (e) => {
+      // If the click is outside this input, cancel the creation
+      if (inputRef.current && !inputRef.current.contains(e.target)) {
+        onCancel()
+      }
+    }
+    
+    window.addEventListener('pointerdown', handleGlobalPointerDown, { capture: true })
+    return () => {
+      window.removeEventListener('pointerdown', handleGlobalPointerDown, { capture: true })
+    }
+  }, [onCancel])
+
   const handleKeyDown = (e) => {
     if (e.key === 'Enter') {
       if (val.trim()) onSubmit(val.trim())
@@ -56,6 +70,16 @@ const NewItemInput = ({ type, onSubmit, onCancel, level }) => {
       <input
         ref={inputRef}
         className="new-item-input"
+        spellCheck={false}
+        style={{
+          backgroundColor: 'var(--bg-lighter, rgba(255, 255, 255, 0.1))',
+          borderColor: 'var(--accent-color, #007acc)',
+          color: 'var(--text-primary, #ffffff)',
+          outline: 'none',
+          padding: '2px 6px',
+          marginLeft: '4px',
+          width: 'calc(100% - 20px)'
+        }}
         value={val}
         onChange={e => setVal(e.target.value)}
         onKeyDown={handleKeyDown}
@@ -66,11 +90,119 @@ const NewItemInput = ({ type, onSubmit, onCancel, level }) => {
   )
 }
 
+// Inline Input for Renaming Items
+const RenameItemInput = ({ initialName, onSubmit, onCancel, level, item, siblings }) => {
+  const [val, setVal] = useState(initialName)
+  const inputRef = useRef(null)
+  const isConfirming = useRef(false)
+
+  useEffect(() => {
+    if (inputRef.current) {
+      inputRef.current.focus()
+      const lastDotIndex = initialName.lastIndexOf('.')
+      if (!item.isDirectory && lastDotIndex > 0) {
+        inputRef.current.setSelectionRange(0, lastDotIndex)
+      } else {
+        inputRef.current.select()
+      }
+    }
+  }, [initialName, item.isDirectory])
+
+  useEffect(() => {
+    const handleGlobalPointerDown = (e) => {
+      // If the click is outside this input, cancel the rename
+      if (inputRef.current && !inputRef.current.contains(e.target)) {
+        if (isConfirming.current) return
+        onCancel()
+      }
+    }
+    
+    // Use capture phase to catch the event before Monaco or anything else can prevent default
+    window.addEventListener('pointerdown', handleGlobalPointerDown, { capture: true })
+    
+    return () => {
+      window.removeEventListener('pointerdown', handleGlobalPointerDown, { capture: true })
+    }
+  }, [onCancel])
+
+  const handleBlur = (e) => {
+    if (isConfirming.current) return
+    onCancel()
+  }
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      const newName = val.trim()
+      if (!newName || newName === initialName) return onCancel()
+      if (/[<>:"/\\|?*]/.test(newName)) {
+        alert('Name contains invalid characters.')
+        return
+      }
+      if (siblings && siblings.find(s => s.name === newName && s.path !== item.path)) {
+        alert('An item with this name already exists.')
+        return
+      }
+      if (!item.isDirectory) {
+        const oldExt = initialName.includes('.') ? initialName.split('.').pop() : ''
+        const newExt = newName.includes('.') ? newName.split('.').pop() : ''
+        if (oldExt !== newExt) {
+          isConfirming.current = true
+          const confirmed = window.confirm('If you change a file name extension, the file might become unusable.\nAre you sure you want to change it?')
+          isConfirming.current = false
+          if (!confirmed) {
+            setTimeout(() => inputRef.current?.focus(), 0)
+            return
+          }
+        }
+      }
+      onSubmit(item, newName)
+    }
+    if (e.key === 'Escape') onCancel()
+  }
+
+  return (
+    <div
+      className={`tree-node ${item.isDirectory ? 'folder' : 'file'}`}
+      style={{ paddingLeft: `${level * 16 + 8}px`, backgroundColor: 'var(--bg-active, rgba(255, 255, 255, 0.05))' }}
+    >
+      <div className="tree-icon">
+        {item.isDirectory ? (
+          <ChevronRight size={14} className="chevron" style={{ visibility: 'hidden' }} />
+        ) : <span className="chevron-placeholder"></span>}
+        {item.isDirectory ? <Folder size={16} className="icon-folder" /> : <FileCode size={16} className="icon-file" />}
+      </div>
+      <input
+        ref={inputRef}
+        className="rename-item-input"
+        spellCheck={false}
+        style={{
+          flex: 1,
+          backgroundColor: 'var(--bg-dark, #1e1e1e)',
+          border: '2px solid var(--accent-color, #007acc)',
+          color: 'var(--text-primary, #ffffff)',
+          outline: 'none',
+          padding: '2px 4px',
+          marginLeft: '4px',
+          marginRight: '4px',
+          fontSize: 'inherit',
+          fontFamily: 'inherit',
+          borderRadius: '3px'
+        }}
+        value={val}
+        onChange={e => setVal(e.target.value)}
+        onKeyDown={handleKeyDown}
+        onBlur={handleBlur}
+        onClick={e => e.stopPropagation()}
+      />
+    </div>
+  )
+}
+
 // Row-level view for a tree node. Split into its own component so
 // the diagnostic-count subscription is scoped narrowly — a single
 // file changing its error count only rerenders that row, not the
 // whole subtree.
-const TreeNodeRow = ({ item, level, isSelected, isOpen, onClick }) => {
+const TreeNodeRow = ({ item, level, isSelected, isOpen, onClick, onContextMenu, isRenaming, onRenameSubmit, onRenameCancel, siblings }) => {
   // Direct subscriptions so this row updates the instant its
   // diagnostic status changes.
   const fileCounts = useFileCounts(item.isDirectory ? '' : item.path)
@@ -79,11 +211,17 @@ const TreeNodeRow = ({ item, level, isSelected, isOpen, onClick }) => {
   const hasError = counts.error > 0
   const hasWarn = counts.warning > 0
   const stateClass = hasError ? 'has-error' : hasWarn ? 'has-warning' : ''
+  
+  if (isRenaming) {
+    return <RenameItemInput initialName={item.name} onSubmit={onRenameSubmit} onCancel={onRenameCancel} level={level} item={item} siblings={siblings} />
+  }
+
   return (
     <div
       className={`tree-node ${item.isDirectory ? 'folder' : 'file'} ${isSelected ? 'selected' : ''} ${stateClass}`}
       style={{ paddingLeft: `${level * 16 + 8}px` }}
       onClick={onClick}
+      onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContextMenu(e, item) }}
     >
       <div className="tree-icon">
         {item.isDirectory ? (
@@ -104,11 +242,11 @@ const TreeNodeRow = ({ item, level, isSelected, isOpen, onClick }) => {
 
 // Recursive Tree Node Component
 const FileTreeNode = ({
-  item, level = 0, 
+  item, level = 0, siblings,
   selectedPath, setSelectedPath, selectedIsFolder, setSelectedIsFolder,
   creatingItem, onSubmitCreate, onCancelCreate,
   collapseSignal, refreshSignal,
-  onOpenFile
+  onOpenFile, onContextMenu, renamingItem, onRenameSubmit, onRenameCancel
 }) => {
   const [isOpen, setIsOpen] = useState(false)
   const [children, setChildren] = useState(null)
@@ -166,6 +304,11 @@ const FileTreeNode = ({
         isSelected={isSelected}
         isOpen={isOpen}
         onClick={handleClick}
+        onContextMenu={onContextMenu}
+        isRenaming={renamingItem === item.path}
+        onRenameSubmit={onRenameSubmit}
+        onRenameCancel={onRenameCancel}
+        siblings={siblings}
       />
 
       {item.isDirectory && isOpen && (
@@ -184,6 +327,7 @@ const FileTreeNode = ({
               key={`${child.path}-${idx}`} 
               item={child} 
               level={level + 1} 
+              siblings={children}
               selectedPath={selectedPath}
               setSelectedPath={setSelectedPath}
               selectedIsFolder={selectedIsFolder}
@@ -194,6 +338,10 @@ const FileTreeNode = ({
               collapseSignal={collapseSignal}
               refreshSignal={refreshSignal}
               onOpenFile={onOpenFile}
+              onContextMenu={onContextMenu}
+              renamingItem={renamingItem}
+              onRenameSubmit={onRenameSubmit}
+              onRenameCancel={onRenameCancel}
             />
           ))}
         </div>
@@ -220,6 +368,17 @@ export const Sidebar = ({
   const [collapseSignal, setCollapseSignal] = useState(0)
   const [refreshSignal, setRefreshSignal] = useState(0)
   const [creatingItem, setCreatingItem] = useState(null) // { type: 'file'|'folder', targetDir: string }
+  const [contextMenu, setContextMenu] = useState(null)
+  const [clipboard, setClipboard] = useState(null)
+  const [renamingItem, setRenamingItem] = useState(null) // path of item being renamed
+
+  const [dialog, setDialog] = useState(null)
+
+  useEffect(() => {
+    const closeMenu = () => setContextMenu(null)
+    window.addEventListener('click', closeMenu)
+    return () => window.removeEventListener('click', closeMenu)
+  }, [])
 
   const handleSelectFolder = async () => {
     const folderPath = await window.api.selectFolder()
@@ -239,6 +398,170 @@ export const Sidebar = ({
       const data = await window.api.readDirectory(projectRoot)
       setRootChildren(data || [])
     }
+  }
+
+  const handleContextMenu = (e, item) => {
+    let x = e.clientX
+    let y = e.clientY
+    
+    // Estimate menu size based on its contents
+    const menuWidth = 240;
+    const menuHeight = 380;
+    
+    // Clamp to window bounds
+    if (x + menuWidth > window.innerWidth) {
+      x = window.innerWidth - menuWidth;
+    }
+    if (y + menuHeight > window.innerHeight) {
+      y = window.innerHeight - menuHeight;
+    }
+    
+    // Ensure we don't go off the top/left edge if the window is tiny
+    x = Math.max(8, x);
+    y = Math.max(8, y);
+    
+    setContextMenu({ x, y, targetItem: item })
+  }
+
+  const handleRevealInExplorer = (item) => {
+    window.api.revealInExplorer(item.path)
+    setContextMenu(null)
+  }
+
+  const handleCut = (item) => {
+    setClipboard({ action: 'cut', path: item.path })
+    setContextMenu(null)
+  }
+
+  const handleCopy = (item) => {
+    setClipboard({ action: 'copy', path: item.path })
+    setContextMenu(null)
+  }
+
+  const handlePaste = async (item) => {
+    if (!clipboard) return
+    setContextMenu(null)
+    const destFolder = item.isDirectory ? item.path : getParentPath(item.path)
+    const fileName = clipboard.path.split(/[/\\]/).pop()
+    const destPath = `${destFolder}/${fileName}`
+    
+    if (clipboard.action === 'cut') {
+      const res = await window.api.renameItem(clipboard.path, destPath, projectRoot)
+      if (res.success) {
+        setClipboard(null)
+        handleRefresh()
+        window.dispatchEvent(new CustomEvent('file-renamed', { detail: { oldPath: clipboard.path, newPath: destPath, newName: fileName } }))
+      } else {
+        console.error(res.error)
+      }
+    } else {
+      const attemptCopy = async (mode = '') => {
+        const res = await window.api.copyItem(clipboard.path, destPath, projectRoot, mode)
+        if (res.success) {
+          handleRefresh()
+        } else if (res.error === 'exists') {
+          setDialog({
+            type: 'confirm',
+            title: 'File Exists',
+            message: `File ${fileName} already exists. Replace?`,
+            onConfirm: () => {
+              attemptCopy('overwrite')
+              setDialog(null)
+            },
+            onCancel: () => setDialog(null)
+          })
+        } else {
+          console.error(res.error)
+          setDialog({ type: 'alert', title: 'Copy Failed', message: res.error })
+        }
+      }
+      attemptCopy()
+    }
+  }
+
+  const handleCopyPath = async (item) => {
+    try {
+      if (window.api.writeClipboardText) {
+        await window.api.writeClipboardText(item.path)
+      } else {
+        await navigator.clipboard.writeText(item.path)
+      }
+      setDialog({ type: 'alert', title: 'Path Copied', message: `Copied path to clipboard:\n${item.path}`, onConfirm: () => setDialog(null) })
+    } catch (err) {
+      console.error(err)
+      setDialog({ type: 'alert', title: 'Copy Failed', message: err.message, onConfirm: () => setDialog(null) })
+    }
+    setContextMenu(null)
+  }
+
+  const handleCopyRelativePath = async (item) => {
+    const rel = item.path.replace(projectRoot, '').replace(/^[/\\]/, '')
+    try {
+      if (window.api.writeClipboardText) {
+        await window.api.writeClipboardText(rel)
+      } else {
+        await navigator.clipboard.writeText(rel)
+      }
+      setDialog({ type: 'alert', title: 'Relative Path Copied', message: `Copied relative path to clipboard:\n${rel}`, onConfirm: () => setDialog(null) })
+    } catch (err) {
+      console.error(err)
+      setDialog({ type: 'alert', title: 'Copy Failed', message: err.message, onConfirm: () => setDialog(null) })
+    }
+    setContextMenu(null)
+  }
+
+  const handleRenameStart = (item) => {
+    setRenamingItem(item.path)
+    setContextMenu(null)
+  }
+
+  const handleRenameSubmit = async (item, newName) => {
+    const oldPath = item.path
+    const newPath = `${getParentPath(oldPath)}/${newName}`
+    const res = await window.api.renameItem(oldPath, newPath, projectRoot)
+    if (res.success) {
+      setRenamingItem(null)
+      handleRefresh()
+      window.dispatchEvent(new CustomEvent('file-renamed', { detail: { oldPath, newPath, newName } }))
+    } else {
+      console.error(res.error)
+      setDialog({ type: 'alert', title: 'Rename Failed', message: res.error, onConfirm: () => setDialog(null) })
+    }
+  }
+
+  const handleRenameCancel = () => setRenamingItem(null)
+
+  const handleDelete = async (item) => {
+    setContextMenu(null)
+    const res = await window.api.deleteItem(item.path, projectRoot)
+    if (res.success) {
+      handleRefresh()
+      window.dispatchEvent(new CustomEvent('file-deleted', { detail: { path: item.path } }))
+    } else {
+      console.error(res.error)
+      setDialog({ type: 'alert', title: 'Delete Failed', message: res.error, onConfirm: () => setDialog(null) })
+    }
+  }
+
+  const handleDeletePermanent = async (item) => {
+    setContextMenu(null)
+    setDialog({
+      type: 'confirm',
+      title: 'Permanent Delete',
+      message: `Are you sure you want to permanently delete '${item.name}'? This cannot be undone.`,
+      onConfirm: async () => {
+        setDialog(null)
+        const res = await window.api.deleteItemPermanent(item.path, projectRoot)
+        if (res.success) {
+          handleRefresh()
+          window.dispatchEvent(new CustomEvent('file-deleted', { detail: { path: item.path } }))
+        } else {
+          console.error(res.error)
+          setDialog({ type: 'alert', title: 'Delete Failed', message: res.error, onConfirm: () => setDialog(null) })
+        }
+      },
+      onCancel: () => setDialog(null)
+    })
   }
 
   useEffect(() => {
@@ -346,7 +669,7 @@ export const Sidebar = ({
 
       <div className="sidebar-content">
         {projectRoot ? (
-          <div className="file-tree" onClick={e => e.stopPropagation()}>
+          <div className="file-tree" onClick={e => e.stopPropagation()} onContextMenu={(e) => { e.preventDefault(); handleContextMenu(e, { path: projectRoot, isDirectory: true, name: rootName }) }}>
             <div 
               className={`project-root-label ${isRootSelected ? 'selected' : ''}`}
               onClick={handleRootClick}
@@ -390,6 +713,7 @@ export const Sidebar = ({
                 key={`${child.path}-${idx}`} 
                 item={child} 
                 level={0} 
+                siblings={rootChildren}
                 selectedPath={selectedPath}
                 setSelectedPath={setSelectedPath}
                 selectedIsFolder={selectedIsFolder}
@@ -400,15 +724,74 @@ export const Sidebar = ({
                 collapseSignal={collapseSignal}
                 refreshSignal={refreshSignal}
                 onOpenFile={onOpenFile}
+                onContextMenu={handleContextMenu}
+                renamingItem={renamingItem}
+                onRenameSubmit={handleRenameSubmit}
+                onRenameCancel={handleRenameCancel}
               />
             ))}
           </div>
         ) : (
-          <div className="empty-workspace">
-            <p>You have not yet opened a folder.</p>
+          <div className="sidebar-empty">
+            <p>No folder opened.</p>
           </div>
         )}
       </div>
+
+      {contextMenu && (
+        <div 
+          className="editor-context-menu" 
+          style={{ left: contextMenu.x, top: contextMenu.y, position: 'fixed', zIndex: 1000 }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="editor-context-menu-item" onClick={() => handleRevealInExplorer(contextMenu.targetItem)}>Reveal in File Explorer</div>
+          <div className="editor-context-menu-separator"></div>
+          <div className="editor-context-menu-item" onClick={() => handleCut(contextMenu.targetItem)}>Cut</div>
+          <div className="editor-context-menu-item" onClick={() => handleCopy(contextMenu.targetItem)}>Copy</div>
+          <div className={`editor-context-menu-item ${!clipboard ? 'disabled' : ''}`} onClick={() => handlePaste(contextMenu.targetItem)}>Paste</div>
+          <div className="editor-context-menu-separator"></div>
+          <div className="editor-context-menu-item" onClick={() => handleCopyPath(contextMenu.targetItem)}>Copy Path</div>
+          <div className="editor-context-menu-item" onClick={() => handleCopyRelativePath(contextMenu.targetItem)}>Copy Relative Path</div>
+          <div className="editor-context-menu-separator"></div>
+          <div className="editor-context-menu-item" onClick={() => handleRenameStart(contextMenu.targetItem)}>Rename</div>
+          <div className="editor-context-menu-item delete" onClick={() => handleDelete(contextMenu.targetItem)}>Delete</div>
+          <div className="editor-context-menu-item delete-permanent" onClick={() => handleDeletePermanent(contextMenu.targetItem)} style={{ color: '#f48771' }}>Delete Permanently</div>
+        </div>
+      )}
+
+      {/* Themed Dialog for Alerts & Confirms */}
+      {dialog && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, 
+          backgroundColor: 'rgba(0, 0, 0, 0.6)', backdropFilter: 'blur(2px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000
+        }}>
+          <div style={{
+            backgroundColor: 'var(--bg-surface, #1e1e1e)', padding: '24px', borderRadius: '8px',
+            width: '400px', maxWidth: '90%', border: '1px solid var(--border-subtle, #333)',
+            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)'
+          }}>
+            <h3 style={{ margin: '0 0 12px 0', fontSize: '16px', color: 'var(--text-primary)' }}>{dialog.title}</h3>
+            <p style={{ margin: '0 0 24px 0', fontSize: '14px', color: 'var(--text-muted)', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{dialog.message}</p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+              {dialog.type === 'confirm' && (
+                <button 
+                  onClick={dialog.onCancel}
+                  style={{ padding: '6px 16px', background: 'transparent', border: '1px solid var(--border-subtle, #333)', color: 'var(--text-primary)', borderRadius: '4px', cursor: 'pointer' }}
+                >
+                  Cancel
+                </button>
+              )}
+              <button 
+                onClick={dialog.onConfirm || (() => setDialog(null))}
+                style={{ padding: '6px 16px', backgroundColor: 'var(--accent-color, #e0a96d)', color: '#000', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 500 }}
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </aside>
   )
 }
