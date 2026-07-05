@@ -1890,7 +1890,7 @@ the new code
 
         {/* Left Section */}
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '24px', WebkitAppRegion: 'no-drag' }}>
-          <span style={{ fontSize: '14px', fontWeight: 'bold', color: '#f1e05a', letterSpacing: '0.5px' }}>comπle</span>
+          <span style={{ fontSize: '14px', fontWeight: 'bold', color: 'var(--accent-color, #8b5cf6)', letterSpacing: '0.5px' }}>comπle</span>
           <div style={{ display: 'flex', gap: '16px', fontSize: '13px', color: 'var(--text-muted)' }}>
             {[
               {
@@ -2261,15 +2261,15 @@ the new code
             style={{
               display: 'flex', alignItems: 'center', gap: '6px',
               background: rightPanel === 'chat' ? 'var(--bg-dark)' : 'transparent',
-              color: rightPanel === 'chat' ? '#f1e05a' : 'var(--text-muted)',
-              border: `1px solid ${rightPanel === 'chat' ? '#f1e05a' : 'var(--border-base)'}`,
+              color: rightPanel === 'chat' ? 'var(--accent-color, #8b5cf6)' : 'var(--text-muted)',
+              border: `1px solid ${rightPanel === 'chat' ? 'var(--accent-color, #8b5cf6)' : 'var(--border-base)'}`,
               padding: '4px 10px', borderRadius: '6px', fontSize: '11px',
               fontWeight: '500', cursor: 'pointer', WebkitAppRegion: 'no-drag',
               transition: 'all 0.2s'
             }}
             title="Toggle AI Agent"
           >
-            <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: rightPanel === 'chat' ? '#f1e05a' : 'var(--text-muted)' }} />
+            <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: rightPanel === 'chat' ? 'var(--accent-color, #8b5cf6)' : 'var(--text-muted)' }} />
             AI Agent
           </button>
 

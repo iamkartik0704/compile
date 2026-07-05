@@ -658,14 +658,7 @@ export const Sidebar = ({
         <h2>EXPLORER</h2>
       </div>
       
-      {!projectRoot && (
-        <div className="sidebar-actions">
-          <button className="btn-open-folder" onClick={handleSelectFolder}>
-            <FolderSearch size={16} />
-            <span>Open Folder</span>
-          </button>
-        </div>
-      )}
+
 
       <div className="sidebar-content">
         {projectRoot ? (
@@ -732,8 +725,36 @@ export const Sidebar = ({
             ))}
           </div>
         ) : (
-          <div className="sidebar-empty">
-            <p>No folder opened.</p>
+          <div className="sidebar-empty" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', padding: '40px 20px', textAlign: 'center', color: 'inherit' }}>
+            <FolderSearch size={48} style={{ marginBottom: '16px', opacity: 0.8, color: 'var(--accent-color, #8b5cf6)' }} />
+            <p style={{ margin: '0 0 8px 0', fontSize: '14px', fontWeight: 600, color: 'inherit', opacity: 0.9 }}>No Folder Opened</p>
+            <p style={{ margin: '0 0 24px 0', fontSize: '12px', lineHeight: 1.5, color: 'inherit', opacity: 0.6 }}>You have not yet opened a workspace. Open a folder to view your files and start coding.</p>
+            <button 
+              onClick={handleSelectFolder}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '8px',
+                padding: '6px 14px',
+                background: 'transparent',
+                color: 'var(--accent-color, #8b5cf6)',
+                border: '1px solid var(--accent-color, #8b5cf6)',
+                borderRadius: '4px',
+                fontSize: '13px',
+                fontWeight: 500,
+                cursor: 'pointer',
+                transition: 'all 0.2s ease'
+              }}
+              onMouseOver={(e) => {
+                e.currentTarget.style.background = 'var(--accent-color, #8b5cf6)';
+                e.currentTarget.style.color = 'var(--bg-deep, #1e1e1e)';
+              }}
+              onMouseOut={(e) => {
+                e.currentTarget.style.background = 'transparent';
+                e.currentTarget.style.color = 'var(--accent-color, #8b5cf6)';
+              }}
+            >
+              <FolderSearch size={16} />
+              Open Folder
+            </button>
           </div>
         )}
       </div>
