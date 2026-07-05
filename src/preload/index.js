@@ -15,6 +15,11 @@ const api = {
   newWindow: () => ipcRenderer.invoke('create-new-window'),
   send: (channel, data) => ipcRenderer.send(channel, data),
   invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
+  on: (channel, callback) => {
+    const wrapped = (_event, data) => callback(data)
+    ipcRenderer.on(channel, wrapped)
+    return () => ipcRenderer.removeListener(channel, wrapped)
+  },
 
   // ── File Operations ──
 

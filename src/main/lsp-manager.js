@@ -5,6 +5,10 @@ import { detectCppCompilers, getCompilerConfig, saveCompilerConfig, validateHost
 import fs from 'fs'
 import path from 'path'
 import url from 'url'
+import { pathToFileURL } from 'node:url'
+
+// ─── Canonical LSP URI: byte-identical to renderer's monaco.Uri.file() ───
+const toLspUri = (absPath) => pathToFileURL(absPath).toString()
 
 const normalizeCanonicalPath = (filePath) => {
   if (!filePath || typeof filePath !== 'string') return '';
@@ -95,10 +99,19 @@ function parseAndForwardMessages(language, entry, onMessage, setStatus) {
         }
       } else {
         if (message.method === 'textDocument/publishDiagnostics' && message.params && message.params.uri) {
-          const filePath = uriToPath(message.params.uri)
+          // Zero-debounce forwarding: keep the canonical LSP URI intact so the
+          // renderer's monaco.Uri.file() lookup hits on the first try, but ALSO
+          // ship a normalized fsPath for the fuzzy fallback path.
+          const canonicalUri = message.params.uri
+          const filePath = uriToPath(canonicalUri)
           const canonicalPath = normalizeCanonicalPath(filePath)
-          diagnosticCache.set(canonicalPath, message.params.diagnostics || [])
-          sendToWindow('lsp:diagnostics', { filePath: canonicalPath, diagnostics: message.params.diagnostics || [] })
+          const diagnostics = message.params.diagnostics || []
+          diagnosticCache.set(canonicalPath, diagnostics)
+          sendToWindow('lsp:diagnostics', {
+            uri: canonicalUri,
+            filePath: canonicalPath,
+            diagnostics
+          })
         }
         if (onMessage) onMessage(message)
         else sendToWindow('lsp-server-message', { language, message })
@@ -257,6 +270,75 @@ export function killLanguageServer(language) {
   })
 }
 
+// ─── Canonical-URI document tracking ─────────────────────────────
+// Keyed by toLspUri(absPath) so main-side lifecycle and renderer-side
+// monaco.Uri.file() land on byte-identical strings.
+export async function openDoc(absPath, text, languageId) {
+  if (!absPath) return null
+  const uri = toLspUri(absPath)
+  const language = languageId || 'plaintext'
+
+  let entry = lspProcesses.get(language)
+  if (!entry) {
+    const parts = absPath.replace(/\\/g, '/').split('/')
+    parts.pop()
+    await startLanguageServer(language, toLspUri(parts.join('/')))
+    entry = lspProcesses.get(language)
+  }
+  if (!entry) return null
+
+  if (entry.openDocs && entry.openDocs.has(uri)) return uri
+  if (!entry.openDocs) entry.openDocs = new Map()
+  entry.openDocs.set(uri, 1)
+
+  const msg = {
+    jsonrpc: '2.0',
+    method: 'textDocument/didOpen',
+    params: { textDocument: { uri, languageId: language, version: 1, text: text ?? '' } }
+  }
+  if (entry.status === 'starting') entry.requestQueue.push(msg)
+  else sendToLanguageServer(language, msg)
+  return uri
+}
+
+export function changeDoc(absPath, text, languageId) {
+  if (!absPath) return
+  const uri = toLspUri(absPath)
+  const language = languageId || 'plaintext'
+  const entry = lspProcesses.get(language)
+  if (!entry) return
+  const prev = (entry.openDocs && entry.openDocs.get(uri)) || 0
+  const version = prev + 1
+  if (entry.openDocs) entry.openDocs.set(uri, version)
+  const msg = {
+    jsonrpc: '2.0',
+    method: 'textDocument/didChange',
+    params: {
+      textDocument: { uri, version },
+      contentChanges: [{ text: text ?? '' }]
+    }
+  }
+  if (entry.status === 'starting') entry.requestQueue.push(msg)
+  else sendToLanguageServer(language, msg)
+}
+
+export function closeDoc(absPath, languageId) {
+  if (!absPath) return
+  const uri = toLspUri(absPath)
+  const language = languageId || 'plaintext'
+  const entry = lspProcesses.get(language)
+  diagnosticCache.delete(normalizeCanonicalPath(absPath))
+  if (!entry) return
+  if (entry.openDocs) entry.openDocs.delete(uri)
+  const msg = {
+    jsonrpc: '2.0',
+    method: 'textDocument/didClose',
+    params: { textDocument: { uri } }
+  }
+  if (entry.status === 'starting') entry.requestQueue.push(msg)
+  else sendToLanguageServer(language, msg)
+}
+
 export function sendToLanguageServer(language, message) {
   const entry = lspProcesses.get(language)
   if (!entry || !entry.process || !entry.process.stdin) {
@@ -292,8 +374,8 @@ export function setupLspIpcHandlers() {
 
   ipcMain.on('lsp:document-open', async (event, { filePath, text, languageId }) => {
     if (!filePath) return
-    const language = languageId || 'plaintext' // fallback
-    
+    const language = languageId || 'plaintext'
+
     if (language === 'cpp' || language === 'c') {
       const validation = await validateHostToolchain()
       if (!validation.success) {
@@ -317,57 +399,23 @@ export function setupLspIpcHandlers() {
       }
     }
 
-    const uri = pathToUri(filePath)
-    const msg = {
-      jsonrpc: '2.0',
-      method: 'textDocument/didOpen',
-      params: {
-        textDocument: { uri, languageId: language, version: 1, text: actualText }
-      }
-    }
+    await openDoc(filePath, actualText, language)
+  })
 
-    let entry = lspProcesses.get(language)
-    if (!entry) {
-      let rootUri = null
-      const parts = filePath.replace(/\\/g, '/').split('/')
-      parts.pop()
-      rootUri = pathToUri(parts.join('/'))
-      await startLanguageServer(language, rootUri)
-      entry = lspProcesses.get(language)
+  ipcMain.on('lsp:document-change', (_event, { filePath, text, languageId }) => {
+    if (!filePath) return
+    const language = languageId || 'plaintext'
+    // If the server isn't running yet for whatever reason, degrade to didOpen.
+    const entry = lspProcesses.get(language)
+    if (!entry || !(entry.openDocs && entry.openDocs.has(toLspUri(filePath)))) {
+      openDoc(filePath, text ?? '', language)
+      return
     }
-
-    if (entry) {
-      entry.openDocs.set(uri, 1)
-      if (entry.status === 'starting') {
-        entry.requestQueue.push(msg)
-      } else {
-        sendToLanguageServer(language, msg)
-      }
-    }
+    changeDoc(filePath, text ?? '', language)
   })
 
   ipcMain.on('lsp:document-close', (_event, { filePath, languageId }) => {
-    if (!filePath) return
-    const language = languageId || 'plaintext'
-    const entry = lspProcesses.get(language)
-    
-    const canonicalKey = normalizeCanonicalPath(filePath);
-    diagnosticCache.delete(canonicalKey);
-    
-    if (entry) {
-      const uri = pathToUri(filePath)
-      entry.openDocs.delete(uri)
-      const msg = {
-        jsonrpc: '2.0',
-        method: 'textDocument/didClose',
-        params: { textDocument: { uri } }
-      }
-      if (entry.status === 'starting') {
-        entry.requestQueue.push(msg)
-      } else {
-        sendToLanguageServer(language, msg)
-      }
-    }
+    closeDoc(filePath, languageId || 'plaintext')
   })
 
   ipcMain.handle('lsp-status', (_event, language) => {

@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { X, Sparkles, Code2, Database } from 'lucide-react'
 import { skeletonizeCode } from '../utils/astParser'
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
 
 function getLanguageFromPath(path) {
   if (!path) return 'javascript'
@@ -27,8 +29,10 @@ export function ContextInspector({ isOpen, onClose, originalCode, filePath }) {
   const [errorMsg, setErrorMsg] = useState(null)
   const [notice, setNotice] = useState(null)
   const [isProcessing, setIsProcessing] = useState(false)
+  const [lastOriginalCode, setLastOriginalCode] = useState(originalCode)
 
   useEffect(() => {
+    let active = true;
     if (isOpen && originalCode) {
       const process = async () => {
         setIsProcessing(true)
@@ -36,14 +40,18 @@ export function ContextInspector({ isOpen, onClose, originalCode, filePath }) {
         const lang = getLanguageFromPath(filePath)
 
         if (!lang) {
-          setSkeletonCode(originalCode)
-          setErrorMsg(null)
-          setNotice(`AST compression is not supported for this file type. Showing the original content unchanged.`)
-          setIsProcessing(false)
+          if (active) {
+            setSkeletonCode(originalCode)
+            setErrorMsg(null)
+            setNotice(`AST compression is not supported for this file type. Showing the original content unchanged.`)
+            setIsProcessing(false)
+            setLastOriginalCode(originalCode)
+          }
           return
         }
 
         const result = await skeletonizeCode(originalCode, lang)
+        if (!active) return
 
         if (typeof result === 'object' && result.error) {
           const isNoFuncs = /No skeletonizable function bodies found/i.test(result.error)
@@ -56,33 +64,38 @@ export function ContextInspector({ isOpen, onClose, originalCode, filePath }) {
             setNotice(null)
           }
           setSkeletonCode(result.code || originalCode)
+          setLastOriginalCode(originalCode)
         } else {
           setSkeletonCode(result.code || result)
           setNotice(null)
+          setLastOriginalCode(originalCode)
         }
         setIsProcessing(false)
       }
       process()
     }
+    return () => { active = false }
   }, [isOpen, originalCode, filePath])
 
   if (!isOpen) return null
 
   // Calculate token savings (1 token ~= 4 chars roughly)
   const originalChars = originalCode ? originalCode.length : 0
-  const skeletonChars = skeletonCode ? skeletonCode.length : 0
+  const isStale = originalCode !== lastOriginalCode
+  const skeletonChars = (isProcessing || isStale || !skeletonCode) ? originalChars : skeletonCode.length
   const originalTokens = Math.round(originalChars / 4)
   const skeletonTokens = Math.round(skeletonChars / 4)
   const savedTokens = originalTokens - skeletonTokens
   const savedPercent = originalTokens > 0 ? Math.round((savedTokens / originalTokens) * 100) : 0
+  const isNegative = savedTokens < 0
+  const isZero = savedTokens === 0
 
   return (
     <div style={{
       position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
       background: 'var(--bg-deep)',
       backdropFilter: 'blur(10px)',
-      zIndex: 9999, display: 'flex', flexDirection: 'column',
-      fontFamily: 'Inter, sans-serif'
+      zIndex: 9999, display: 'flex', flexDirection: 'column'
     }}>
       {/* Header */}
       <div style={{
@@ -91,7 +104,7 @@ export function ContextInspector({ isOpen, onClose, originalCode, filePath }) {
         display: 'flex', justifyContent: 'space-between', alignItems: 'center'
       }}>
         <div>
-          <h2 style={{ margin: 0, color: 'var(--text-bright)', fontSize: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <h2 style={{ margin: 0, color: 'var(--text-primary)', fontSize: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Sparkles size={20} color="var(--accent-color)" />
             Passive Context Compressor
           </h2>
@@ -99,10 +112,8 @@ export function ContextInspector({ isOpen, onClose, originalCode, filePath }) {
             Preview how the AI sees your code before sending it to the API.
           </p>
         </div>
-        <button onClick={onClose} style={{
-          background: 'var(--bg-elevated)', border: '1px solid var(--border-base)', color: 'var(--text-primary)',
-          width: '36px', height: '36px', borderRadius: '8px', cursor: 'pointer',
-          display: 'flex', alignItems: 'center', justifyContent: 'center'
+        <button onClick={onClose} className="tab-action" style={{
+          background: 'transparent', border: 'none', color: 'var(--text-primary)', cursor: 'pointer'
         }}>
           <X size={18} />
         </button>
@@ -124,10 +135,10 @@ export function ContextInspector({ isOpen, onClose, originalCode, filePath }) {
         </div>
         <div>
           <div style={{ color: 'var(--text-muted)', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Token Savings</div>
-          <div style={{ color: '#10a37f', fontSize: '24px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            {savedPercent}%
-            <span style={{ fontSize: '14px', background: '#10a37f', color: '#fff', padding: '2px 8px', borderRadius: '12px' }}>
-              -{savedTokens.toLocaleString()} tokens
+          <div style={{ color: isNegative ? '#ef4444' : (isZero ? 'var(--text-muted)' : '#10a37f'), fontSize: '24px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {savedPercent > 0 ? `+${savedPercent}` : savedPercent}%
+            <span style={{ fontSize: '14px', background: isNegative ? 'rgba(239, 68, 68, 0.2)' : (isZero ? 'var(--bg-elevated)' : '#10a37f'), color: isNegative ? '#ef4444' : (isZero ? 'var(--text-primary)' : '#fff'), padding: '2px 8px', borderRadius: '12px' }}>
+              {savedTokens > 0 ? `-${savedTokens.toLocaleString()} tokens` : (isNegative ? `+${Math.abs(savedTokens).toLocaleString()} tokens` : '0 tokens')}
             </span>
           </div>
         </div>
@@ -141,9 +152,15 @@ export function ContextInspector({ isOpen, onClose, originalCode, filePath }) {
             <Code2 size={14} />
             Original Code (Heavy)
           </div>
-          <pre style={{ margin: 0, padding: '20px', overflow: 'auto', flex: 1, color: 'var(--text-primary)', fontSize: '13px', lineHeight: '1.5', background: 'var(--bg-surface)' }}>
-            {originalCode}
-          </pre>
+          <div style={{ flex: 1, overflow: 'auto', background: 'var(--bg-surface)' }}>
+            <SyntaxHighlighter
+              language={getLanguageFromPath(filePath) || 'javascript'}
+              style={vscDarkPlus}
+              customStyle={{ margin: 0, padding: '20px', background: 'transparent', fontSize: '13px', lineHeight: '1.5' }}
+            >
+              {originalCode || ''}
+            </SyntaxHighlighter>
+          </div>
         </div>
 
         {/* Right: Skeleton */}
@@ -154,17 +171,29 @@ export function ContextInspector({ isOpen, onClose, originalCode, filePath }) {
           </div>
           {errorMsg && (
             <div style={{ background: 'rgba(239, 68, 68, 0.1)', borderBottom: '1px solid rgba(239, 68, 68, 0.2)', padding: '10px 20px', color: '#ef4444', fontSize: '12px', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
-              ⚠️ Error: {errorMsg}
+              Error: {errorMsg}
             </div>
           )}
           {notice && (
             <div style={{ background: 'var(--bg-elevated)', borderBottom: '1px solid var(--border-base)', padding: '10px 20px', color: 'var(--text-muted)', fontSize: '12px' }}>
-              ℹ️ {notice}
+              Notice: {notice}
             </div>
           )}
-          <pre style={{ margin: 0, padding: '20px', overflow: 'auto', flex: 1, color: 'var(--text-primary)', fontSize: '13px', lineHeight: '1.5' }}>
-            {isProcessing ? 'Processing AST...' : skeletonCode}
-          </pre>
+          <div style={{ flex: 1, overflow: 'auto', background: 'var(--bg-surface)' }}>
+            {isProcessing ? (
+              <pre style={{ margin: 0, padding: '20px', color: 'var(--text-primary)', fontSize: '13px', lineHeight: '1.5' }}>
+                Processing AST...
+              </pre>
+            ) : (
+              <SyntaxHighlighter
+                language={getLanguageFromPath(filePath) || 'javascript'}
+                style={vscDarkPlus}
+                customStyle={{ margin: 0, padding: '20px', background: 'transparent', fontSize: '13px', lineHeight: '1.5' }}
+              >
+                {skeletonCode || ''}
+              </SyntaxHighlighter>
+            )}
+          </div>
         </div>
       </div>
     </div>

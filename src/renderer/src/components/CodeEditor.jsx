@@ -50,8 +50,6 @@ loader.config({ monaco })
 let isMonacoKeybindingsSynced = false;
 let previousShortcuts = null;
 
-
-
 const mapCustomIdToMonacoCommandId = (id) => {
   switch (id) {
     case 'edit.undo': return 'undo';
@@ -75,11 +73,99 @@ const mapCustomIdToMonacoCommandId = (id) => {
     case 'ai.autocomplete': return 'editor.action.inlineSuggest.trigger';
     case 'ai.accept': return 'editor.action.inlineSuggest.commit';
     case 'ai.dismiss': return 'editor.action.inlineSuggest.hide';
+    case 'general.commandPalette': return 'editor.action.quickCommand';
     default: return null;
   }
 }
 
+const convertPartToMonaco = (partKeys, monacoObj) => {
+  let kb = 0;
+  if (partKeys.includes('Ctrl')) kb |= monacoObj.KeyMod.CtrlCmd;
+  if (partKeys.includes('Shift')) kb |= monacoObj.KeyMod.Shift;
+  if (partKeys.includes('Alt')) kb |= monacoObj.KeyMod.Alt;
+  if (partKeys.includes('Meta')) kb |= monacoObj.KeyMod.WinCtrl;
+  
+  const baseKey = partKeys.filter(k => !['Ctrl', 'Shift', 'Alt', 'Meta'].includes(k))[0];
+  if (baseKey) {
+    const upper = baseKey.toUpperCase();
+    if (upper === 'UPARROW' || upper === 'UP' || upper === 'ARROWUP') kb |= monacoObj.KeyCode.UpArrow;
+    else if (upper === 'DOWNARROW' || upper === 'DOWN' || upper === 'ARROWDOWN') kb |= monacoObj.KeyCode.DownArrow;
+    else if (upper === 'LEFTARROW' || upper === 'LEFT' || upper === 'ARROWLEFT') kb |= monacoObj.KeyCode.LeftArrow;
+    else if (upper === 'RIGHTARROW' || upper === 'RIGHT' || upper === 'ARROWRIGHT') kb |= monacoObj.KeyCode.RightArrow;
+    else if (upper === 'ESC' || upper === 'ESCAPE') kb |= monacoObj.KeyCode.Escape;
+    else if (upper === 'SPACE') kb |= monacoObj.KeyCode.Space;
+    else if (upper === 'ENTER') kb |= monacoObj.KeyCode.Enter;
+    else if (upper === 'TAB') kb |= monacoObj.KeyCode.Tab;
+    else if (upper === 'BACKSPACE') kb |= monacoObj.KeyCode.Backspace;
+    else if (upper === 'DELETE') kb |= monacoObj.KeyCode.Delete;
+    else if (upper === '`') kb |= monacoObj.KeyCode.Backquote;
+    else if (upper === '\\') kb |= monacoObj.KeyCode.Backslash;
+    else if (upper === '/') kb |= monacoObj.KeyCode.Slash;
+    else if (upper === ',') kb |= monacoObj.KeyCode.Comma;
+    else if (upper === '.') kb |= monacoObj.KeyCode.Period;
+    else if (upper === ';') kb |= monacoObj.KeyCode.Semicolon;
+    else if (upper === "'") kb |= monacoObj.KeyCode.Quote;
+    else if (upper === '[') kb |= monacoObj.KeyCode.BracketLeft;
+    else if (upper === ']') kb |= monacoObj.KeyCode.BracketRight;
+    else if (upper === '-') kb |= monacoObj.KeyCode.Minus;
+    else if (upper === '=') kb |= monacoObj.KeyCode.Equal;
+    else if (upper.length === 1 && upper >= 'A' && upper <= 'Z') {
+      kb |= monacoObj.KeyCode[`Key${upper}`];
+    } else if (upper.length === 1 && upper >= '0' && upper <= '9') {
+      kb |= monacoObj.KeyCode[`Digit${upper}`];
+    } else if (upper.startsWith('F') && upper.length > 1) {
+      kb |= monacoObj.KeyCode[upper];
+    }
+  }
+  return kb;
+};
 
+const parseToMonacoKeybinding = (keys, monacoObj) => {
+  if (!keys || keys.length === 0) return 0;
+  
+  let parts = [];
+  let currentPart = [];
+  for (const k of keys) {
+    currentPart.push(k);
+    if (!['Ctrl', 'Shift', 'Alt', 'Meta'].includes(k)) {
+      parts.push(currentPart);
+      currentPart = [];
+    }
+  }
+  if (currentPart.length > 0 && parts.length === 0) parts.push(currentPart);
+  
+  if (parts.length === 0) return 0;
+  if (parts.length === 1) return convertPartToMonaco(parts[0], monacoObj);
+  return monacoObj.KeyMod.chord(
+    convertPartToMonaco(parts[0], monacoObj),
+    convertPartToMonaco(parts[1], monacoObj)
+  );
+};
+
+const syncMonacoKeybindings = (shortcuts, monacoObj) => {
+  if (!monacoObj || !monacoObj.editor) return;
+  const rules = [];
+  
+  shortcuts.forEach(group => {
+    group.items.forEach(item => {
+      const monacoCommandId = mapCustomIdToMonacoCommandId(item.id);
+      if (monacoCommandId) {
+        const keybinding = parseToMonacoKeybinding(item.keys, monacoObj);
+        if (keybinding !== 0) {
+          rules.push({
+            keybinding,
+            command: monacoCommandId
+          });
+        }
+      }
+    });
+  });
+  
+  if (rules.length > 0) {
+    return monacoObj.editor.addKeybindingRules(rules);
+  }
+  return null;
+};
 
 // ─── Lightweight LSP Client ────────────────────────────────────────
 // ─── Lightweight LSP Client (per-language) ─────────────────────────
@@ -89,7 +175,6 @@ class LspClient {
     this.language = language
     this.requestId = 0
     this.pendingRequests = new Map()
-    this.onDiagnostics = null
     this.onDiagnostics = null
     this.initialized = false
   }
@@ -322,12 +407,25 @@ function registerProvidersForLanguage(monacoLangId) {
   // ── Ghost Text Auto-Completion (Copilot) ──
   monaco.languages.registerInlineCompletionsProvider(monacoLangId, {
     provideInlineCompletions: async (model, position, context, token) => {
-      if (!globalAiConfig || globalAiConfig.autoCompleteEnabled === false) return { items: [] }
+      if (!globalAiConfig || globalAiConfig.autoCompleteEnabled === false) return { items: [], disposeInlineCompletions: () => {} }
 
-      // 1. Native Debounce using cancellation token
-      // Increased default delay to 2000ms to prevent popping up on every keystroke
-      await new Promise(resolve => setTimeout(resolve, globalAiConfig.autoCompleteDelay || 2000))
-      if (token.isCancellationRequested) return { items: [] }
+      // 1. Debounce using cancellation token.
+      // Default lowered from 2000ms to 300ms — with a 2s debounce, a
+      // continuous typist re-triggers (and cancels the prior call) more
+      // often than once every 2s, so the request never survives long
+      // enough to fire. It only ever "completed" after a long pause, which
+      // looked like "only triggers on Enter" since Enter is the most common
+      // pause point. 300ms feels instant but still absorbs normal typing
+      // cadence. Polling in small increments (instead of one long sleep)
+      // also means a fast subsequent keystroke cancels this call almost
+      // immediately instead of only checking at the very end of the wait.
+      const debounceMs = globalAiConfig.autoCompleteDelay ?? 300
+      const pollMs = 30
+      for (let waited = 0; waited < debounceMs; waited += pollMs) {
+        if (token.isCancellationRequested) return { items: [], disposeInlineCompletions: () => {} }
+        await new Promise(resolve => setTimeout(resolve, pollMs))
+      }
+      if (token.isCancellationRequested) return { items: [], disposeInlineCompletions: () => {} }
 
       // 2. Build Context
       const startLine = Math.max(1, position.lineNumber - 30)
@@ -374,7 +472,7 @@ COMPLETION:`
       // 4. Fetch Completion
       const res = await window.api.getAiCompletion(prompt, globalAiConfig)
       if (token.isCancellationRequested || !res.success || !res.text) {
-        return { items: [] }
+        return { items: [], disposeInlineCompletions: () => {} }
       }
 
       let completionText = res.text
@@ -390,7 +488,7 @@ COMPLETION:`
       }
 
       if (completionText.trim() === 'NOTHING') {
-        return { items: [] }
+        return { items: [], disposeInlineCompletions: () => {} }
       }
 
       return {
@@ -399,9 +497,11 @@ COMPLETION:`
             insertText: completionText,
             range: new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column)
           }
-        ]
+        ],
+        disposeInlineCompletions: () => {}
       }
     },
+    disposeInlineCompletions: () => { },
     freeInlineCompletions: () => { }
   })
 
@@ -529,80 +629,121 @@ const EditorTab = ({ file, isActive, isDragging, onDragStart, onDragOver, onDrop
   )
 }
 
+// ─── Zero-shortcut canonical URI helpers ─────────────────────────
+const canonicalUri = (filePath) => {
+  if (!filePath || !window.monaco) return null;
+  return filePath.startsWith('file://')
+    ? window.monaco.Uri.parse(filePath)
+    : window.monaco.Uri.file(filePath);
+};
+
+// Robust normalizer: repeatedly decodes (clangd sometimes double-encodes on
+// Windows, e.g. %253A), tolerates decode failures instead of aborting the
+// whole string, and always collapses to forward-slash/lowercase form so a
+// Uri.file()-derived path and a raw LSP URI string reduce to the same key.
+const normalizePath = (p) => {
+  if (!p || typeof p !== 'string') return '';
+
+  let prev = p;
+  for (let i = 0; i < 3; i++) {
+    try {
+      const decoded = decodeURIComponent(prev);
+      if (decoded === prev) break;
+      prev = decoded;
+    } catch {
+      break; // stop at first invalid escape, keep what we already decoded
+    }
+  }
+
+  return prev
+    .replace(/^file:\/\/\/?/i, '')
+    .replace(/\\/g, '/')
+    .replace(/\/+/g, '/')
+    .toLowerCase()
+    .replace(/^\/+/, '');
+};
+
+// Model registry keyed by normalized path, kept in sync as models are
+// created. This replaces "try exact Uri equality, fall back to a linear
+// scan" — Uri.parse() vs Uri.file() disagree on whether %3A gets decoded,
+// so exact-object lookup silently misses clangd's percent-encoded drive
+// letters on every call. String-key lookup is the only reliable path.
+const modelsByNormalizedPath = new Map();
+
+const registerModelPath = (model) => {
+  if (!model || !model.uri) return;
+  modelsByNormalizedPath.set(normalizePath(model.uri.toString()), model);
+};
+
 const findMonacoModel = (targetFilePath) => {
   if (!targetFilePath || !window.monaco || !window.monaco.editor) return null;
-  
-  // Universal URL-decoding and path cleaning utility
-  const clean = (str) => {
-    if (!str || typeof str !== 'string') return '';
-    let decoded = str;
-    try {
-      decoded = decodeURIComponent(str);
-    } catch (e) {
-      decoded = str;
+  const target = normalizePath(targetFilePath);
+
+  const cached = modelsByNormalizedPath.get(target);
+  if (cached && !cached.isDisposed()) return cached;
+
+  // Cache miss (model created outside registerModelPath) — rebuild once.
+  for (const m of window.monaco.editor.getModels()) {
+    const candidates = [m.uri?.fsPath, m.uri?.path, m.uri?.toString?.()];
+    for (const c of candidates) {
+      if (c && normalizePath(c) === target) {
+        modelsByNormalizedPath.set(target, m);
+        return m;
+      }
     }
-    return decoded
-      .replace(/^file:\/\/\//i, '')
-      .replace(/^file:\/\//i, '')
-      .replace(/\\/g, '/')
-      .replace(/\/$/, '')
-      .toLowerCase()
-      .trim();
-  };
+  }
+  return null;
+};
 
-  const targetClean = clean(targetFilePath);
-  const allModels = window.monaco.editor.getModels();
-
-  // 🔍 THE DIAGNOSTIC X-RAY: Log all open models in RAM so we can see exactly what Monaco is holding
-  const availableModelPaths = allModels.map(m => ({
-    fsPath: m.uri.fsPath,
-    path: m.uri.path,
-    str: m.uri.toString()
-  }));
-  console.log(`[Monaco X-Ray] Seeking: "${targetClean}" | Active Models in RAM (${allModels.length}):`, availableModelPaths);
-
-  // Perform ultra-fuzzy matching across all three Monaco URI properties
-  return allModels.find((model) => {
-    const u = model.uri;
-    const candidate1 = clean(u.fsPath);
-    const candidate2 = clean(u.path);
-    const candidate3 = clean(u.toString());
-
-    // Check exact match or boundary ending match across any of the three properties
-    return candidate1 === targetClean || candidate2 === targetClean || candidate3 === targetClean ||
-           candidate1.endsWith(targetClean) || candidate2.endsWith(targetClean) || candidate3.endsWith(targetClean) ||
-           targetClean.endsWith(candidate1) || targetClean.endsWith(candidate2) || targetClean.endsWith(candidate3);
-  });
+const getOrCreateModel = (filePath, content, languageId) => {
+  const uri = canonicalUri(filePath);
+  let model = window.monaco.editor.getModel(uri);
+  if (!model) {
+    model = window.monaco.editor.createModel(content ?? '', languageId, uri);
+    registerModelPath(model);
+  } else if (content != null && model.getValue() !== content) {
+    model.setValue(content);
+  }
+  return model;
 };
 
 const formatLspDiagnosticsToMonaco = (diagnostics) => {
-  if (!Array.isArray(diagnostics)) return [];
+  // 🛡️ DEFENSIVE GUARD: Use safe integer fallbacks if window.monaco hasn't mounted in RAM yet
+  const S = window.monaco && window.monaco.MarkerSeverity 
+    ? window.monaco.MarkerSeverity 
+    : { Error: 8, Warning: 4, Info: 2, Hint: 1 };
+    
+  const sevMap = { 1: S.Error, 2: S.Warning, 3: S.Info, 4: S.Hint };
+  
+  return (diagnostics || []).map((d) => {
+    const sl = d.range?.start?.line ?? 0;
+    const sc = d.range?.start?.character ?? 0;
+    const el = d.range?.end?.line ?? sl;
+    const ec = d.range?.end?.character ?? sc;
 
-  return diagnostics.map((diag) => {
-    const range = diag.range || {};
-    const start = range.start || { line: 0, character: 0 };
-    const end = range.end || { line: start.line, character: start.character + 1 };
+    let startLineNumber = Math.max(1, sl + 1);
+    let startColumn     = Math.max(1, sc + 1);
+    let endLineNumber   = Math.max(1, el + 1);
+    let endColumn       = Math.max(1, ec + 1);
 
-    // DEFENSIVE MATH: LSP is 0-indexed; Monaco strictly mandates >= 1 integers.
-    const startLineNumber = Math.max(1, Math.floor((typeof start.line === 'number' ? start.line : 0) + 1));
-    const startColumn = Math.max(1, Math.floor((typeof start.character === 'number' ? start.character : 0) + 1));
-    const endLineNumber = Math.max(1, Math.floor((typeof end.line === 'number' ? end.line : startLineNumber - 1) + 1));
-    const endColumn = Math.max(1, Math.floor((typeof end.character === 'number' ? end.character : startColumn) + 1));
-
-    // Map LSP severity integers (1=Error, 2=Warning, 3=Info, 4=Hint) to Monaco severities
-    let monacoSeverity = window.monaco ? window.monaco.MarkerSeverity.Error : 8;
-    if (diag.severity === 2) monacoSeverity = window.monaco ? window.monaco.MarkerSeverity.Warning : 4;
-    if (diag.severity === 3) monacoSeverity = window.monaco ? window.monaco.MarkerSeverity.Info : 2;
-    if (diag.severity === 4) monacoSeverity = window.monaco ? window.monaco.MarkerSeverity.Hint : 1;
+    // Monaco requires endColumn > startColumn on the same line to paint a
+    // squiggle at all — a zero-width point range (common from clangd for
+    // missing-token/EOF-style diagnostics) is accepted by setModelMarkers
+    // but renders nothing. Widen it to cover at least one character so the
+    // error is actually visible.
+    if (startLineNumber === endLineNumber && endColumn <= startColumn) {
+      endColumn = startColumn + 1;
+    }
 
     return {
-      severity: monacoSeverity,
-      startLineNumber: startLineNumber,
-      startColumn: startColumn,
-      endLineNumber: endLineNumber,
-      endColumn: endColumn,
-      message: diag.message || 'Syntax Error',
-      source: diag.source || 'clangd'
+      severity: sevMap[d.severity] ?? S.Error,
+      message: d.message ?? 'Syntax Error',
+      source: d.source ?? 'clangd',
+      code: d.code?.value ?? d.code,
+      startLineNumber,
+      startColumn,
+      endLineNumber,
+      endColumn,
     };
   });
 };
@@ -711,6 +852,20 @@ export const CodeEditor = ({
   const editorRef = useRef(null)
   const pendingDiagnosticsRef = useRef(null)
   const coldBootTimerRef = useRef(null)
+  const pendingMarkers = useRef(new Map())
+
+  const flushPendingMarkers = (filePath) => {
+    if (!filePath) return;
+    const key = normalizePath(filePath);
+    const markers = pendingMarkers.current.get(key);
+    if (!markers) return;
+    const model = findMonacoModel(filePath);
+    if (!model) return;
+    console.log(`[Pending Buffer Flush] ✅ Applying ${markers.length} buffered markers to: ${model.uri.toString()}`);
+    window.monaco.editor.setModelMarkers(model, 'clangd', markers);
+    pendingMarkers.current.delete(key);
+    requestAnimationFrame(() => editorRef.current?.layout());
+  };
 
   useEffect(() => {
     return () => {
@@ -742,6 +897,11 @@ export const CodeEditor = ({
 
   // Use global app store for extensions and theme
   const { extensions, toggleExtension, activeTheme, setActiveTheme, autoSave } = useAppStore()
+  const getShortcut = useShortcutStore(state => state.getShortcut)
+  const formatShortcut = (id, fallback) => {
+    const keys = getShortcut(id)
+    return keys ? keys.join('+') : fallback
+  }
 
   const [editorSettings, setEditorSettings] = useState({
     fontSize: parseInt(localStorage.getItem('editor-fontSize') || '14'),
@@ -776,10 +936,11 @@ export const CodeEditor = ({
     return () => window.removeEventListener('settings-changed', handleSettingsChanged)
   }, [])
 
+  const shortcuts = useShortcutStore(state => state.shortcuts)
 
-
-
-
+  useEffect(() => {
+    syncMonacoKeybindings(shortcuts, monaco)
+  }, [shortcuts])
 
 
   useEffect(() => {
@@ -795,44 +956,35 @@ export const CodeEditor = ({
   }, [fileContents])
 
   useEffect(() => {
-    if (editorRef.current && activeFile && fileContents && fileContents[activeFile]?.content?.trim() !== '') {
-      // Small 50ms debounce guarantees Monaco's internal .setValue() finishes before we re-apply markers
-      const restoreTimer = setTimeout(() => {
-        restoreCachedDiagnostics(activeFile);
-      }, 50);
-      return () => clearTimeout(restoreTimer);
+    // Zero-latency: any diagnostics already delivered before this model was
+    // registered are flushed immediately once the model exists in RAM.
+    if (editorRef.current && activeFile) {
+      flushPendingMarkers(activeFile);
     }
   }, [fileContents, activeFile]);
 
   useEffect(() => {
-    const handleLiveDiagnostics = ({ filePath, diagnostics }) => {
-      // Ignore live IPC diagnostics for JS/TS if Monaco native workers are managing them
-      if (filePath.endsWith('.js') || filePath.endsWith('.ts')) return;
+    const handler = (payload) => {
+      const { uri, filePath, diagnostics } = payload || {};
+      const targetPath = uri || filePath;
+      if (!targetPath) return;
+      // JS/TS diagnostics stay owned by Monaco's native workers.
+      if (targetPath.endsWith('.js') || targetPath.endsWith('.ts')) return;
 
-      console.log(`[Live IPC Receiver] Received ${diagnostics ? diagnostics.length : 0} diagnostics for: ${filePath}`);
-
-      const targetModel = findMonacoModel(filePath);
-      if (targetModel) {
-        console.log(`[Live IPC Receiver] ✅ MATCHED MODEL! Injecting ${diagnostics ? diagnostics.length : 0} markers into: ${targetModel.uri.toString()}`);
-        const formattedMarkers = formatLspDiagnosticsToMonaco(diagnostics);
-        window.monaco.editor.setModelMarkers(targetModel, 'backend-lsp-engine', formattedMarkers);
-
-        if (editorRef.current && editorRef.current.getModel() === targetModel) {
-          requestAnimationFrame(() => editorRef.current.layout());
-        }
+      console.log(`[Live IPC Receiver] Received ${diagnostics ? diagnostics.length : 0} diagnostics for: "${targetPath}"`);
+      const markers = formatLspDiagnosticsToMonaco(diagnostics);
+      const model = findMonacoModel(targetPath);
+      if (model) {
+        console.log(`[Live IPC Receiver] ✅ MATCHED MODEL! Injecting markers into: ${model.uri.toString()}`);
+        window.monaco.editor.setModelMarkers(model, 'clangd', markers);
+        requestAnimationFrame(() => editorRef.current?.layout());
       } else {
-        console.warn(`[Live IPC Receiver] ❌ FAILED MATCH for: ${filePath}`);
+        console.warn(`[Live IPC Receiver] Model not in RAM yet for "${targetPath}". Buffering to pendingMarkers.`);
+        pendingMarkers.current.set(normalizePath(targetPath), markers);
       }
     };
-
-    if (window.api && window.api.onLspDiagnostics) {
-      window.api.onLspDiagnostics(handleLiveDiagnostics);
-    }
-    return () => {
-      if (window.api && window.api.removeLspDiagnostics) {
-        window.api.removeLspDiagnostics(handleLiveDiagnostics);
-      }
-    }
+    const off = window.api?.on?.('lsp:diagnostics', handler);
+    return () => { if (typeof off === 'function') off(); };
   }, []);
 
   useEffect(() => {
@@ -891,12 +1043,34 @@ export const CodeEditor = ({
     setDraggedTabIdx(null)
   }
 
+  // ─── Explicit tab-close: dispose model, clear markers, purge cache ───
+  const closeTab = (filePath) => {
+    if (!filePath) return
+    if (window.monaco) {
+      const uri = canonicalUri(filePath)
+      const model = window.monaco.editor.getModel(uri)
+      if (model) {
+        window.monaco.editor.setModelMarkers(model, 'clangd', [])
+        model.dispose()
+      }
+    }
+    pendingMarkers.current.delete(normalizePath(filePath))
+    window.api?.send?.('lsp:document-close', { filePath })
+    closeFile(filePath)
+  }
+
   // ─── Context Menu Handlers ───
   const handleContextMenu = (e, file, index) => {
     e.preventDefault()
+    let x = e.clientX;
+    let y = e.clientY;
+    const menuWidth = 220;
+    const menuHeight = 250;
+    if (x + menuWidth > window.innerWidth) x = window.innerWidth - menuWidth;
+    if (y + menuHeight > window.innerHeight) y = window.innerHeight - menuHeight;
     setContextMenu({
-      x: e.clientX,
-      y: e.clientY,
+      x,
+      y,
       path: file.path,
       index
     })
@@ -911,7 +1085,7 @@ export const CodeEditor = ({
 
     switch (action) {
       case 'close':
-        closeFile(path)
+        closeTab(path)
         break
       case 'closeOthers':
         setOpenFiles([targetFile])
@@ -1030,6 +1204,10 @@ export const CodeEditor = ({
   }, [activeFile])
 
   // ─── LSP lifecycle (multi-language) ──────────────────────────
+  // Tracks which (filePath -> content-hash) pairs we've already shipped to the
+  // backend so we don't spam duplicate didOpen/didChange after every render.
+  const lspOpenedFilesRef = useRef(new Map())
+
   useEffect(() => {
     if (!activeFile) return
     const monacoLang = getLanguageFromPath(activeFile)
@@ -1043,12 +1221,7 @@ export const CodeEditor = ({
       client.initialized = true // backend owns initialize handshake now
       lspClients.set(lspKey, client)
 
-      // Wire diagnostics to Monaco markers AND to the central
-      // diagnostics store so the sidebar / tabs can render error
-      // counts even for files the user hasn't opened yet.
       client.onDiagnostics = (params) => {
-        // Markers are managed globally by handleLiveDiagnostics now.
-        // We only feed the diagnostics store here for sidebar counts.
         useDiagnosticsStore.getState().setDiagnostics(
           params.uri,
           `lsp-${lspKey}`,
@@ -1065,76 +1238,35 @@ export const CodeEditor = ({
       registerProvidersForLanguage(monacoLang)
     }
 
-    const content = fileContents[activeFile]?.content || currentValue || ''
-    
-    // Trigger immediate backend sync on tab open
-    window.api.send('lsp:document-open', {
+    // Register whatever model <Editor> attached for this path so the
+    // diagnostic dispatcher can resolve it.
+    registerModelPath(editorRef.current?.getModel())
+
+    // ── Critical: NEVER ship 'Loading...' or an undefined buffer to the LSP.
+    // The load effect above populates fileContents async — until it resolves,
+    // clangd/pyright would parse the placeholder string and emit either
+    // nothing or bogus markers, then never re-parse. Wait for real content.
+    const record = fileContents[activeFile]
+    if (!record || record.isLoading) return
+    const content = record.content
+    if (typeof content !== 'string' || content === 'Loading...' || content.startsWith('Error:')) return
+
+    const alreadyOpened = lspOpenedFilesRef.current.has(activeFile)
+    window.api.send(alreadyOpened ? 'lsp:document-change' : 'lsp:document-open', {
       filePath: activeFile,
       text: content,
       languageId: lspKey
     })
+    lspOpenedFilesRef.current.set(activeFile, content.length)
 
-    // Immediately attempt to pull existing diagnostics
-    restoreCachedDiagnostics(activeFile);
-
-    // If opening a C/C++ file, spin up an adaptive poller to catch delayed heavy header compilation
-    if (activeFile.endsWith('.cpp') || activeFile.endsWith('.c') || activeFile.endsWith('.h')) {
-      let attempts = 0;
-      const maxAttempts = 10; // Poll every 2s for up to 20s total
-
-      const adaptivePoller = setInterval(async () => {
-        attempts++;
-        if (!editorRef.current) {
-          clearInterval(adaptivePoller);
-          return;
-        }
-
-        const targetModel = findMonacoModel(activeFile);
-        if (!targetModel) return;
-
-        // Check if markers are currently rendered on this model
-        const currentMarkers = window.monaco.editor.getModelMarkers({ resource: targetModel.uri });
-
-        // If markers are found, our job is done! Cancel the poller immediately.
-        if (currentMarkers && currentMarkers.length > 0) {
-          console.log(`[Adaptive Poller] Diagnostics detected on attempt ${attempts}. Shutting down poller.`);
-          clearInterval(adaptivePoller);
-          return;
-        }
-
-        // Otherwise, pull from backend cache in case live IPC broadcast was missed during mount
-        try {
-          const cached = await window.api.invoke('lsp:get-cached-diagnostics', { filePath: activeFile });
-          if (cached && cached.length > 0) {
-            console.log(`[Adaptive Poller] Caught delayed C++ diagnostics on attempt ${attempts}! Applying ${cached.length} markers.`);
-            const formatted = formatLspDiagnosticsToMonaco(cached);
-            window.monaco.editor.setModelMarkers(targetModel, 'backend-lsp-engine', formatted);
-            requestAnimationFrame(() => editorRef.current.layout());
-            clearInterval(adaptivePoller);
-          }
-        } catch (err) {
-          console.error('[Adaptive Poller] Cache pull error:', err);
-        }
-
-        // Stop polling after 20 seconds to prevent background CPU cycles
-        if (attempts >= maxAttempts) {
-          console.log('[Adaptive Poller] Max attempts reached. Ending polling cycle.');
-          clearInterval(adaptivePoller);
-        }
-      }, 2000);
-
-      return () => {
-        clearInterval(adaptivePoller);
-        // Intentionally omitted: we do not emit 'lsp:document-close' on tab switch 
-        // so the language server keeps the AST and diagnostics in RAM.
-      };
-    }
+    // Instantly drain any diagnostics that arrived before the model existed.
+    flushPendingMarkers(activeFile);
 
     return () => {
-      // Intentionally omitted: we do not emit 'lsp:document-close' on tab switch 
+      // Intentionally omitted: we do not emit 'lsp:document-close' on tab switch
       // so the language server keeps the AST and diagnostics in RAM.
     }
-  }, [activeFile])
+  }, [activeFile, fileContents])
 
   const handleSave = async (forceFormat = false) => {
     if (!activeFile || !editorRef.current) return
@@ -1479,17 +1611,33 @@ export const CodeEditor = ({
   const handleEditorDidMountWrapper = (editor, monacoInstance) => {
     editorRef.current = editor
     monacoRef.current = monacoInstance
-    
+
+    // Register whatever model is already attached at first mount —
+    // onDidChangeModel below only fires on later swaps.
+    registerModelPath(editor.getModel())
+
     editor.onDidChangeModel(() => {
+      // @monaco-editor/react creates/swaps models internally when the
+      // `path` prop changes — register whatever model just became active
+      // so findMonacoModel's normalized-path cache knows about it.
+      registerModelPath(editor.getModel());
       if (activeFile) restoreCachedDiagnostics(activeFile);
     });
     
     editor.onContextMenu((e) => {
       e.event.preventDefault()
-      setEditorContextMenu({
-        x: e.event.browserEvent.clientX,
-        y: e.event.browserEvent.clientY
-      })
+      
+      if (e.target.position) {
+        editor.setPosition(e.target.position)
+      }
+
+      let x = e.event.browserEvent.clientX;
+      let y = e.event.browserEvent.clientY;
+      const menuWidth = 260;
+      const menuHeight = 310;
+      if (x + menuWidth > window.innerWidth) x = window.innerWidth - menuWidth;
+      if (y + menuHeight > window.innerHeight) y = window.innerHeight - menuHeight;
+      setEditorContextMenu({ x, y })
     })
 
     decorationsCollectionRef.current = editor.createDecorationsCollection([])
@@ -1577,6 +1725,7 @@ export const CodeEditor = ({
     editor.addAction({
       id: 'compile.runFile',
       label: 'Run File',
+      keybindings: [ parseToMonacoKeybinding(useShortcutStore.getState().getShortcut('general.run'), monacoInstance) ],
       run: () => {
         window.dispatchEvent(new Event('global-run-file'))
       }
@@ -1586,6 +1735,7 @@ export const CodeEditor = ({
     editor.addAction({
       id: 'compile.formatDocument',
       label: 'Format Document (Prettier)',
+      keybindings: [ parseToMonacoKeybinding(useShortcutStore.getState().getShortcut('edit.format'), monacoInstance) ],
       run: async () => {
         handleSave(true)
       }
@@ -1601,6 +1751,7 @@ export const CodeEditor = ({
     editor.addAction({
       id: 'compile.inlineAi',
       label: 'Inline AI Edit',
+      keybindings: [ parseToMonacoKeybinding(useShortcutStore.getState().getShortcut('edit.inlineAi'), monacoInstance) ],
       run: () => {
         const position = editor.getPosition()
         const selection = editor.getSelection()
@@ -1992,14 +2143,16 @@ export const CodeEditor = ({
 
     markFileDirty(activeFile)
 
-    // Notify the right LSP client
+    // Notify the LSP backend via canonical URI IPC so clangd/pyright/etc.
+    // re-parse and republish diagnostics against the latest buffer.
     const monacoLang = getLanguageFromPath(activeFile)
     const lspKey = lspLanguageKey(monacoLang)
     if (lspKey) {
-      const client = lspClients.get(lspKey)
-      if (client && client.initialized) {
-        client.didChange(pathToUri(activeFile), value)
-      }
+      window.api.send('lsp:document-change', {
+        filePath: activeFile,
+        text: value,
+        languageId: lspKey
+      })
     }
 
     if (autoSave && !activeFile.startsWith('untitled:')) {
@@ -2067,7 +2220,7 @@ export const CodeEditor = ({
                 onDrop={(e) => handleDrop(e, idx)}
                 onClick={() => setActiveFile(file.path)}
                 onContextMenu={(e) => handleContextMenu(e, file, idx)}
-                onClose={() => closeFile(file.path)}
+                onClose={() => closeTab(file.path)}
               />
             )
           })}
@@ -2160,6 +2313,65 @@ export const CodeEditor = ({
           </div>
           <div className="tab-context-menu-item" onClick={(e) => handleContextAction('copyRelativePath', e)}>
             <span>Copy Relative Path</span>
+          </div>
+        </div>
+      )}
+
+      {/* ── Editor Context Menu Overlay ── */}
+      {editorContextMenu && (
+        <div
+          className="editor-context-menu"
+          style={{
+            position: 'fixed',
+            top: editorContextMenu.y,
+            left: editorContextMenu.x,
+            zIndex: 9999
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="editor-context-menu-item" onClick={(e) => handleEditorContextAction('editor.action.revealDefinition', e)}>
+            <span>Go to Definition</span>
+            <span className="shortcut">{formatShortcut('nav.goToDef', 'F12')}</span>
+          </div>
+          <div className="editor-context-menu-item" onClick={(e) => handleEditorContextAction('editor.action.goToTypeDefinition', e)}>
+            <span>Go to Type Definition</span>
+          </div>
+          <div className="editor-context-menu-item" onClick={(e) => handleEditorContextAction('editor.action.referenceSearch.trigger', e)}>
+            <span>Go to References</span>
+            <span className="shortcut">{formatShortcut('nav.goToRef', 'Shift+F12')}</span>
+          </div>
+          
+          <div className="editor-context-menu-separator" />
+          
+          <div className="editor-context-menu-item" onClick={(e) => handleEditorContextAction('editor.action.rename', e)}>
+            <span>Rename Symbol</span>
+            <span className="shortcut">F2</span>
+          </div>
+          <div className="editor-context-menu-item" onClick={(e) => handleEditorContextAction('compile.formatDocument', e)}>
+            <span>Format Document</span>
+            <span className="shortcut">{formatShortcut('edit.format', 'Shift+Alt+F')}</span>
+          </div>
+          
+          <div className="editor-context-menu-separator" />
+          
+          <div className="editor-context-menu-item" onClick={(e) => handleEditorContextAction('editor.action.clipboardCutAction', e)}>
+            <span>Cut</span>
+            <span className="shortcut">{formatShortcut('edit.cut', 'Ctrl+X')}</span>
+          </div>
+          <div className="editor-context-menu-item" onClick={(e) => handleEditorContextAction('editor.action.clipboardCopyAction', e)}>
+            <span>Copy</span>
+            <span className="shortcut">{formatShortcut('edit.copy', 'Ctrl+C')}</span>
+          </div>
+          <div className="editor-context-menu-item" onClick={(e) => handleEditorContextAction('editor.action.clipboardPasteAction', e)}>
+            <span>Paste</span>
+            <span className="shortcut">{formatShortcut('edit.paste', 'Ctrl+V')}</span>
+          </div>
+          
+          <div className="editor-context-menu-separator" />
+          
+          <div className="editor-context-menu-item" onClick={(e) => handleEditorContextAction('editor.action.quickCommand', e)}>
+            <span>Command Palette...</span>
+            <span className="shortcut">{formatShortcut('general.commandPalette', 'Ctrl+Shift+P')}</span>
           </div>
         </div>
       )}
@@ -2306,7 +2518,8 @@ export const CodeEditor = ({
                 readOnly: !isGitDiff,
                 padding: { top: 16 },
                 glyphMargin: false,
-                lineDecorationsWidth: 16
+                lineDecorationsWidth: 16,
+                contextmenu: false
               }}
             />
           ) : (
@@ -2325,6 +2538,7 @@ export const CodeEditor = ({
                 fontFamily: editorSettings.fontFamily,
                 wordWrap: editorSettings.wordWrap,
                 padding: { top: 16 },
+                contextmenu: false,
                 scrollBeyondLastLine: false,
                 smoothScrolling: editorSettings.smoothScrolling,
                 cursorBlinking: editorSettings.cursorBlinking,
