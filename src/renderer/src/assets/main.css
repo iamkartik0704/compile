@@ -447,7 +447,7 @@ body {
 }
 
 .message-assistant {
-  background: rgba(139, 92, 246, 0.02);
+  background: transparent;
 }
 
 .message-avatar {

@@ -2458,7 +2458,35 @@ export const CodeEditor = ({
             <span>Format Document</span>
             <span className="shortcut">{formatShortcut('edit.format', 'Shift+Alt+F')}</span>
           </div>
-          
+
+          <div className="editor-context-menu-separator" />
+
+          <div className="editor-context-menu-item" onClick={(e) => {
+            e.stopPropagation()
+            setEditorContextMenu(null)
+            if (!editorRef.current) return
+            const editor = editorRef.current
+            const sel = editor.getSelection()
+            let text = ''
+            if (sel && !sel.isEmpty()) {
+              text = editor.getModel().getValueInRange(sel)
+            } else {
+              text = editor.getModel().getValue()
+            }
+            let lang = 'javascript'
+            if (activeFile) {
+              const ext = String(activeFile.split('.').pop() || '').toLowerCase()
+              if (ext === 'py') lang = 'python'
+              else if (['cpp', 'cc', 'cxx', 'c++', 'h', 'hpp', 'hh'].includes(ext)) lang = 'cpp'
+              else if (ext === 'java') lang = 'java'
+            }
+            window.dispatchEvent(new CustomEvent('open-dsa-explainer', {
+              detail: { code: text, language: lang }
+            }))
+          }}>
+            <span>Explain & Visualize</span>
+          </div>
+
           <div className="editor-context-menu-separator" />
           
           <div className="editor-context-menu-item" onClick={(e) => handleEditorContextAction('editor.action.clipboardCutAction', e)}>

@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain, safeStorage, dialog, nativeTheme } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, safeStorage, dialog, nativeTheme, Menu } from 'electron'
 import { join, resolve, sep } from 'path'
 import { readFileSync, writeFileSync, existsSync, chmodSync, promises as fsPromises } from 'fs'
 import { exec as execCallback } from 'child_process'
@@ -8,6 +8,8 @@ import { terminalManager } from './terminal-manager.js'
 import { setupLspIpcHandlers, setMainWindowLspRef } from './lsp-manager.js'
 import { DapManager } from './dap-manager.js'
 import { setupCompilationDbHandlers } from './compilation-db.js'
+import { getCompilerPathsForLanguage, detectCppCompilers } from './compiler-detection.js'
+import os from 'os'
 
 const exec = promisify(execCallback)
 
@@ -1173,6 +1175,379 @@ ipcMain.handle('window-is-maximized', (event) => BrowserWindow.fromWebContents(e
 ipcMain.handle('create-new-window', () => createWindow())
 
 // ============================================================
+// DSA EXPLAINER — Sandboxed instrumented-code execution
+// Executes AI-instrumented JS / Python / C++ / Java snippets
+// in an isolated child process and captures the emitted JSON
+// trace snapshots. Snapshots are printed one-per-line prefixed
+// with __DSA__. Compilation (C++/Java) uses its own timeout so
+// slow compiles don't eat into the 10 s trace-capture window.
+// ============================================================
+const MAX_TRACE_FRAMES = 200
+const DSA_EXEC_TIMEOUT_MS = 10000
+const DSA_COMPILE_TIMEOUT_MS = 15000
+const JAVA_MAIN_CLASS = 'DsaTrace'
+
+// ── Per-renderer concurrent-invocation backstop ─────────────
+// The renderer already gates re-entry via a synchronous ref +
+// disabled button. If any of that is ever bypassed (dev tools,
+// script-injected click, another renderer window sharing this
+// main), reject overlapping runs so we don't spawn parallel
+// compilers / children fighting for the same tmp dir.
+const dsaInFlight = new Set()
+
+// ── JDK tool resolution ─────────────────────────────────────
+// spawn('javac', ...) with the default env is unreliable on Windows
+// because GUI-launched Electron processes don't always see PATH
+// updates the JDK installer made. Try, in order:
+//   1. JAVA_HOME/bin/<name>
+//   2. Common install roots (per-platform)
+//   3. Bare name + shell:true so the OS shell resolves PATH
+// Returns { path: absPath | null, useShell: boolean, error?: string }.
+async function resolveJdkTool(name) {
+  const path = require('path')
+  const isWin = os.platform() === 'win32'
+  const exe = isWin ? `${name}.exe` : name
+
+  // 1. JAVA_HOME wins if it points at a real JDK.
+  if (process.env.JAVA_HOME) {
+    const p = path.join(process.env.JAVA_HOME, 'bin', exe)
+    if (existsSync(p)) return { path: p, useShell: false }
+  }
+
+  // 2. Common install roots.
+  const roots = isWin
+    ? [
+        'C:\\Program Files\\Java',
+        'C:\\Program Files\\Eclipse Adoptium',
+        'C:\\Program Files\\Eclipse Foundation',
+        'C:\\Program Files\\Microsoft',
+        'C:\\Program Files\\Zulu',
+        'C:\\Program Files\\Amazon Corretto',
+        'C:\\Program Files (x86)\\Java'
+      ]
+    : [
+        '/usr/lib/jvm',
+        '/opt/homebrew/opt/openjdk',
+        '/opt/homebrew/opt',
+        '/usr/local/opt/openjdk',
+        '/opt/java',
+        '/Library/Java/JavaVirtualMachines'
+      ]
+
+  for (const root of roots) {
+    if (!existsSync(root)) continue
+    try {
+      const entries = await fsPromises.readdir(root)
+      for (const entry of entries) {
+        // Try <root>/<entry>/bin/<exe>
+        let candidate = path.join(root, entry, 'bin', exe)
+        if (existsSync(candidate)) return { path: candidate, useShell: false }
+        // macOS bundles use <root>/<entry>/Contents/Home/bin/<exe>
+        candidate = path.join(root, entry, 'Contents', 'Home', 'bin', exe)
+        if (existsSync(candidate)) return { path: candidate, useShell: false }
+      }
+    } catch {}
+  }
+
+  // 3. Homebrew symlinked bin locations (macOS).
+  const homebrewBins = [
+    '/opt/homebrew/opt/openjdk/bin/' + name,
+    '/opt/homebrew/bin/' + name,
+    '/usr/local/opt/openjdk/bin/' + name,
+    '/usr/local/bin/' + name
+  ]
+  for (const p of homebrewBins) {
+    if (existsSync(p)) return { path: p, useShell: false }
+  }
+
+  // 4. PATH fallback via shell — the shell's own resolver often finds
+  //    tools that Node's spawn can't when GUI-launched.
+  return { path: name, useShell: true }
+}
+
+// Resolve the g++ / clang++ path. Prefer the compiler already saved
+// by clangd's detection (so we don't ship a second detection path);
+// fall back to the first auto-detected compiler; then to PATH.
+async function resolveCppCompilerPath() {
+  const configured = getCompilerPathsForLanguage('cpp')
+  if (configured && existsSync(configured)) return configured
+
+  const detected = await detectCppCompilers()
+  if (detected.length > 0) {
+    const isClang = detected[0].binDir.toLowerCase().includes('clang')
+    const exe = isClang ? 'clang++' : 'g++'
+    const suffix = os.platform() === 'win32' ? '.exe' : ''
+    const candidate = require('path').join(detected[0].binDir, exe + suffix).replace(/\\/g, '/')
+    if (existsSync(candidate)) return candidate
+  }
+  // Fall back to PATH — spawn will error if it's still missing.
+  return os.platform() === 'win32' ? 'g++.exe' : 'g++'
+}
+
+// Spawn a compiler, resolve with { success, stderr } — bounded by
+// DSA_COMPILE_TIMEOUT_MS. This is a separate wall-clock from the
+// execution timeout so a slow compile doesn't shrink the trace window.
+function runCompiler(cmd, args, cwd, useShell = false) {
+  return new Promise((resolve) => {
+    const { spawn } = require('child_process')
+    let stderrBuf = ''
+    let stdoutBuf = ''
+    let done = false
+
+    const child = spawn(cmd, args, { cwd, windowsHide: true, shell: useShell })
+
+    const finish = (result) => {
+      if (done) return
+      done = true
+      try { child.kill('SIGKILL') } catch {}
+      resolve(result)
+    }
+
+    const timer = setTimeout(() => {
+      finish({ success: false, stderr: stderrBuf + '\n[compilation timed out]' })
+    }, DSA_COMPILE_TIMEOUT_MS)
+
+    child.stdout.on('data', (c) => { stdoutBuf += c.toString('utf-8') })
+    child.stderr.on('data', (c) => { stderrBuf += c.toString('utf-8') })
+    child.on('error', (err) => {
+      clearTimeout(timer)
+      finish({ success: false, stderr: err.message })
+    })
+    child.on('close', (exitCode) => {
+      clearTimeout(timer)
+      finish({ success: exitCode === 0, exitCode, stderr: stderrBuf, stdout: stdoutBuf })
+    })
+  })
+}
+
+// Spawn an instrumented binary / interpreter and capture the trace.
+// Reused across all four languages — the only difference between
+// them is what `cmd`/`args` point at.
+function captureTrace(cmd, args, cwd, cleanupPaths, extraEnv, useShell = false) {
+  return new Promise((resolve) => {
+    const { spawn } = require('child_process')
+    const trace = []
+    let truncated = false
+    let stderrBuf = ''
+    let stdoutBuf = ''
+    let finalOutput = ''
+    let finished = false
+
+    const env = { ...process.env, ...(extraEnv || {}) }
+    const child = spawn(cmd, args, { env, cwd, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, shell: useShell })
+
+    const finish = (result) => {
+      if (finished) return
+      finished = true
+      try { child.kill('SIGKILL') } catch {}
+      for (const p of cleanupPaths) fsPromises.unlink(p).catch(() => {})
+      resolve(result)
+    }
+
+    const timer = setTimeout(() => {
+      finish({
+        success: true, trace, truncated: true,
+        stderr: stderrBuf, note: 'Execution timed out — partial trace returned'
+      })
+    }, DSA_EXEC_TIMEOUT_MS)
+
+    const processLine = (line) => {
+      if (!line) return
+      if (line.startsWith('__DSA__')) {
+        const jsonPart = line.slice(7)
+        try {
+          const snap = JSON.parse(jsonPart)
+          if (trace.length < MAX_TRACE_FRAMES) {
+            trace.push(snap)
+          } else {
+            truncated = true
+            try { child.kill('SIGKILL') } catch {}
+          }
+        } catch {
+          // Ignore malformed JSON snapshot lines
+        }
+      } else {
+        finalOutput += line + '\n'
+      }
+    }
+
+    child.stdout.on('data', (chunk) => {
+      stdoutBuf += chunk.toString('utf-8')
+      let idx
+      while ((idx = stdoutBuf.indexOf('\n')) !== -1) {
+        const line = stdoutBuf.slice(0, idx).replace(/\r$/, '')
+        stdoutBuf = stdoutBuf.slice(idx + 1)
+        processLine(line)
+      }
+    })
+
+    child.stderr.on('data', (chunk) => {
+      stderrBuf += chunk.toString('utf-8')
+      if (stderrBuf.length > 8000) stderrBuf = stderrBuf.slice(-8000)
+    })
+
+    child.on('error', (err) => {
+      clearTimeout(timer)
+      finish({ success: false, error: err.message, trace })
+    })
+
+    child.on('close', (exitCode) => {
+      clearTimeout(timer)
+      if (stdoutBuf.length) processLine(stdoutBuf.trim())
+      finish({ success: true, trace, truncated, exitCode, stderr: stderrBuf, stdout: finalOutput.trim() })
+    })
+  })
+}
+
+ipcMain.handle('run-instrumented-code', async (event, payload) => {
+  const { language, code } = payload || {}
+  if (!language || !code) {
+    return { success: false, error: 'Missing language or code' }
+  }
+  const supported = ['javascript', 'python', 'cpp', 'java']
+  if (!supported.includes(language)) {
+    return { success: false, error: `Unsupported language: ${language}` }
+  }
+
+  // Reject overlapping runs from the same renderer webContents.
+  const rendererId = event.sender.id
+  if (dsaInFlight.has(rendererId)) {
+    return { success: false, error: 'A DSA run is already in progress for this window.' }
+  }
+  dsaInFlight.add(rendererId)
+  try {
+    return await runInstrumentedCodeCore(language, code)
+  } finally {
+    dsaInFlight.delete(rendererId)
+  }
+})
+
+async function runInstrumentedCodeCore(language, code) {
+
+  const path = require('path')
+  const crypto = require('crypto')
+  const tmpDir = os.tmpdir()
+
+  // ── Interpreted: JS / Python — write file, spawn, capture. ──
+  if (language === 'javascript' || language === 'python') {
+    const ext = language === 'javascript' ? 'js' : 'py'
+    const scriptPath = path.join(tmpDir, `dsa-explainer-${crypto.randomBytes(6).toString('hex')}.${ext}`)
+
+    try {
+      await fsPromises.writeFile(scriptPath, code, 'utf-8')
+    } catch (err) {
+      return { success: false, error: 'Failed to write temp file: ' + err.message }
+    }
+
+    const cmd = language === 'javascript' ? process.execPath : 'python'
+    const args = language === 'javascript' ? ['--no-warnings', scriptPath] : ['-u', scriptPath]
+    const extraEnv = language === 'javascript' ? { ELECTRON_RUN_AS_NODE: '1' } : {}
+
+    return captureTrace(cmd, args, tmpDir, [scriptPath], extraEnv)
+  }
+
+  // ── Compiled: C++ — compile with detected g++/clang++, run binary. ──
+  if (language === 'cpp') {
+    const suffix = crypto.randomBytes(6).toString('hex')
+    const srcPath = path.join(tmpDir, `dsa-explainer-${suffix}.cpp`)
+    const binName = `dsa-explainer-${suffix}${os.platform() === 'win32' ? '.exe' : ''}`
+    const binPath = path.join(tmpDir, binName)
+
+    try {
+      await fsPromises.writeFile(srcPath, code, 'utf-8')
+    } catch (err) {
+      return { success: false, error: 'Failed to write temp file: ' + err.message }
+    }
+
+    const compilerPath = await resolveCppCompilerPath()
+    const compileResult = await runCompiler(
+      compilerPath,
+      ['-std=c++17', '-O0', '-w', srcPath, '-o', binPath],
+      tmpDir
+    )
+
+    if (!compileResult.success) {
+      // Clean up source; there is no binary to clean up.
+      fsPromises.unlink(srcPath).catch(() => {})
+      return {
+        success: false,
+        error: 'C++ compilation failed',
+        stage: 'compile',
+        stderr: compileResult.stderr || '(no stderr)'
+      }
+    }
+
+    return captureTrace(binPath, [], tmpDir, [srcPath, binPath], {})
+  }
+
+  // ── Compiled: Java — wrap with fixed class name, javac, java -cp. ──
+  if (language === 'java') {
+    // Java requires the public class name to match the source filename.
+    // We always name the source DsaTrace.java + put it in a per-run dir
+    // so multiple concurrent runs don't clobber each other's .class files.
+    const runDir = path.join(tmpDir, `dsa-java-${crypto.randomBytes(6).toString('hex')}`)
+    try {
+      await fsPromises.mkdir(runDir, { recursive: true })
+    } catch (err) {
+      return { success: false, error: 'Failed to create tmp dir: ' + err.message }
+    }
+    const srcPath = path.join(runDir, `${JAVA_MAIN_CLASS}.java`)
+    const classPath = path.join(runDir, `${JAVA_MAIN_CLASS}.class`)
+
+    try {
+      await fsPromises.writeFile(srcPath, code, 'utf-8')
+    } catch (err) {
+      return { success: false, error: 'Failed to write temp file: ' + err.message }
+    }
+
+    // Resolve javac/java robustly — see resolveJdkTool.
+    const javacTool = await resolveJdkTool('javac')
+    const compileResult = await runCompiler(javacTool.path, [srcPath], runDir, javacTool.useShell)
+
+    // On failure OR success we always want the whole runDir cleaned up
+    // at the end. Track everything we need to unlink; the runDir itself
+    // is best-effort removed after captureTrace resolves.
+    const cleanupAll = async () => {
+      try {
+        const files = await fsPromises.readdir(runDir).catch(() => [])
+        await Promise.all(files.map(f => fsPromises.unlink(path.join(runDir, f)).catch(() => {})))
+        await fsPromises.rmdir(runDir).catch(() => {})
+      } catch {}
+    }
+
+    if (!compileResult.success) {
+      await cleanupAll()
+      // Map ENOENT / "not recognized" / "not found" → an actionable message
+      // instead of a raw shell error. This is what the user sees.
+      const stderr = compileResult.stderr || ''
+      const missing = /ENOENT|is not recognized|command not found|No such file/i.test(stderr)
+        || (compileResult.exitCode !== 0 && stderr.trim().length === 0)
+      if (missing) {
+        return {
+          success: false,
+          error: 'Java compiler (javac) not found',
+          stage: 'compile',
+          stderr: 'javac could not be located. Install a JDK (Adoptium Temurin, Zulu, or Oracle JDK) and either set the JAVA_HOME environment variable to the JDK install directory, or add the JDK bin folder to your PATH. Then restart the IDE.'
+        }
+      }
+      return {
+        success: false,
+        error: 'Java compilation failed',
+        stage: 'compile',
+        stderr
+      }
+    }
+
+    const javaTool = await resolveJdkTool('java')
+    const traceResult = await captureTrace(javaTool.path, ['-cp', runDir, JAVA_MAIN_CLASS], runDir, [srcPath, classPath], {}, javaTool.useShell)
+    await cleanupAll()
+    return traceResult
+  }
+
+  return { success: false, error: `Unsupported language: ${language}` }
+}
+
+// ============================================================
 // APP LIFECYCLE
 // ============================================================
 
@@ -1288,6 +1663,31 @@ ipcMain.handle('toggle-dev-tools', () => {
 app.whenReady().then(() => {
     // Set app user model id for Windows
     electronApp.setAppUserModelId('com.compile.editor')
+
+    // ── Application menu ──────────────────────────────────────
+    // Without this template, Ctrl+V / Ctrl+C / Ctrl+X / Ctrl+A
+    // have NO accelerators registered anywhere in the app —
+    // Chromium relies on the Electron menu's role: 'paste' etc.
+    // to wire them up. autoHideMenuBar:true on the BrowserWindow
+    // keeps this menu bar visually hidden; the accelerators still
+    // work. Roles include: undo, redo, cut, copy, paste, selectAll.
+    // This is a real fix for a real bug — do NOT delete this.
+    Menu.setApplicationMenu(Menu.buildFromTemplate([
+      {
+        label: 'Edit',
+        submenu: [
+          { role: 'undo' },
+          { role: 'redo' },
+          { type: 'separator' },
+          { role: 'cut' },
+          { role: 'copy' },
+          { role: 'paste' },
+          { role: 'pasteAndMatchStyle' },
+          { role: 'delete' },
+          { role: 'selectAll' }
+        ]
+      }
+    ]))
 
     // Default open or close DevTools by F12 in dev, ignore in production
     app.on('browser-window-created', (_, window) => {

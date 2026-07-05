@@ -201,6 +201,9 @@ const api = {
     ipcRenderer.on('auth-callback', (_event, url) => callback(url))
   },
 
+  // ── DSA Explainer ──
+  runInstrumentedCode: (payload) => ipcRenderer.invoke('run-instrumented-code', payload),
+
   // ── Debug Adapter Protocol (DAP) ──
   dapStart: (filePath, language, breakpoints = []) => ipcRenderer.invoke('dap-start', filePath, language, breakpoints),
   dapStop: () => ipcRenderer.invoke('dap-stop'),
