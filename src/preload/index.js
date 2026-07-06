@@ -58,7 +58,7 @@ const api = {
   gitAction: (cwd, action, ...args) => ipcRenderer.invoke('git-action', cwd, action, ...args),
 
   // ── Language Server Protocol (LSP) — Multi-language ──
-  startLanguageServer: (language) => ipcRenderer.invoke('start-lsp', language),
+  startLanguageServer: (language, rootUri) => ipcRenderer.invoke('start-lsp', language, rootUri),
   listAvailableLsp: () => ipcRenderer.invoke('list-available-lsp'),
   killLsp: (language) => ipcRenderer.invoke('kill-lsp', language),
   sendLspMessage: (language, message) => ipcRenderer.send('lsp-client-message', { language, message }),

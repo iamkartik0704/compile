@@ -639,7 +639,7 @@ const EditorTab = ({ file, isActive, isDragging, onDragStart, onDragOver, onDrop
       <span className="tab-name">{file.name}</span>
       {(hasError || hasWarn) && (
         <span className={`diagnostic-badge ${hasError ? 'error' : 'warning'}`} title={`${counts.error} error${counts.error === 1 ? '' : 's'}, ${counts.warning} warning${counts.warning === 1 ? '' : 's'}`}>
-          {hasError ? counts.error : counts.warning}
+          {hasError ? (counts.error > 9 ? '9+' : counts.error) : (counts.warning > 9 ? '9+' : counts.warning)}
         </span>
       )}
       <div
@@ -1009,8 +1009,12 @@ export const CodeEditor = ({
         pendingMarkers.current.set(normalizePath(targetPath), markers);
       }
     };
-    const off = window.api?.on?.('lsp:diagnostics', handler);
-    return () => { if (typeof off === 'function') off(); };
+    if (window.api?.onLspDiagnostics) {
+      window.api.onLspDiagnostics(handler);
+    }
+    return () => { 
+      if (window.api?.removeLspDiagnostics) window.api.removeLspDiagnostics(); 
+    };
   }, []);
 
   useEffect(() => {

@@ -15,8 +15,21 @@ import { create } from 'zustand'
 // ─────────────────────────────────────────────────────────────
 
 export const normalizePath = (p) => {
-  if (!p) return ''
-  let out = String(p).replace(/\\/g, '/')
+  if (!p || typeof p !== 'string') return ''
+
+  let prev = String(p)
+  // Robustly decode URI components (e.g. %20 for spaces, %3A for colon)
+  for (let i = 0; i < 3; i++) {
+    try {
+      const decoded = decodeURIComponent(prev)
+      if (decoded === prev) break
+      prev = decoded
+    } catch {
+      break
+    }
+  }
+
+  let out = prev.replace(/\\/g, '/')
   // Strip file:// prefix that arrives from LSP / monaco.Uri.
   out = out.replace(/^file:\/\//, '')
   // If we ended up with /C:/foo, drop the leading slash so it

@@ -90,6 +90,20 @@ function parseAndForwardMessages(language, entry, onMessage, setStatus) {
       
       if (entry.status === 'starting' && message.id === entry.initId) {
         sendToLanguageServer(language, { jsonrpc: '2.0', method: 'initialized', params: {} })
+        
+        if (language === 'javascript' || language === 'typescript') {
+          sendToLanguageServer(language, {
+            jsonrpc: '2.0',
+            method: 'workspace/didChangeConfiguration',
+            params: {
+              settings: {
+                javascript: { implicitProjectConfig: { checkJs: true } },
+                typescript: { implicitProjectConfig: { checkJs: true } }
+              }
+            }
+          })
+        }
+        
         if (setStatus) setStatus('ready')
         if (entry.requestQueue && entry.requestQueue.length > 0) {
           for (const req of entry.requestQueue) {
@@ -206,9 +220,17 @@ export async function startLanguageServer(language, rootUri = null, onMessage, o
             publishDiagnostics: { relatedInformation: true },
             synchronization: { didSave: true, willSave: false, willSaveWaitUntil: false, dynamicRegistration: false }
           },
-          workspace: {}
+          workspace: {
+            configuration: true,
+            didChangeConfiguration: { dynamicRegistration: true }
+          }
         },
-        initializationOptions: {}
+        initializationOptions: {
+          preferences: {
+            includePackageJsonAutoImports: 'auto',
+            includeCompletionsForModuleExports: true
+          }
+        }
       }
     })
 
@@ -358,8 +380,8 @@ export function getLanguageServerStatusForLanguage(language) {
 
 // IPC Handlers
 export function setupLspIpcHandlers() {
-  ipcMain.handle('start-lsp', (_event, language) => {
-    return startLanguageServer(language)
+  ipcMain.handle('start-lsp', (_event, language, rootUri) => {
+    return startLanguageServer(language, rootUri)
   })
 
   ipcMain.on('lsp-client-message', (_event, { language, message }) => {

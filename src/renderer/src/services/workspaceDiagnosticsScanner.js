@@ -62,7 +62,7 @@ const pathToUri = (p) => {
   let formatted = p.replace(/\\/g, '/')
   if (!formatted.startsWith('/')) formatted = '/' + formatted
   formatted = formatted.replace(/^\/([A-Z]):\//, (_, drive) => `/${drive.toLowerCase()}:/`)
-  return `file://${formatted}`
+  return `file://${formatted.replace(/ /g, '%20')}`
 }
 
 const extOf = (p) => {
@@ -131,7 +131,7 @@ export async function scanWorkspaceForDiagnostics(projectRoot, { onProgress } = 
     if (files.length === 0) continue
 
     // Kick the LSP off — no-op if it's already up.
-    const startRes = await window.api.startLanguageServer(lspKey)
+    const startRes = await window.api.startLanguageServer(lspKey, rootUri)
     if (!startRes?.success) {
       console.warn(`[Scanner] LSP ${lspKey} unavailable, skipping ${files.length} files`)
       continue
@@ -192,25 +192,12 @@ export async function scanWorkspaceForDiagnostics(projectRoot, { onProgress } = 
 const initializedLspKeys = new Set()
 
 async function initializeLsp(lspKey, rootUri) {
+  // NO-OP: the backend (lsp-manager.js) automatically sends 'initialize'
+  // and 'initialized' immediately upon spawning the language server.
+  // Sending it again here causes double-initialization errors, particularly
+  // in typescript-language-server which drops subsequent requests.
   if (initializedLspKeys.has(lspKey)) return
   initializedLspKeys.add(lspKey)
-
-  const id = Date.now() % 1_000_000
-  sendLspRequest(lspKey, id, 'initialize', {
-    processId: null,
-    rootUri,
-    capabilities: {
-      textDocument: {
-        publishDiagnostics: { relatedInformation: true },
-        synchronization: { didSave: true }
-      },
-      workspace: {}
-    },
-    initializationOptions: {}
-  })
-  // We don't need the initialize result to fire didOpen — clangd,
-  // pyright and typescript-language-server all queue notifications.
-  sendLspNotification(lspKey, 'initialized', {})
 }
 
 const sendLspRequest = (lspKey, id, method, params) => {
