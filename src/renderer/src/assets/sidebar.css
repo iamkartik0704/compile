@@ -120,6 +120,11 @@
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+  flex: 1;
+}
+
+.chevron, .icon-folder, .icon-file {
+  flex-shrink: 0;
 }
 
 .tree-node {
@@ -172,6 +177,7 @@
   align-items: center;
   margin-right: 0.4rem;
   gap: 0.3rem;
+  flex-shrink: 0;
 }
 
 .chevron {

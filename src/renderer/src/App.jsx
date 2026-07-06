@@ -1155,9 +1155,13 @@ the new code
     }
   }
 
+  const executeGlobalActionRef = useRef(executeGlobalAction);
+  executeGlobalActionRef.current = executeGlobalAction;
+
   useEffect(() => {
     const handleGlobalKeyDown = (e) => {
       if (useShortcutStore.getState().isEditing) return;
+      if (e.repeat) return;
 
       // DEBUG: log Ctrl key combos to diagnose zoom issue
       if (e.ctrlKey && (e.key === '-' || e.key === '=' || e.key === '+' || e.key === '0' || e.key === 'Subtract' || e.key === 'Add')) {
@@ -1258,7 +1262,7 @@ the new code
 
         // Only prevent default and stop propagation if it's a GLOBAL action handled by App.jsx.
         // Editor actions are natively handled by Monaco's keybinding registry.
-        const handled = executeGlobalAction(matchFound.id);
+        const handled = executeGlobalActionRef.current(matchFound.id);
 
         if (handled) {
           e.preventDefault();
@@ -1313,7 +1317,7 @@ the new code
     window.addEventListener('keydown', handleGlobalKeyDown, { capture: true })
 
     const handleExecuteGlobalAction = (e) => {
-      executeGlobalAction(e.detail)
+      executeGlobalActionRef.current(e.detail)
     }
     window.addEventListener('execute-global-action', handleExecuteGlobalAction)
 
@@ -1321,7 +1325,7 @@ the new code
       window.removeEventListener('keydown', handleGlobalKeyDown, { capture: true })
       window.removeEventListener('execute-global-action', handleExecuteGlobalAction)
     }
-  }, [activeFile, setActivePanel])
+  }, [])
 
   // ── Auto-detect provider from key input ──
   useEffect(() => {
