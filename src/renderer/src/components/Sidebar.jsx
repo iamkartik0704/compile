@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Folder, FolderOpen, FileCode, ChevronRight, ChevronDown, FolderSearch, FilePlus, FolderPlus, RefreshCw, Minimize2 , Database } from 'lucide-react'
+import { Folder, FolderOpen, FileCode, ChevronRight, ChevronDown, FolderSearch, FilePlus, FolderPlus, RefreshCw, Minimize2, Database } from 'lucide-react'
 import { useFileCounts, useFolderCounts } from '../store/diagnosticsStore'
 
 // Renders a compact "3" or "!" pill next to a tree node. Kept as a
@@ -46,7 +46,7 @@ const NewItemInput = ({ type, onSubmit, onCancel, level }) => {
         onCancel()
       }
     }
-    
+
     window.addEventListener('pointerdown', handleGlobalPointerDown, { capture: true })
     return () => {
       window.removeEventListener('pointerdown', handleGlobalPointerDown, { capture: true })
@@ -116,10 +116,10 @@ const RenameItemInput = ({ initialName, onSubmit, onCancel, level, item, sibling
         onCancel()
       }
     }
-    
+
     // Use capture phase to catch the event before Monaco or anything else can prevent default
     window.addEventListener('pointerdown', handleGlobalPointerDown, { capture: true })
-    
+
     return () => {
       window.removeEventListener('pointerdown', handleGlobalPointerDown, { capture: true })
     }
@@ -211,7 +211,7 @@ const TreeNodeRow = ({ item, level, isSelected, isOpen, onClick, onContextMenu, 
   const hasError = counts.error > 0
   const hasWarn = counts.warning > 0
   const stateClass = hasError ? 'has-error' : hasWarn ? 'has-warning' : ''
-  
+
   if (isRenaming) {
     return <RenameItemInput initialName={item.name} onSubmit={onRenameSubmit} onCancel={onRenameCancel} level={level} item={item} siblings={siblings} />
   }
@@ -285,7 +285,7 @@ const FileTreeNode = ({
     e.stopPropagation()
     setSelectedPath(item.path)
     setSelectedIsFolder(item.isDirectory)
-    
+
     if (item.isDirectory) {
       if (!isOpen && !children) {
         loadChildren()
@@ -314,8 +314,8 @@ const FileTreeNode = ({
       {item.isDirectory && isOpen && (
         <div className="tree-children">
           {creatingItem && creatingItem.targetDir === item.path && (
-            <NewItemInput 
-              type={creatingItem.type} 
+            <NewItemInput
+              type={creatingItem.type}
               level={level + 1}
               onSubmit={onSubmitCreate}
               onCancel={onCancelCreate}
@@ -323,10 +323,10 @@ const FileTreeNode = ({
           )}
           {isLoading && <div className="tree-loading" style={{ paddingLeft: `${(level + 1) * 16 + 28}px` }}>Loading...</div>}
           {children && children.map((child, idx) => (
-            <FileTreeNode 
-              key={`${child.path}-${idx}`} 
-              item={child} 
-              level={level + 1} 
+            <FileTreeNode
+              key={`${child.path}-${idx}`}
+              item={child}
+              level={level + 1}
               siblings={children}
               selectedPath={selectedPath}
               setSelectedPath={setSelectedPath}
@@ -358,11 +358,11 @@ export const Sidebar = ({
   setShowVisualizer
 }) => {
   const [rootChildren, setRootChildren] = useState([])
-  
+
   // Selection State
   const [selectedPath, setSelectedPath] = useState(null)
   const [selectedIsFolder, setSelectedIsFolder] = useState(false)
-  
+
   // Action State
   const [isRootOpen, setIsRootOpen] = useState(true)
   const [collapseSignal, setCollapseSignal] = useState(0)
@@ -403,11 +403,11 @@ export const Sidebar = ({
   const handleContextMenu = (e, item) => {
     let x = e.clientX
     let y = e.clientY
-    
+
     // Estimate menu size based on its contents
     const menuWidth = 240;
     const menuHeight = 380;
-    
+
     // Clamp to window bounds
     if (x + menuWidth > window.innerWidth) {
       x = window.innerWidth - menuWidth;
@@ -415,11 +415,11 @@ export const Sidebar = ({
     if (y + menuHeight > window.innerHeight) {
       y = window.innerHeight - menuHeight;
     }
-    
+
     // Ensure we don't go off the top/left edge if the window is tiny
     x = Math.max(8, x);
     y = Math.max(8, y);
-    
+
     setContextMenu({ x, y, targetItem: item })
   }
 
@@ -444,7 +444,7 @@ export const Sidebar = ({
     const destFolder = item.isDirectory ? item.path : getParentPath(item.path)
     const fileName = clipboard.path.split(/[/\\]/).pop()
     const destPath = `${destFolder}/${fileName}`
-    
+
     if (clipboard.action === 'cut') {
       const res = await window.api.renameItem(clipboard.path, destPath, projectRoot)
       if (res.success) {
@@ -567,27 +567,27 @@ export const Sidebar = ({
   useEffect(() => {
     const onRefreshSidebar = () => handleRefresh()
     window.addEventListener('refresh-sidebar', onRefreshSidebar)
-    
+
     if (projectRoot) {
       // Start the backend chokidar watcher
       window.api.watchProject(projectRoot)
-      
+
       // Listen for file system changes (add/unlink) from the backend
       window.api.onFsChanged((data) => {
         console.log('FS Event:', data)
         handleRefresh()
       })
-      
+
       // Fetch initial directory structure for the new project root
       handleRefresh()
     }
-    
+
     const onCreateNewFile = () => handleCreateNew('file')
     const onCreateNewFolder = () => handleCreateNew('folder')
     window.addEventListener('refresh-sidebar', onRefreshSidebar)
     window.addEventListener('create-new-file', onCreateNewFile)
     window.addEventListener('create-new-folder', onCreateNewFolder)
-    
+
     return () => {
       window.removeEventListener('refresh-sidebar', onRefreshSidebar)
       window.removeEventListener('create-new-file', onCreateNewFile)
@@ -606,12 +606,12 @@ export const Sidebar = ({
     if (selectedPath) {
       targetDir = selectedIsFolder ? selectedPath : getParentPath(selectedPath)
     }
-    
+
     // Auto-open root if creating at root
     if (targetDir === projectRoot) {
       setIsRootOpen(true)
     }
-    
+
     setCreatingItem({ type, targetDir })
   }
 
@@ -619,12 +619,12 @@ export const Sidebar = ({
     e.stopPropagation()
     setSelectedPath(projectRoot)
     setSelectedIsFolder(true)
-    
+
     if (!isRootOpen && rootChildren.length === 0) {
       const data = await window.api.readDirectory(projectRoot)
       setRootChildren(data || [])
     }
-    
+
     setIsRootOpen(!isRootOpen)
   }
 
@@ -637,7 +637,7 @@ export const Sidebar = ({
     } else {
       res = await window.api.createFolder(newPath)
     }
-    
+
     if (res?.success) {
       setCreatingItem(null)
       handleRefresh()
@@ -657,22 +657,22 @@ export const Sidebar = ({
       <div className="sidebar-header">
         <h2>EXPLORER</h2>
       </div>
-      
+
 
 
       <div className="sidebar-content">
         {projectRoot ? (
           <div className="file-tree" onClick={e => e.stopPropagation()} onContextMenu={(e) => { e.preventDefault(); handleContextMenu(e, { path: projectRoot, isDirectory: true, name: rootName }) }}>
-            <div 
+            <div
               className={`project-root-label ${isRootSelected ? 'selected' : ''}`}
               onClick={handleRootClick}
             >
               <div className="root-label-left">
-                {isRootOpen ? <ChevronDown size={14} className="chevron" /> : <ChevronRight size={14} className="chevron" />}
-                {isRootOpen ? <FolderOpen size={16} className="icon-folder" /> : <Folder size={16} className="icon-folder" />}
+                {isRootOpen ? <ChevronDown size={16} className="chevron" /> : <ChevronRight size={16} className="chevron" />}
+                {isRootOpen ? <FolderOpen size={18} className="icon-folder" /> : <Folder size={18} className="icon-folder" />}
                 <span className="root-name">{rootName}</span>
               </div>
-              
+
               <div className="sidebar-header-actions">
                 <button className="icon-btn" onClick={(e) => { e.stopPropagation(); setShowVisualizer && setShowVisualizer(true) }} title="Visualize Codebase">
                   <Database size={16} />
@@ -693,8 +693,8 @@ export const Sidebar = ({
             </div>
 
             {isRootOpen && creatingItem && creatingItem.targetDir === projectRoot && (
-              <NewItemInput 
-                type={creatingItem.type} 
+              <NewItemInput
+                type={creatingItem.type}
                 level={0}
                 onSubmit={submitCreate}
                 onCancel={cancelCreate}
@@ -702,10 +702,10 @@ export const Sidebar = ({
             )}
 
             {isRootOpen && rootChildren.map((child, idx) => (
-              <FileTreeNode 
-                key={`${child.path}-${idx}`} 
-                item={child} 
-                level={0} 
+              <FileTreeNode
+                key={`${child.path}-${idx}`}
+                item={child}
+                level={0}
                 siblings={rootChildren}
                 selectedPath={selectedPath}
                 setSelectedPath={setSelectedPath}
@@ -729,7 +729,7 @@ export const Sidebar = ({
             <FolderSearch size={48} style={{ marginBottom: '16px', opacity: 0.8, color: 'var(--accent-color, #8b5cf6)' }} />
             <p style={{ margin: '0 0 8px 0', fontSize: '14px', fontWeight: 600, color: 'inherit', opacity: 0.9 }}>No Folder Opened</p>
             <p style={{ margin: '0 0 24px 0', fontSize: '12px', lineHeight: 1.5, color: 'inherit', opacity: 0.6 }}>You have not yet opened a workspace. Open a folder to view your files and start coding.</p>
-            <button 
+            <button
               onClick={handleSelectFolder}
               style={{
                 display: 'flex', alignItems: 'center', gap: '8px',
@@ -760,8 +760,8 @@ export const Sidebar = ({
       </div>
 
       {contextMenu && (
-        <div 
-          className="editor-context-menu" 
+        <div
+          className="editor-context-menu"
           style={{ left: contextMenu.x, top: contextMenu.y, position: 'fixed', zIndex: 1000 }}
           onClick={(e) => e.stopPropagation()}
         >
@@ -783,7 +783,7 @@ export const Sidebar = ({
       {/* Themed Dialog for Alerts & Confirms */}
       {dialog && (
         <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, 
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
           backgroundColor: 'rgba(0, 0, 0, 0.6)', backdropFilter: 'blur(2px)',
           display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000
         }}>
@@ -796,14 +796,14 @@ export const Sidebar = ({
             <p style={{ margin: '0 0 24px 0', fontSize: '14px', color: 'var(--text-muted)', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{dialog.message}</p>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
               {dialog.type === 'confirm' && (
-                <button 
+                <button
                   onClick={dialog.onCancel}
                   style={{ padding: '6px 16px', background: 'transparent', border: '1px solid var(--border-subtle, #333)', color: 'var(--text-primary)', borderRadius: '4px', cursor: 'pointer' }}
                 >
                   Cancel
                 </button>
               )}
-              <button 
+              <button
                 onClick={dialog.onConfirm || (() => setDialog(null))}
                 style={{ padding: '6px 16px', backgroundColor: 'var(--accent-color, #e0a96d)', color: '#000', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 500 }}
               >

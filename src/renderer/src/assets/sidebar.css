@@ -19,15 +19,13 @@
 }
 
 .sidebar-header-actions {
-  display: flex;
+  display: none;
   gap: 0.25rem;
-  opacity: 0;
-  transition: opacity 0.2s ease;
   flex-shrink: 0;
 }
 
 .project-root-label:hover .sidebar-header-actions {
-  opacity: 1;
+  display: flex;
 }
 
 .icon-btn {
@@ -210,6 +208,7 @@
 .tree-node.has-error .tree-label {
   color: #f14c4c;
 }
+
 .tree-node.has-warning .tree-label {
   color: #cca700;
 }
@@ -234,9 +233,11 @@
   color: #fff;
   font-family: var(--font-mono, 'JetBrains Mono', monospace);
 }
+
 .tree-badge.error {
   background: #f14c4c;
 }
+
 .tree-badge.warning {
   background: #cca700;
   color: #1e1e1e;
@@ -256,7 +257,7 @@
   padding: 2rem 1rem;
 }
 
- /* Activity Bar */
+/* Activity Bar */
 .activity-bar {
   width: 48px;
   background: var(--bg-activity);
@@ -268,7 +269,8 @@
   z-index: 10;
 }
 
-.activity-bar-top, .activity-bar-bottom {
+.activity-bar-top,
+.activity-bar-bottom {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -365,6 +367,7 @@
 .search-input-wrapper input::placeholder {
   color: var(--text-muted);
 }
+
 .rename-item-input::selection {
   background-color: rgba(255, 255, 255, 0.25);
   color: inherit;
