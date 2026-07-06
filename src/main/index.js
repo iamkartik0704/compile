@@ -693,6 +693,61 @@ ipcMain.handle('write-clipboard', async (event, text) => {
   }
 })
 
+ipcMain.handle('read-clipboard', async (event) => {
+  try {
+    const { clipboard } = require('electron')
+    return { success: true, text: clipboard.readText() }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+})
+
+ipcMain.handle('paste-from-os-clipboard', async (event, destFolder) => {
+  try {
+    const { clipboard } = require('electron')
+    const fs = require('fs')
+    const path = require('path')
+
+    const img = clipboard.readImage()
+    if (img && !img.isEmpty()) {
+      const buffer = img.toPNG()
+      let counter = 1
+      let filename = 'image.png'
+      let destPath = path.join(destFolder, filename)
+      while (fs.existsSync(destPath)) {
+        filename = `image_${counter}.png`
+        destPath = path.join(destFolder, filename)
+        counter++
+      }
+      await require('fs').promises.writeFile(destPath, buffer)
+      return { success: true, type: 'image', path: destPath }
+    }
+
+    const fileBuffer = clipboard.readBuffer('FileNameW')
+    if (fileBuffer && fileBuffer.length > 0) {
+      let filePath = fileBuffer.toString('ucs2').replace(/\0/g, '')
+      if (filePath && fs.existsSync(filePath)) {
+        const fileName = path.basename(filePath)
+        let destPath = path.join(destFolder, fileName)
+        let counter = 1
+        const parts = fileName.split('.')
+        const ext = parts.length > 1 ? `.${parts.pop()}` : ''
+        const base = parts.join('.')
+        while (fs.existsSync(destPath)) {
+          destPath = path.join(destFolder, `${base} copy ${counter}${ext}`)
+          counter++
+        }
+        await require('fs').promises.cp(filePath, destPath, { recursive: true })
+        return { success: true, type: 'file', path: destPath }
+      }
+    }
+    
+    return { success: false, error: 'No image or file found in OS clipboard' }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+})
+
 
 ipcMain.handle('watch-project', async (event, rootPath) => {
   const id = event.sender.id;

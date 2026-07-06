@@ -421,6 +421,14 @@ export const Sidebar = ({
     y = Math.max(8, y);
 
     setContextMenu({ x, y, targetItem: item })
+
+    if (clipboard) {
+      window.api.readClipboardText().then(res => {
+        if (res.success && res.text !== `[COMPILE-IDE-FILE]:${clipboard.path}`) {
+          setClipboard(null)
+        }
+      })
+    }
   }
 
   const handleRevealInExplorer = (item) => {
@@ -430,31 +438,59 @@ export const Sidebar = ({
 
   const handleCut = (item) => {
     setClipboard({ action: 'cut', path: item.path })
+    window.api.writeClipboardText(`[COMPILE-IDE-FILE]:${item.path}`)
     setContextMenu(null)
   }
 
   const handleCopy = (item) => {
     setClipboard({ action: 'copy', path: item.path })
+    window.api.writeClipboardText(`[COMPILE-IDE-FILE]:${item.path}`)
     setContextMenu(null)
   }
 
   const handlePaste = async (item) => {
-    if (!clipboard) return
     setContextMenu(null)
     const destFolder = item.isDirectory ? item.path : getParentPath(item.path)
+
+    // Try OS clipboard first (images or files copied from Windows)
+    const osRes = await window.api.pasteFromOsClipboard(destFolder)
+    if (osRes.success) {
+      handleRefresh()
+      return
+    }
+
+    // Fallback to internal clipboard
+    if (!clipboard) {
+      setDialog({ type: 'alert', title: 'Paste Failed', message: osRes.error || 'No image or file found in clipboard' })
+      return
+    }
+
     const fileName = clipboard.path.split(/[/\\]/).pop()
-    const destPath = `${destFolder}/${fileName}`
+    let destPath = `${destFolder}/${fileName}`
+
+    const normalizedClipboardPath = clipboard.path.replace(/\\/g, '/')
+    const normalizedDestPath = destPath.replace(/\\/g, '/')
 
     if (clipboard.action === 'cut') {
+      if (normalizedClipboardPath === normalizedDestPath) {
+        setClipboard(null)
+        return
+      }
       const res = await window.api.renameItem(clipboard.path, destPath, projectRoot)
       if (res.success) {
         setClipboard(null)
         handleRefresh()
         window.dispatchEvent(new CustomEvent('file-renamed', { detail: { oldPath: clipboard.path, newPath: destPath, newName: fileName } }))
       } else {
-        console.error(res.error)
+        setDialog({ type: 'alert', title: 'Cut Failed', message: res.error })
       }
     } else {
+      if (normalizedClipboardPath === normalizedDestPath) {
+         const parts = fileName.split('.');
+         const ext = parts.length > 1 ? `.${parts.pop()}` : '';
+         const base = parts.join('.');
+         destPath = `${destFolder}/${base} copy${ext}`;
+      }
       const attemptCopy = async (mode = '') => {
         const res = await window.api.copyItem(clipboard.path, destPath, projectRoot, mode)
         if (res.success) {
@@ -463,7 +499,7 @@ export const Sidebar = ({
           setDialog({
             type: 'confirm',
             title: 'File Exists',
-            message: `File ${fileName} already exists. Replace?`,
+            message: `File ${destPath.split(/[/\\]/).pop()} already exists. Replace?`,
             onConfirm: () => {
               attemptCopy('overwrite')
               setDialog(null)
@@ -471,7 +507,6 @@ export const Sidebar = ({
             onCancel: () => setDialog(null)
           })
         } else {
-          console.error(res.error)
           setDialog({ type: 'alert', title: 'Copy Failed', message: res.error })
         }
       }
@@ -533,14 +568,22 @@ export const Sidebar = ({
 
   const handleDelete = async (item) => {
     setContextMenu(null)
-    const res = await window.api.deleteItem(item.path, projectRoot)
-    if (res.success) {
-      handleRefresh()
-      window.dispatchEvent(new CustomEvent('file-deleted', { detail: { path: item.path } }))
-    } else {
-      console.error(res.error)
-      setDialog({ type: 'alert', title: 'Delete Failed', message: res.error, onConfirm: () => setDialog(null) })
-    }
+    setDialog({
+      type: 'confirm',
+      title: 'Confirm Delete',
+      message: `Are you sure you want to delete '${item.name}'?`,
+      onConfirm: async () => {
+        setDialog(null)
+        const res = await window.api.deleteItem(item.path, projectRoot)
+        if (res.success) {
+          handleRefresh()
+          window.dispatchEvent(new CustomEvent('file-deleted', { detail: { path: item.path } }))
+        } else {
+          setDialog({ type: 'alert', title: 'Delete Failed', message: res.error, onConfirm: () => setDialog(null) })
+        }
+      },
+      onCancel: () => setDialog(null)
+    })
   }
 
   const handleDeletePermanent = async (item) => {
@@ -566,7 +609,20 @@ export const Sidebar = ({
 
   useEffect(() => {
     const onRefreshSidebar = () => handleRefresh()
-    window.addEventListener('refresh-sidebar', onRefreshSidebar)
+
+    const handleGlobalKeyDown = (e) => {
+      // Ignore if a dialog is open to prevent deleting things while interacting with dialogs
+      if (document.getElementById('themed-dialog')) return;
+
+      if (e.key === 'Delete' && selectedPath) {
+        const activeElem = document.activeElement
+        if (activeElem && (activeElem.tagName === 'INPUT' || activeElem.tagName === 'TEXTAREA' || activeElem.classList.contains('inputarea'))) {
+          return 
+        }
+        const itemName = selectedPath.split(/[/\\]/).pop()
+        handleDelete({ path: selectedPath, name: itemName, isDirectory: selectedIsFolder })
+      }
+    }
 
     if (projectRoot) {
       // Start the backend chokidar watcher
@@ -587,13 +643,30 @@ export const Sidebar = ({
     window.addEventListener('refresh-sidebar', onRefreshSidebar)
     window.addEventListener('create-new-file', onCreateNewFile)
     window.addEventListener('create-new-folder', onCreateNewFolder)
+    window.addEventListener('keydown', handleGlobalKeyDown)
 
     return () => {
       window.removeEventListener('refresh-sidebar', onRefreshSidebar)
       window.removeEventListener('create-new-file', onCreateNewFile)
       window.removeEventListener('create-new-folder', onCreateNewFolder)
+      window.removeEventListener('keydown', handleGlobalKeyDown)
     }
-  }, [projectRoot])
+  }, [projectRoot, selectedPath, selectedIsFolder])
+
+  useEffect(() => {
+    if (!dialog) return
+    const handleDialogKey = (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        dialog.onConfirm && dialog.onConfirm()
+      } else if (e.key === 'Escape') {
+        e.preventDefault()
+        dialog.onCancel ? dialog.onCancel() : (dialog.onConfirm && dialog.onConfirm())
+      }
+    }
+    window.addEventListener('keydown', handleDialogKey)
+    return () => window.removeEventListener('keydown', handleDialogKey)
+  }, [dialog])
 
   const handleCollapseAll = () => {
     setCollapseSignal(s => s + 1)
@@ -769,7 +842,7 @@ export const Sidebar = ({
           <div className="editor-context-menu-separator"></div>
           <div className="editor-context-menu-item" onClick={() => handleCut(contextMenu.targetItem)}>Cut</div>
           <div className="editor-context-menu-item" onClick={() => handleCopy(contextMenu.targetItem)}>Copy</div>
-          <div className={`editor-context-menu-item ${!clipboard ? 'disabled' : ''}`} onClick={() => handlePaste(contextMenu.targetItem)}>Paste</div>
+          <div className="editor-context-menu-item" onClick={() => handlePaste(contextMenu.targetItem)}>Paste</div>
           <div className="editor-context-menu-separator"></div>
           <div className="editor-context-menu-item" onClick={() => handleCopyPath(contextMenu.targetItem)}>Copy Path</div>
           <div className="editor-context-menu-item" onClick={() => handleCopyRelativePath(contextMenu.targetItem)}>Copy Relative Path</div>
@@ -782,7 +855,7 @@ export const Sidebar = ({
 
       {/* Themed Dialog for Alerts & Confirms */}
       {dialog && (
-        <div style={{
+        <div id="themed-dialog" style={{
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
           backgroundColor: 'rgba(0, 0, 0, 0.6)', backdropFilter: 'blur(2px)',
           display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000
