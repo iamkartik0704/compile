@@ -12,7 +12,7 @@ export function CppCompilerSettings() {
       if (window.api.getCppCompilers) {
         const { compilers, config } = await window.api.getCppCompilers()
         setCompilers(compilers || [])
-        setSelectedCompiler(config?.selectedCompiler?.binDir || '')
+        setSelectedCompiler(config?.selectedCompiler?.label || '')
         setManualOverride(config?.manualOverride || '')
       }
     } catch (e) {
@@ -26,10 +26,10 @@ export function CppCompilerSettings() {
     loadConfig()
   }, [])
 
-  const handleSelectCompiler = async (binDir) => {
-    setSelectedCompiler(binDir)
+  const handleSelectCompiler = async (label) => {
+    setSelectedCompiler(label)
     setManualOverride('')
-    const compilerObj = compilers.find(c => c.binDir === binDir)
+    const compilerObj = compilers.find(c => c.label === label)
     try {
       if (window.api.setCppCompiler) {
         await window.api.setCppCompiler({ 
@@ -71,19 +71,27 @@ export function CppCompilerSettings() {
         </div>
         <div className="settings-item-control">
           {compilers.length === 0 ? (
-            <div style={{ color: '#eb5757', padding: '8px 0' }}>No compiler detected. Install one or enter path manually.</div>
+            <div className="settings-empty" style={{ margin: 0, padding: '8px 0', color: 'var(--accent-purple)' }}>No compiler detected. Install one or enter path manually.</div>
           ) : (
-            <select 
-              className="settings-select" 
-              value={selectedCompiler}
-              onChange={(e) => handleSelectCompiler(e.target.value)}
-              disabled={!!manualOverride}
-            >
-              <option value="" disabled>Select a compiler</option>
-              {compilers.map(c => (
-                <option key={c.binDir} value={c.binDir}>{c.label}</option>
-              ))}
-            </select>
+            <div className="settings-select-wrapper">
+              <select 
+                className="settings-select" 
+                value={selectedCompiler}
+                onChange={(e) => handleSelectCompiler(e.target.value)}
+                disabled={!!manualOverride}
+              >
+                <option value="" disabled>Select a compiler</option>
+                {compilers.map(c => {
+                  const displayName = c.label
+                    .replace(/^gcc\/g\+\+ \((.*)\)$/, 'GCC/G++  —  $1')
+                    .replace(/^clang \((.*)\)$/, 'Clang  —  $1');
+                  return (
+                    <option key={c.label} value={c.label}>{displayName}</option>
+                  );
+                })}
+              </select>
+              <svg className="settings-select-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+            </div>
           )}
         </div>
       </div>

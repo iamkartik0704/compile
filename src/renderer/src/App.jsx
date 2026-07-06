@@ -3153,9 +3153,9 @@ the new code
                     const res = await window.api.recheckToolchainStatus('cpp')
                     if (res.success) {
                       setMissingToolchain(null)
-                      setToast({ message: 'Toolchain verified successfully! C++ features are now active.', type: 'success' })
+                      window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Toolchain verified successfully! C++ features are now active.', type: 'success' } }))
                     } else {
-                      setToast({ message: 'Toolchain still not found. Please run the command.', type: 'error' })
+                      window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Toolchain still not found. Please run the command.', type: 'error' } }))
                     }
                   }}
                   style={{ padding: '8px 16px', backgroundColor: 'var(--accent-color)', border: 'none', color: '#fff', borderRadius: '4px', cursor: 'pointer' }}

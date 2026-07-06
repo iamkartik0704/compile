@@ -120,7 +120,7 @@ export async function detectCppCompilers() {
         : `gcc/g++ (${path.dirname(line)})`
         
       const binDir = path.dirname(line).replace(/\\/g, '/')
-      compilers.add(JSON.stringify({ label, binDir }))
+      compilers.add(JSON.stringify({ label, binDir, isClang }))
     }
   } catch (e) {
     console.error('[LSP] Error during compiler detection', e)
@@ -210,7 +210,7 @@ export async function validateHostToolchain() {
     console.log(`[LSP] No active compiler found in config. Running detection...`)
     const detected = await detectCppCompilers();
     if (detected.length > 0) {
-       const isClang = detected[0].binDir.toLowerCase().includes('clang');
+       const isClang = detected[0].isClang || detected[0].binDir.toLowerCase().includes('clang');
        const exe = isClang ? 'clang++' : 'g++';
        exePath = path.join(detected[0].binDir, exe + (platform === 'win32' ? '.exe' : '')).replace(/\\/g, '/');
        console.log(`[LSP] Auto-selected first detected compiler: ${exePath}`)
@@ -310,15 +310,16 @@ export async function getResolvedQueryDriverArg() {
 export function getCompilerPathsForLanguage(language) {
   const config = getCompilerConfig()
   let targetDir = ''
+  let isClang = false
   if (config.manualOverride) {
     targetDir = config.manualOverride
+    isClang = targetDir.toLowerCase().includes('clang')
   } else if (config.selectedCompiler && config.selectedCompiler.binDir) {
     targetDir = config.selectedCompiler.binDir
+    isClang = config.selectedCompiler.isClang !== undefined ? config.selectedCompiler.isClang : targetDir.toLowerCase().includes('clang')
   }
   
   if (!targetDir) return null
-  
-  const isClang = targetDir.toLowerCase().includes('clang')
   
   let exe = ''
   if (language === 'c') {
