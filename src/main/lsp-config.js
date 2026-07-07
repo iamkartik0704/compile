@@ -1,22 +1,45 @@
 import { getResolvedQueryDriverArg } from './compiler-detection.js'
 
+import { app } from 'electron'
+import { join } from 'path'
+import { existsSync } from 'fs'
+
+function resolveNodeLsp(pkgName, scriptPath, fallbackBin) {
+  const localScript = join(app.getAppPath(), 'node_modules', pkgName, scriptPath)
+  if (existsSync(localScript)) {
+    return {
+      command: app.isPackaged ? process.execPath : 'node',
+      args: [localScript],
+      isNode: true
+    }
+  }
+  return {
+    command: process.platform === 'win32' ? fallbackBin + '.cmd' : fallbackBin,
+    args: [],
+    isNode: false
+  }
+}
+
 export const LSP_REGISTRY = {
   javascript: {
     extensionId: 'ext-lsp-typescript',
-    command: process.platform === 'win32' ? 'npx.cmd' : 'npx',
-    args: ['typescript-language-server', '--stdio'],
+    get command() { return resolveNodeLsp('typescript-language-server', 'lib/cli.mjs', 'typescript-language-server').command },
+    get args() { return [...resolveNodeLsp('typescript-language-server', 'lib/cli.mjs', 'typescript-language-server').args, '--stdio'] },
+    get isNode() { return resolveNodeLsp('typescript-language-server', 'lib/cli.mjs', 'typescript-language-server').isNode },
     transport: 'stdio'
   },
   typescript: {
     extensionId: 'ext-lsp-typescript',
-    command: process.platform === 'win32' ? 'npx.cmd' : 'npx',
-    args: ['typescript-language-server', '--stdio'],
+    get command() { return resolveNodeLsp('typescript-language-server', 'lib/cli.mjs', 'typescript-language-server').command },
+    get args() { return [...resolveNodeLsp('typescript-language-server', 'lib/cli.mjs', 'typescript-language-server').args, '--stdio'] },
+    get isNode() { return resolveNodeLsp('typescript-language-server', 'lib/cli.mjs', 'typescript-language-server').isNode },
     transport: 'stdio'
   },
   python: {
     extensionId: 'ext-lsp-python',
-    command: process.platform === 'win32' ? 'npx.cmd' : 'npx',
-    args: ['pyright-langserver', '--stdio'],
+    get command() { return resolveNodeLsp('pyright', 'dist/pyright-langserver.js', 'pyright-langserver').command },
+    get args() { return [...resolveNodeLsp('pyright', 'dist/pyright-langserver.js', 'pyright-langserver').args, '--stdio'] },
+    get isNode() { return resolveNodeLsp('pyright', 'dist/pyright-langserver.js', 'pyright-langserver').isNode },
     transport: 'stdio'
   },
   cpp: {

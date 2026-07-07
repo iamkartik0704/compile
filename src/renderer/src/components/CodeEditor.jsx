@@ -327,14 +327,7 @@ const lspLanguageKey = (lang) => {
   return map[lang] || null
 }
 
-const pathToUri = (p) => {
-  if (!p) return ''
-  let formatted = p.replace(/\\/g, '/')
-  if (!formatted.startsWith('/')) formatted = '/' + formatted
-  // Lowercase the drive letter for Monaco compatibility (e.g. /C:/ -> /c:/)
-  formatted = formatted.replace(/^\/([A-Z]):\//, (match, drive) => `/${drive.toLowerCase()}:/`)
-  return `file://${formatted}`
-}
+const pathToUri = (p) => getCanonicalMonacoUriString(p);
 
 const severityMap = {
   1: monaco.MarkerSeverity.Error,
@@ -655,67 +648,46 @@ const EditorTab = ({ file, isActive, isDragging, onDragStart, onDragOver, onDrop
   )
 }
 
-// ─── Zero-shortcut canonical URI helpers ─────────────────────────
+// ─── ONE CANONICAL URI METHOD ──────────────────────────────────────
+const getCanonicalMonacoUriString = (filePath) => {
+  if (!filePath) return '';
+  if (window.monaco) {
+    // Rely exclusively on Monaco's internal normalizer (handles Windows case/slashes)
+    return window.monaco.Uri.file(filePath).toString();
+  }
+  // Best-effort fallback before monaco loads
+  let formatted = filePath.replace(/\\/g, '/');
+  if (!formatted.startsWith('/')) formatted = '/' + formatted;
+  formatted = formatted.replace(/^\/([A-Z]):\//, (match, drive) => `/${drive.toLowerCase()}:/`);
+  return `file://${formatted}`;
+};
+
 const canonicalUri = (filePath) => {
   if (!filePath || !window.monaco) return null;
-  return filePath.startsWith('file://')
-    ? window.monaco.Uri.parse(filePath)
-    : window.monaco.Uri.file(filePath);
+  // NEVER use Uri.parse() for file paths! Only Uri.file() guarantees consistency.
+  return window.monaco.Uri.file(filePath);
 };
 
-// Robust normalizer: repeatedly decodes (clangd sometimes double-encodes on
-// Windows, e.g. %253A), tolerates decode failures instead of aborting the
-// whole string, and always collapses to forward-slash/lowercase form so a
-// Uri.file()-derived path and a raw LSP URI string reduce to the same key.
-const normalizePath = (p) => {
-  if (!p || typeof p !== 'string') return '';
-
-  let prev = p;
-  for (let i = 0; i < 3; i++) {
-    try {
-      const decoded = decodeURIComponent(prev);
-      if (decoded === prev) break;
-      prev = decoded;
-    } catch {
-      break; // stop at first invalid escape, keep what we already decoded
-    }
-  }
-
-  return prev
-    .replace(/^file:\/\/\/?/i, '')
-    .replace(/\\/g, '/')
-    .replace(/\/+/g, '/')
-    .toLowerCase()
-    .replace(/^\/+/, '');
-};
-
-// Model registry keyed by normalized path, kept in sync as models are
-// created. This replaces "try exact Uri equality, fall back to a linear
-// scan" — Uri.parse() vs Uri.file() disagree on whether %3A gets decoded,
-// so exact-object lookup silently misses clangd's percent-encoded drive
-// letters on every call. String-key lookup is the only reliable path.
-const modelsByNormalizedPath = new Map();
+// Model registry keyed by exact Monaco URI string.
+const modelsByUri = new Map();
 
 const registerModelPath = (model) => {
   if (!model || !model.uri) return;
-  modelsByNormalizedPath.set(normalizePath(model.uri.toString()), model);
+  modelsByUri.set(model.uri.toString(), model);
 };
 
-const findMonacoModel = (targetFilePath) => {
-  if (!targetFilePath || !window.monaco || !window.monaco.editor) return null;
-  const target = normalizePath(targetFilePath);
+const findMonacoModel = (filePath) => {
+  if (!filePath || !window.monaco || !window.monaco.editor) return null;
+  const targetUriString = getCanonicalMonacoUriString(filePath);
 
-  const cached = modelsByNormalizedPath.get(target);
+  const cached = modelsByUri.get(targetUriString);
   if (cached && !cached.isDisposed()) return cached;
 
-  // Cache miss (model created outside registerModelPath) — rebuild once.
+  // Cache miss - rebuild using exact equality
   for (const m of window.monaco.editor.getModels()) {
-    const candidates = [m.uri?.fsPath, m.uri?.path, m.uri?.toString?.()];
-    for (const c of candidates) {
-      if (c && normalizePath(c) === target) {
-        modelsByNormalizedPath.set(target, m);
-        return m;
-      }
+    if (m.uri.toString() === targetUriString) {
+      modelsByUri.set(targetUriString, m);
+      return m;
     }
   }
   return null;
@@ -795,6 +767,7 @@ export const CodeEditor = ({
   
   useEffect(() => {
     if (monaco) {
+      window.monaco = monaco
       monaco.languages.typescript.javascriptDefaults.setEagerModelSync(true)
       monaco.languages.typescript.typescriptDefaults.setEagerModelSync(true)
       
@@ -880,15 +853,31 @@ export const CodeEditor = ({
   const coldBootTimerRef = useRef(null)
   const pendingMarkers = useRef(new Map())
 
+  let flushCallCount = 0;
+  
   const flushPendingMarkers = (filePath) => {
-    if (!filePath) return;
-    const key = normalizePath(filePath);
-    const markers = pendingMarkers.current.get(key);
-    if (!markers) return;
+    flushCallCount++;
+    console.log(`[Pending Buffer Flush] Call #${flushCallCount}. Starting for filePath: "${filePath}"`);
+    if (!filePath) {
+      console.log(`[Pending Buffer Flush] Bailing out because filePath is empty.`);
+      return;
+    }
+    const key = getCanonicalMonacoUriString(filePath);
+    console.log(`[Pending Buffer Flush] Looking up key: "${key}". Current pending keys:`, Array.from(pendingMarkers.current.keys()));
+    
+    const pendingObj = pendingMarkers.current.get(key);
+    if (!pendingObj) {
+      console.log(`[Pending Buffer Flush] No buffered markers found for key: "${key}"`);
+      return;
+    }
+    const { markers, language } = pendingObj;
     const model = findMonacoModel(filePath);
-    if (!model) return;
+    if (!model) {
+      console.warn(`[Pending Buffer Flush] Buffered markers exist, but findMonacoModel returned null for: "${filePath}"`);
+      return;
+    }
     console.log(`[Pending Buffer Flush] ✅ Applying ${markers.length} buffered markers to: ${model.uri.toString()}`);
-    window.monaco.editor.setModelMarkers(model, 'clangd', markers);
+    window.monaco.editor.setModelMarkers(model, `lsp-${language}`, markers);
     pendingMarkers.current.delete(key);
     requestAnimationFrame(() => editorRef.current?.layout());
   };
@@ -991,22 +980,34 @@ export const CodeEditor = ({
 
   useEffect(() => {
     const handler = (payload) => {
-      const { uri, filePath, diagnostics } = payload || {};
-      const targetPath = uri || filePath;
-      if (!targetPath) return;
-      // JS/TS diagnostics stay owned by Monaco's native workers.
-      if (targetPath.endsWith('.js') || targetPath.endsWith('.ts')) return;
+      try {
+        const { uri, filePath, diagnostics, language = 'unknown' } = payload || {};
+        const targetPath = filePath || uri;
+        if (!targetPath) return;
+        // JS/TS diagnostics stay owned by Monaco's native workers.
+        if (targetPath.endsWith('.js') || targetPath.endsWith('.ts')) return;
 
-      console.log(`[Live IPC Receiver] Received ${diagnostics ? diagnostics.length : 0} diagnostics for: "${targetPath}"`);
-      const markers = formatLspDiagnosticsToMonaco(diagnostics);
-      const model = findMonacoModel(targetPath);
-      if (model) {
-        console.log(`[Live IPC Receiver] ✅ MATCHED MODEL! Injecting markers into: ${model.uri.toString()}`);
-        window.monaco.editor.setModelMarkers(model, 'clangd', markers);
-        requestAnimationFrame(() => editorRef.current?.layout());
-      } else {
-        console.warn(`[Live IPC Receiver] Model not in RAM yet for "${targetPath}". Buffering to pendingMarkers.`);
-        pendingMarkers.current.set(normalizePath(targetPath), markers);
+        console.log(`[Live IPC Receiver] Received ${diagnostics ? diagnostics.length : 0} diagnostics for: "${targetPath}"`);
+        if (!window.monaco || !diagnostics) {
+          console.log(`[Live IPC Receiver] Bailing out because window.monaco=${!!window.monaco} or diagnostics=${!!diagnostics}`);
+          return;
+        }
+
+        console.log(`[Live IPC Receiver] Formatting diagnostics...`);
+        const markers = formatLspDiagnosticsToMonaco(diagnostics);
+        console.log(`[Live IPC Receiver] Finding monaco model...`);
+        const model = findMonacoModel(targetPath);
+        
+        if (model) {
+          console.log(`[Live IPC Receiver] ✅ MATCHED MODEL! Injecting markers into: ${model.uri.toString()} | model.id: ${model.id}`);
+          window.monaco.editor.setModelMarkers(model, `lsp-${language}`, markers);
+          requestAnimationFrame(() => editorRef.current?.layout());
+        } else {
+          console.warn(`[Live IPC Receiver] Model not in RAM yet for "${targetPath}". Buffering to pendingMarkers.`);
+          pendingMarkers.current.set(getCanonicalMonacoUriString(targetPath), { markers, language });
+        }
+      } catch (err) {
+        console.error(`[Live IPC Receiver] CRASH:`, err);
       }
     };
     if (window.api?.onLspDiagnostics) {
@@ -1076,17 +1077,22 @@ export const CodeEditor = ({
   // ─── Explicit tab-close: dispose model, clear markers, purge cache ───
   const closeTab = (filePath) => {
     if (!filePath) return
-    if (window.monaco) {
-      const uri = canonicalUri(filePath)
-      const model = window.monaco.editor.getModel(uri)
-      if (model) {
-        window.monaco.editor.setModelMarkers(model, 'clangd', [])
-        model.dispose()
+    try {
+      if (window.monaco) {
+        const uri = canonicalUri(filePath)
+        const model = window.monaco.editor.getModel(uri)
+        if (model) {
+          model.dispose()
+        }
       }
+      pendingMarkers.current.delete(getCanonicalMonacoUriString(filePath))
+      window.api?.send?.('lsp:document-close', { filePath })
+    } catch (err) {
+      console.error('[closeTab] Error during cleanup:', err)
+    } finally {
+      // ALWAYS call closeFile, even if Monaco cleanup fails, to prevent ghost tabs
+      closeFile(filePath)
     }
-    pendingMarkers.current.delete(normalizePath(filePath))
-    window.api?.send?.('lsp:document-close', { filePath })
-    closeFile(filePath)
   }
 
   // ─── Context Menu Handlers ───
@@ -1611,6 +1617,15 @@ export const CodeEditor = ({
   const breakpointDecorationsCollectionRef = useRef(null)
 
   const handleEditorBeforeMount = (monacoInstance) => {
+    if (!monacoInstance.editor._patched) {
+      monacoInstance.editor._patched = true;
+      const orig = monacoInstance.editor.setModelMarkers;
+      monacoInstance.editor.setModelMarkers = function(model, owner, markers) {
+        console.log(`[MARKER-TRACE] owner="${owner}" count=${markers.length} model=${model.uri.toString()}`);
+        return orig.apply(this, arguments);
+      };
+    }
+
     monacoInstance.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
       noSemanticValidation: false,
       noSyntaxValidation: false,
@@ -1674,13 +1689,23 @@ export const CodeEditor = ({
     // Register whatever model is already attached at first mount —
     // onDidChangeModel below only fires on later swaps.
     registerModelPath(editor.getModel())
+    console.log(`[ACTIVE TAB] onMount | uri: ${editor.getModel()?.uri?.toString()} | model.id: ${editor.getModel()?.id}`);
+    
+    // Instantly drain any diagnostics that arrived before the model existed
+    if (globalActiveFile) flushPendingMarkers(globalActiveFile);
 
     editor.onDidChangeModel(() => {
       // @monaco-editor/react creates/swaps models internally when the
       // `path` prop changes — register whatever model just became active
       // so findMonacoModel's normalized-path cache knows about it.
       registerModelPath(editor.getModel());
-      if (activeFile) restoreCachedDiagnostics(activeFile);
+      console.log(`[ACTIVE TAB] onDidChangeModel | uri: ${editor.getModel()?.uri?.toString()} | model.id: ${editor.getModel()?.id}`);
+      if (activeFile) {
+        restoreCachedDiagnostics(activeFile);
+        flushPendingMarkers(activeFile);
+      } else if (globalActiveFile) {
+        flushPendingMarkers(globalActiveFile);
+      }
     });
     
     editor.onContextMenu((e) => {

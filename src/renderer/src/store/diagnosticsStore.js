@@ -62,11 +62,18 @@ export const useDiagnosticsStore = create((set, get) => ({
   bySource: {},
   // { [normalizedPath]: { error, warning, info, hint } } — derived for fast render.
   counts: {},
+  // { [normalizedPath]: { [sourceKey]: true } } — every source that has emitted
+  // ANY publishDiagnostics for this file at least once (empty array included).
+  // Lets the sidebar/tabs distinguish "confirmed clean by source X" from
+  // "source X hasn't looked yet" without lying with a "0" badge either way.
+  analyzed: {},
 
   /**
    * Replace all diagnostics for a single (file, source) pair.
    * `source` is a string like `lsp-cpp`, `eslint`, `monaco-typescript`.
    * `diagnostics` is an array of `{ severity, message, line, column }`.
+   * An empty array is a positive assertion — "I looked, nothing wrong" —
+   * and marks the file as analyzed by that source.
    */
   setDiagnostics: (path, source, diagnostics) => {
     const key = normalizePath(path)
@@ -91,18 +98,25 @@ export const useDiagnosticsStore = create((set, get) => ({
         nextCounts[key] = summarize(flat)
       }
 
-      return { bySource: nextBySource, counts: nextCounts }
+      const nextAnalyzed = { ...state.analyzed }
+      const analyzedSources = { ...(state.analyzed[key] || {}), [source]: true }
+      nextAnalyzed[key] = analyzedSources
+
+      return { bySource: nextBySource, counts: nextCounts, analyzed: nextAnalyzed }
     })
   },
 
   /**
    * Drop every diagnostic contributed by a source (e.g. an LSP that
    * just shut down). Used when the user switches C++ compilers.
+   * Also drops the analyzed marker for that source so a subsequent
+   * scan doesn't show stale "clean" status.
    */
   clearSource: (source) => {
     set((state) => {
       const nextBySource = {}
       const nextCounts = {}
+      const nextAnalyzed = {}
       for (const [file, sources] of Object.entries(state.bySource)) {
         const filtered = { ...sources }
         delete filtered[source]
@@ -110,11 +124,107 @@ export const useDiagnosticsStore = create((set, get) => ({
         nextBySource[file] = filtered
         nextCounts[file] = summarize(Object.values(filtered).flat())
       }
-      return { bySource: nextBySource, counts: nextCounts }
+      for (const [file, sources] of Object.entries(state.analyzed)) {
+        const filtered = { ...sources }
+        delete filtered[source]
+        if (Object.keys(filtered).length === 0) continue
+        nextAnalyzed[file] = filtered
+      }
+      return { bySource: nextBySource, counts: nextCounts, analyzed: nextAnalyzed }
     })
   },
 
-  clearAll: () => set({ bySource: {}, counts: {} }),
+  /**
+   * Evict every trace of `path` from the store. If `path` is a
+   * directory, all descendants are dropped too — file-deleted events
+   * can fire for a directory and we don't want ghost counts under
+   * files inside it.
+   */
+  clearForPath: (path) => {
+    const key = normalizePath(path)
+    if (!key) return
+    const prefix = key + '/'
+    set((state) => {
+      const shouldDrop = (k) => k === key || k.startsWith(prefix)
+      const filter = (map) => {
+        let dropped = false
+        const next = {}
+        for (const [k, v] of Object.entries(map)) {
+          if (shouldDrop(k)) { dropped = true; continue }
+          next[k] = v
+        }
+        return dropped ? next : map
+      }
+      const nextBySource = filter(state.bySource)
+      const nextCounts = filter(state.counts)
+      const nextAnalyzed = filter(state.analyzed)
+      if (nextBySource === state.bySource && nextCounts === state.counts && nextAnalyzed === state.analyzed) {
+        return state
+      }
+      return { bySource: nextBySource, counts: nextCounts, analyzed: nextAnalyzed }
+    })
+  },
+
+  /**
+   * Move all diagnostics from oldPath → newPath. Handles the case where
+   * a whole directory is renamed by moving every key with the prefix.
+   * Called from App.jsx's file-renamed handler so the badge follows
+   * the file instead of orphaning under the old path.
+   */
+  renamePath: (oldPath, newPath) => {
+    const oldKey = normalizePath(oldPath)
+    const newKey = normalizePath(newPath)
+    if (!oldKey || !newKey || oldKey === newKey) return
+    const oldPrefix = oldKey + '/'
+    set((state) => {
+      const rewriteKey = (k) => {
+        if (k === oldKey) return newKey
+        if (k.startsWith(oldPrefix)) return newKey + '/' + k.slice(oldPrefix.length)
+        return null
+      }
+      const migrate = (map) => {
+        const next = {}
+        let dirty = false
+        for (const [k, v] of Object.entries(map)) {
+          const rewritten = rewriteKey(k)
+          if (rewritten) {
+            next[rewritten] = v
+            dirty = true
+          } else {
+            next[k] = v
+          }
+        }
+        return dirty ? next : map
+      }
+      return {
+        bySource: migrate(state.bySource),
+        counts: migrate(state.counts),
+        analyzed: migrate(state.analyzed)
+      }
+    })
+  },
+
+  /**
+   * Mark a file as analyzed by a source WITHOUT publishing diagnostics.
+   * The workspace scanner calls this after every didOpen has been ack'd
+   * so files with genuinely-zero errors still register as "looked at"
+   * even though setDiagnostics(path, source, []) doesn't fire for them
+   * (the LSP simply never publishes for clean files, so we have to
+   * assert it ourselves once the batch is done).
+   */
+  markAnalyzed: (path, source) => {
+    const key = normalizePath(path)
+    if (!key || !source) return
+    set((state) => {
+      const existing = state.analyzed[key] || {}
+      if (existing[source]) return state
+      return {
+        analyzed: { ...state.analyzed, [key]: { ...existing, [source]: true } }
+      }
+    })
+  },
+
+  clearAll: () => set({ bySource: {}, counts: {}, analyzed: {} }),
 
   getCountsFor: (path) => {
     const key = normalizePath(path)
@@ -146,6 +256,22 @@ export const useDiagnosticsStore = create((set, get) => ({
 export const useFileCounts = (path) => {
   const key = normalizePath(path)
   return useDiagnosticsStore((s) => s.counts[key] || emptyCounts)
+}
+
+// Convenience selector: has ANY source analyzed this file yet?
+// Returns false until at least one publishDiagnostics or markAnalyzed
+// call has landed for this path. Sidebar/tab UX can use this to
+// visually differentiate "no badge because clean" from "no badge because
+// we haven't looked yet" — the default UI intentionally treats them the
+// same (no visual difference), but keeping the state honest here means
+// future tooltips or a status bar can surface the distinction without
+// having to re-derive it.
+export const useIsAnalyzed = (path) => {
+  const key = normalizePath(path)
+  return useDiagnosticsStore((s) => {
+    const entry = s.analyzed[key]
+    return !!(entry && Object.keys(entry).length > 0)
+  })
 }
 
 // Convenience selector: subscribe to a whole folder's aggregated counts.

@@ -1,0 +1,12 @@
+[
+  {
+    "directory": "C:/Users/iamka/Desktop/comiple ide testing 2/dev-fixtures",
+    "command": "\"C:/winlibs64/mingw64/bin/clang++.exe\" -xc++ -std=c++17 --target=x86_64-w64-mingw32 -D__MSVCRT__=1 -D__MINGW32__=1 -D__MINGW64__=1 -D_WIN32=1 -D__GNUC__=13 -I\"C:/Users/iamka/Desktop/comiple ide testing 2/dev-fixtures\" -c \"C:/Users/iamka/Desktop/comiple ide testing 2/dev-fixtures/broken.cpp\"",
+    "file": "C:/Users/iamka/Desktop/comiple ide testing 2/dev-fixtures/broken.cpp"
+  },
+  {
+    "directory": "C:/Users/iamka/Desktop/comiple ide testing 2/dev-fixtures",
+    "command": "\"C:/winlibs64/mingw64/bin/clang++.exe\" -xc++ -std=c++17 --target=x86_64-w64-mingw32 -D__MSVCRT__=1 -D__MINGW32__=1 -D__MINGW64__=1 -D_WIN32=1 -D__GNUC__=13 -I\"C:/Users/iamka/Desktop/comiple ide testing 2/dev-fixtures\" -I\"C:/Users/iamka/Desktop/njack interview\" -c \"C:/Users/iamka/Desktop/njack interview/test.cpp\"",
+    "file": "C:/Users/iamka/Desktop/njack interview/test.cpp"
+  }
+]

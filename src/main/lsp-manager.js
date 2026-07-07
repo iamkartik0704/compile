@@ -8,7 +8,13 @@ import url from 'url'
 import { pathToFileURL } from 'node:url'
 
 // ─── Canonical LSP URI: byte-identical to renderer's monaco.Uri.file() ───
-const toLspUri = (absPath) => pathToFileURL(absPath).toString()
+const toLspUri = (absPath) => {
+  let uri = pathToFileURL(absPath).toString()
+  if (process.platform === 'win32') {
+    uri = uri.replace(/^file:\/\/\/([a-zA-Z]):\//, (m, drive) => `file:///${drive.toLowerCase()}%3A/`)
+  }
+  return uri
+}
 
 const normalizeCanonicalPath = (filePath) => {
   if (!filePath || typeof filePath !== 'string') return '';
@@ -31,11 +37,15 @@ const diagnosticCache = new Map();
 
 const uriToPath = (uri) => {
   if (!uri) return ''
-  let p = uri.replace(/^file:\/\//, '')
-  if (process.platform === 'win32' && p.match(/^\/[a-zA-Z]:\//)) {
-    p = p.substring(1)
+  try {
+    return url.fileURLToPath(uri)
+  } catch (e) {
+    let p = uri.replace(/^file:\/\//, '')
+    if (process.platform === 'win32' && p.match(/^\/[a-zA-Z]:\//)) {
+      p = p.substring(1)
+    }
+    return path.normalize(p)
   }
-  return path.normalize(p)
 }
 
 const pathToUri = (p) => {
@@ -112,18 +122,34 @@ function parseAndForwardMessages(language, entry, onMessage, setStatus) {
           entry.requestQueue = []
         }
       } else {
+        if (message.method === 'workspace/configuration' && message.id !== undefined) {
+          const response = {
+            jsonrpc: '2.0',
+            id: message.id,
+            result: message.params.items ? message.params.items.map(() => ({})) : []
+          }
+          sendToLanguageServer(language, response)
+        }
+
         if (message.method === 'textDocument/publishDiagnostics' && message.params && message.params.uri) {
           // Zero-debounce forwarding: keep the canonical LSP URI intact so the
           // renderer's monaco.Uri.file() lookup hits on the first try, but ALSO
-          // ship a normalized fsPath for the fuzzy fallback path.
+          // ship a normalized fsPath for the fuzzy fallback path. The `language`
+          // field lets the renderer scope setModelMarkers by owner correctly —
+          // without it every language paints under a single owner and clears
+          // stomp on each other.
           const canonicalUri = message.params.uri
           const filePath = uriToPath(canonicalUri)
           const canonicalPath = normalizeCanonicalPath(filePath)
           const diagnostics = message.params.diagnostics || []
+          // [DIAG-TRACE-1] publishDiagnostics received from LSP.
+          console.log(`[DIAG-TRACE-1] publishDiagnostics lang=${language} uri=${canonicalUri} count=${diagnostics.length}`)
+          // Backend cache can still use the aggressively mangled key
           diagnosticCache.set(canonicalPath, diagnostics)
           sendToWindow('lsp:diagnostics', {
             uri: canonicalUri,
-            filePath: canonicalPath,
+            filePath, // Send the UNMANGLED, exact Windows casing path to the renderer!
+            language,
             diagnostics
           })
         }
@@ -166,8 +192,13 @@ export async function startLanguageServer(language, rootUri = null, onMessage, o
 
   // Pre-flight Validation for C/C++
   let spawnEnv = { ...process.env };
+  if (config.isNode) {
+    spawnEnv.ELECTRON_RUN_AS_NODE = '1'
+  }
   if (language === 'cpp' || language === 'c') {
     const validation = await validateHostToolchain()
+    // [DIAG-TRACE-2a] Toolchain gate outcome — if false, clangd never spawns.
+    console.log(`[DIAG-TRACE-2a] toolchain-gate lang=${language} success=${validation.success} error=${validation.error || 'none'}`)
     if (!validation.success) {
       sendToWindow('show-missing-toolchain-modal', validation)
       return { success: false, error: validation.error }
@@ -194,11 +225,12 @@ export async function startLanguageServer(language, rootUri = null, onMessage, o
   }
 
   console.log(`[LSP] Starting ${language}: ${command} ${args.join(' ')}`)
+  console.log(`[DIAG-TRACE-2b] spawn-attempt lang=${language} cmd=${command} args=${JSON.stringify(args)}`)
 
   try {
     const child = spawn(command, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      shell: process.platform === 'win32',
+      shell: process.platform === 'win32' && !config.isNode,
       env: spawnEnv
     })
 
@@ -235,28 +267,34 @@ export async function startLanguageServer(language, rootUri = null, onMessage, o
     })
 
     child.on('error', (err) => {
+      // [DIAG-TRACE-2c] Spawn error — usually ENOENT means the binary isn't on PATH.
+      console.error(`[DIAG-TRACE-2c] spawn-error lang=${language} code=${err.code || 'unknown'} msg=${err.message}`)
       console.error(`[LSP ${language}] Process error:`, err)
       if (err.code === 'ENOENT') {
-        sendToWindow('show-toast', { 
-          message: `LSP Dependency Missing: Could not find ${command} for ${language}`, 
-          type: 'error' 
+        sendToWindow('show-toast', {
+          message: `LSP Dependency Missing: Could not find ${command} for ${language}`,
+          type: 'error'
         })
       }
       setStatus('error')
     })
 
-    child.stdout.on('data', (data) => {
+    child.stdout.on('data', data => {
       entry.buffer = Buffer.concat([entry.buffer, data])
       parseAndForwardMessages(language, entry, onMessage, setStatus)
     })
 
     child.stderr.on('data', (data) => {
       const msg = data.toString()
+      // [DIAG-TRACE-2d] stderr from the LSP — noisy but valuable if server dies during init.
+      console.error(`[DIAG-TRACE-2d] stderr lang=${language} bytes=${msg.length}`)
       console.error(`[LSP ${language}] stderr:`, msg)
       if (onError) onError(msg)
     })
 
     child.on('exit', (code) => {
+      // [DIAG-TRACE-2e] Process exit — non-zero code before we've even sent didOpen means the server died.
+      console.log(`[DIAG-TRACE-2e] process-exit lang=${language} code=${code}`)
       console.log(`[LSP ${language}] exited with code ${code}`)
       setStatus('idle')
       lspProcesses.delete(language)
@@ -300,6 +338,39 @@ export async function openDoc(absPath, text, languageId) {
   const uri = toLspUri(absPath)
   const language = languageId || 'plaintext'
 
+  // [DIAG-TRACE-4] For C/C++, check whether compile_commands.json is
+  // present and non-empty AT THE MOMENT WE SEND didOpen. This is the
+  // canonical race — if it's missing, clangd falls back to default flags
+  // and produces bogus diagnostics for headers it can't resolve.
+  if (language === 'cpp' || language === 'c') {
+    try {
+      const parts = absPath.replace(/\\/g, '/').split('/')
+      parts.pop()
+      // Walk up looking for compile_commands.json (usually at project root
+      // or in a build/ subdir alongside it).
+      let dir = parts.join('/')
+      let found = null
+      for (let i = 0; i < 8 && dir; i++) {
+        const candidate = path.join(dir, 'compile_commands.json')
+        if (fs.existsSync(candidate)) {
+          found = candidate
+          break
+        }
+        const upIdx = dir.lastIndexOf('/')
+        if (upIdx <= 2) break
+        dir = dir.slice(0, upIdx)
+      }
+      if (found) {
+        const size = fs.statSync(found).size
+        console.log(`[DIAG-TRACE-4] compile-db at-didOpen file=${absPath} found=${found} bytes=${size}`)
+      } else {
+        console.log(`[DIAG-TRACE-4] compile-db at-didOpen file=${absPath} found=none`)
+      }
+    } catch (e) {
+      console.log(`[DIAG-TRACE-4] compile-db at-didOpen file=${absPath} check-failed=${e.message}`)
+    }
+  }
+
   let entry = lspProcesses.get(language)
   if (!entry) {
     const parts = absPath.replace(/\\/g, '/').split('/')
@@ -318,6 +389,8 @@ export async function openDoc(absPath, text, languageId) {
     method: 'textDocument/didOpen',
     params: { textDocument: { uri, languageId: language, version: 1, text: text ?? '' } }
   }
+  // [DIAG-TRACE-2f] didOpen dispatched to language server (or queued if starting).
+  console.log(`[DIAG-TRACE-2f] didOpen lang=${language} uri=${uri} status=${entry.status} textLen=${(text||'').length}`)
   if (entry.status === 'starting') entry.requestQueue.push(msg)
   else sendToLanguageServer(language, msg)
   return uri

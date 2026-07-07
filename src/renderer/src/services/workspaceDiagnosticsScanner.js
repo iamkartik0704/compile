@@ -160,6 +160,7 @@ export async function scanWorkspaceForDiagnostics(projectRoot, { onProgress } = 
 
     // didOpen every file in small batches with a tiny delay so
     // the LSP has time to breathe on multi-hundred-file repos.
+    const sourceKey = `lsp-${lspKey}`
     for (let i = 0; i < files.length; i += DID_OPEN_BATCH_SIZE) {
       if (isStale()) return
       const batch = files.slice(i, i + DID_OPEN_BATCH_SIZE)
@@ -183,6 +184,16 @@ export async function scanWorkspaceForDiagnostics(projectRoot, { onProgress } = 
       processed += batch.length
       onProgress?.({ processed, total })
       await sleep(DID_OPEN_DELAY_MS)
+    }
+
+    // Mark every file we tried as analyzed by this source so the
+    // sidebar/tab UX can tell "confirmed clean" from "never looked at".
+    // We do this AFTER the batch because most LSPs don't publish
+    // diagnostics for files with zero problems — silence is our only
+    // evidence they were analyzed. If diagnostics do arrive later the
+    // setDiagnostics call re-marks (idempotent) with real counts.
+    for (const f of files) {
+      useDiagnosticsStore.getState().markAnalyzed(f, sourceKey)
     }
   }
 }

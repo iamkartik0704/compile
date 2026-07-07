@@ -549,6 +549,11 @@ function App() {
     const handleFileRenamed = (e) => {
       const { oldPath, newPath } = e.detail
 
+      // Move any diagnostic entries the store already knows about so the
+      // badge follows the file. Covers directory renames too because
+      // renamePath rewrites every key with the old prefix.
+      useDiagnosticsStore.getState().renamePath(oldPath, newPath)
+
       setEditorGroups(prevGroups => {
         return prevGroups.map(group => {
           let updatedOpenFiles = [...group.openFiles]
@@ -600,6 +605,11 @@ function App() {
 
     const handleFileDeleted = (e) => {
       const { path } = e.detail
+
+      // Purge diagnostics for the deleted path (clearForPath handles
+      // descendants too — a folder delete drops every child badge).
+      useDiagnosticsStore.getState().clearForPath(path)
+
       setEditorGroups(prevGroups => {
         return prevGroups.map(group => {
           const isAffected = (p) => p && (p === path || p.startsWith(path + '/') || p.startsWith(path + '\\'))

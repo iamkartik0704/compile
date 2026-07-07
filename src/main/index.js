@@ -1754,6 +1754,15 @@ app.whenReady().then(() => {
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow()
     })
+
+    if (process.env.TEMP_TEST === '1') {
+      setTimeout(async () => {
+        const { openDoc } = await import('./lsp-manager.js')
+        const path = require('path')
+        const absPath = path.join(process.cwd(), 'dev-fixtures', 'broken.py')
+        openDoc(absPath, 'print(naem)', 'python')
+      }, 5000)
+    }
   })
 }
 
