@@ -1,6 +1,7 @@
 appId: com.compile.editor
 productName: comπle Editor
 compression: maximum
+nativeRebuilder: legacy
 directories:
   buildResources: build
 files:
