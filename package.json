@@ -11,7 +11,7 @@
     "start": "electron-vite preview",
     "rebuild-local": "electron-builder install-app-deps",
     "setup-lsp": "npm install -g typescript-language-server typescript bash-language-server",
-    "dist:win": "electron-vite build && electron-builder --win",
+    "dist:win": "electron-vite build && electron-builder --win --publish never",
     "dist:linux": "electron-vite build && electron-builder --linux",
     "dist": "electron-vite build && electron-builder"
   },
