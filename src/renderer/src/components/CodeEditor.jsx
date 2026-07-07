@@ -835,6 +835,10 @@ export const CodeEditor = ({
               owner === 'eslint' ? 'eslint' : `monaco-${owner}`,
               byOwner.get(owner) || []
             )
+            // Fix double counting: if native monaco TS/JS worker provides counts, drop the background scanner's counts
+            if (owner === 'typescript' || owner === 'javascript') {
+              useDiagnosticsStore.getState().setDiagnostics(uriStr, `lsp-${owner}`, null)
+            }
           }
         }
       })
@@ -853,34 +857,20 @@ export const CodeEditor = ({
   const coldBootTimerRef = useRef(null)
   const pendingMarkers = useRef(new Map())
 
-  let flushCallCount = 0;
-  
   const flushPendingMarkers = (filePath) => {
-    flushCallCount++;
-    console.log(`[Pending Buffer Flush] Call #${flushCallCount}. Starting for filePath: "${filePath}"`);
-    if (!filePath) {
-      console.log(`[Pending Buffer Flush] Bailing out because filePath is empty.`);
-      return;
-    }
-    const key = getCanonicalMonacoUriString(filePath);
-    console.log(`[Pending Buffer Flush] Looking up key: "${key}". Current pending keys:`, Array.from(pendingMarkers.current.keys()));
+    if (!filePath) return
+    const key = getCanonicalMonacoUriString(filePath)
+    const pendingObj = pendingMarkers.current.get(key)
+    if (!pendingObj) return
     
-    const pendingObj = pendingMarkers.current.get(key);
-    if (!pendingObj) {
-      console.log(`[Pending Buffer Flush] No buffered markers found for key: "${key}"`);
-      return;
-    }
-    const { markers, language } = pendingObj;
-    const model = findMonacoModel(filePath);
-    if (!model) {
-      console.warn(`[Pending Buffer Flush] Buffered markers exist, but findMonacoModel returned null for: "${filePath}"`);
-      return;
-    }
-    console.log(`[Pending Buffer Flush] ✅ Applying ${markers.length} buffered markers to: ${model.uri.toString()}`);
-    window.monaco.editor.setModelMarkers(model, `lsp-${language}`, markers);
-    pendingMarkers.current.delete(key);
-    requestAnimationFrame(() => editorRef.current?.layout());
-  };
+    const { markers, language } = pendingObj
+    const model = findMonacoModel(filePath)
+    if (!model) return
+
+    window.monaco.editor.setModelMarkers(model, `lsp-${language}`, markers)
+    pendingMarkers.current.delete(key)
+    requestAnimationFrame(() => editorRef.current?.layout())
+  }
 
   useEffect(() => {
     return () => {
@@ -987,23 +977,17 @@ export const CodeEditor = ({
         // JS/TS diagnostics stay owned by Monaco's native workers.
         if (targetPath.endsWith('.js') || targetPath.endsWith('.ts')) return;
 
-        console.log(`[Live IPC Receiver] Received ${diagnostics ? diagnostics.length : 0} diagnostics for: "${targetPath}"`);
         if (!window.monaco || !diagnostics) {
-          console.log(`[Live IPC Receiver] Bailing out because window.monaco=${!!window.monaco} or diagnostics=${!!diagnostics}`);
           return;
         }
 
-        console.log(`[Live IPC Receiver] Formatting diagnostics...`);
         const markers = formatLspDiagnosticsToMonaco(diagnostics);
-        console.log(`[Live IPC Receiver] Finding monaco model...`);
         const model = findMonacoModel(targetPath);
         
         if (model) {
-          console.log(`[Live IPC Receiver] ✅ MATCHED MODEL! Injecting markers into: ${model.uri.toString()} | model.id: ${model.id}`);
           window.monaco.editor.setModelMarkers(model, `lsp-${language}`, markers);
           requestAnimationFrame(() => editorRef.current?.layout());
         } else {
-          console.warn(`[Live IPC Receiver] Model not in RAM yet for "${targetPath}". Buffering to pendingMarkers.`);
           pendingMarkers.current.set(getCanonicalMonacoUriString(targetPath), { markers, language });
         }
       } catch (err) {
@@ -1621,7 +1605,6 @@ export const CodeEditor = ({
       monacoInstance.editor._patched = true;
       const orig = monacoInstance.editor.setModelMarkers;
       monacoInstance.editor.setModelMarkers = function(model, owner, markers) {
-        console.log(`[MARKER-TRACE] owner="${owner}" count=${markers.length} model=${model.uri.toString()}`);
         return orig.apply(this, arguments);
       };
     }
@@ -1689,7 +1672,6 @@ export const CodeEditor = ({
     // Register whatever model is already attached at first mount —
     // onDidChangeModel below only fires on later swaps.
     registerModelPath(editor.getModel())
-    console.log(`[ACTIVE TAB] onMount | uri: ${editor.getModel()?.uri?.toString()} | model.id: ${editor.getModel()?.id}`);
     
     // Instantly drain any diagnostics that arrived before the model existed
     if (globalActiveFile) flushPendingMarkers(globalActiveFile);

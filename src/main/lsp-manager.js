@@ -107,8 +107,8 @@ function parseAndForwardMessages(language, entry, onMessage, setStatus) {
             method: 'workspace/didChangeConfiguration',
             params: {
               settings: {
-                javascript: { implicitProjectConfig: { checkJs: true } },
-                typescript: { implicitProjectConfig: { checkJs: true } }
+                javascript: { validate: { enable: true }, implicitProjectConfig: { checkJs: true } },
+                typescript: { validate: { enable: true } }
               }
             }
           })
@@ -123,10 +123,18 @@ function parseAndForwardMessages(language, entry, onMessage, setStatus) {
         }
       } else {
         if (message.method === 'workspace/configuration' && message.id !== undefined) {
+          if (language === 'javascript' || language === 'typescript') {
+            console.log(`[LSP ${language}] workspace/configuration requested:`, JSON.stringify(message.params.items))
+          }
           const response = {
             jsonrpc: '2.0',
             id: message.id,
-            result: message.params.items ? message.params.items.map(() => ({})) : []
+            result: message.params.items ? message.params.items.map((item) => {
+              if (item.section === 'javascript' || item.section === 'typescript') {
+                return { implicitProjectConfig: { checkJs: true } }
+              }
+              return {}
+            }) : []
           }
           sendToLanguageServer(language, response)
         }

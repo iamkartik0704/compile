@@ -132,6 +132,7 @@ export async function scanWorkspaceForDiagnostics(projectRoot, { onProgress } = 
 
     // Kick the LSP off — no-op if it's already up.
     const startRes = await window.api.startLanguageServer(lspKey, rootUri)
+    console.log(`[Scanner] startLanguageServer result for ${lspKey}:`, startRes)
     if (!startRes?.success) {
       console.warn(`[Scanner] LSP ${lspKey} unavailable, skipping ${files.length} files`)
       continue
@@ -169,6 +170,7 @@ export async function scanWorkspaceForDiagnostics(projectRoot, { onProgress } = 
           const res = await window.api.getFileContents(f)
           if (!res?.success || typeof res.content !== 'string') return
           if (res.content.length > MAX_FILE_BYTES) return
+          console.log(`[Scanner] Sending didOpen for: ${f} using language: ${lspKey}`)
           sendLspNotification(lspKey, 'textDocument/didOpen', {
             textDocument: {
               uri: pathToUri(f),
