@@ -412,6 +412,7 @@ function createWindow() {
     height: 860,
     minWidth: 800,
     minHeight: 600,
+    icon: join(__dirname, '../../build/icon.ico'),
     show: false,
     autoHideMenuBar: true,
     backgroundColor: '#0c0c14',

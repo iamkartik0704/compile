@@ -26,6 +26,8 @@ jobs:
         env:
           # Forces electron-builder and @electron/rebuild to print continuous, verbose internal logs
           DEBUG: electron-builder,electron-rebuild:*
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
         timeout-minutes: 15
 
       - uses: actions/upload-artifact@v4

@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <radialGradient id="darkObsidian" cx="50%" cy="50%" r="70%">
+      <stop offset="0%" stop-color="#1A1917"/>
+      <stop offset="100%" stop-color="#080706"/>
+    </radialGradient>
+    <linearGradient id="brightGold" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#F3D19C"/>
+      <stop offset="100%" stop-color="#B89047"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Smooth Dark Base -->
+  <rect x="32" y="32" width="448" height="448" rx="110" fill="url(#darkObsidian)" stroke="#2C2925" stroke-width="4"/>
+
+  <!-- Left Brace { -->
+  <path d="M 150,150 Q 120,150 120,180 L 120,230 Q 120,256 95,256 Q 120,256 120,282 L 120,332 Q 120,362 150,362" fill="none" stroke="#666059" stroke-width="16" stroke-linecap="round"/>
+
+  <!-- Right Brace } -->
+  <path d="M 362,150 Q 392,150 392,180 L 392,230 Q 392,256 417,256 Q 392,256 392,282 L 392,332 Q 392,362 362,362" fill="none" stroke="#666059" stroke-width="16" stroke-linecap="round"/>
+
+  <!-- Center Golden Pi -->
+  <path d="M 180,180 L 332,180 C 342,180 348,188 348,198 C 348,208 342,216 332,216 L 306,216 L 306,326 C 306,346 316,348 326,348 C 332,348 338,344 338,338 L 338,332" fill="none" stroke="url(#brightGold)" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 236,216 L 236,336 C 236,348 226,348 216,348 C 206,348 196,338 196,326 L 196,216 L 180,216" fill="none" stroke="url(#brightGold)" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

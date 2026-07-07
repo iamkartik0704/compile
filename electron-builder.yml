@@ -12,6 +12,7 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 win:
   executableName: compile-editor
+  icon: build/icon.ico
 mac:
   entitlementsInherit: build/entitlements.mac.plist
 linux:

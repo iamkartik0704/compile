@@ -31,6 +31,7 @@
     "chokidar": "^5.0.0",
     "dagre": "^0.8.5",
     "diff": "^9.0.0",
+    "emmet-monaco-es": "^5.7.0",
     "lucide-react": "^1.21.0",
     "monaco-editor": "^0.55.1",
     "monaco-languageclient": "^8.1.1",
@@ -61,6 +62,6 @@
     "vite-plugin-monaco-editor": "^1.1.0"
   },
   "overrides": {
-  "node-gyp": "^10.2.0"
-}
+    "node-gyp": "^10.2.0"
+  }
 }

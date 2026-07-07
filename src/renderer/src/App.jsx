@@ -1595,8 +1595,8 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
 
   useEffect(() => {
     const handleReload = async () => {
-      if (window.api && window.api.getApiKeys) {
-        const keys = await window.api.getApiKeys()
+      if (window.api && window.api.getAllKeys) {
+        const keys = await window.api.getAllKeys()
         setProviderKeys(keys)
       }
       if (window.api && window.api.getCustomConfig) {
@@ -2752,7 +2752,7 @@ the new code
 
                                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
                                   <button onClick={() => applyAiDebuggerFix(false)} style={{ background: 'var(--bg-light)', color: 'var(--text-main)', border: '1px solid rgba(255,255,255,0.1)', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}>Review in Editor</button>
-                                  <button onClick={() => applyAiDebuggerFix(true)} style={{ background: 'var(--accent-color)', color: 'var(--bg-main)', border: 'none', padding: '8px 20px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: 'bold' }}>Apply & Re-run</button>
+                                  <button onClick={() => applyAiDebuggerFix(true)} style={{ background: 'var(--accent-color)', color: 'var(--accent-text)', border: 'none', padding: '8px 20px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: 'bold' }}>Apply & Re-run</button>
                                 </div>
                               </div>
                             )}
@@ -3172,7 +3172,7 @@ the new code
                       window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Toolchain still not found. Please run the command.', type: 'error' } }))
                     }
                   }}
-                  style={{ padding: '8px 16px', backgroundColor: 'var(--accent-color)', border: 'none', color: '#fff', borderRadius: '4px', cursor: 'pointer' }}
+                  style={{ padding: '8px 16px', backgroundColor: 'var(--accent-color)', border: 'none', color: 'var(--accent-text)', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
                 >
                   Retry / Re-check Toolchain
                 </button>

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import Editor, { loader, DiffEditor, useMonaco } from '@monaco-editor/react'
 import * as monaco from 'monaco-editor'
+import { emmetHTML, emmetCSS, emmetJSX } from 'emmet-monaco-es'
 import { applyDiff } from '../diffUtils'
 import { X, Save, Circle, Sparkles, ChevronRight, AlertTriangle, Info, CheckCircle, Loader2, Code2 } from 'lucide-react'
 import { ContextInspector } from './ContextInspector'
@@ -842,7 +843,16 @@ export const CodeEditor = ({
           }
         }
       })
-      return () => disposable.dispose()
+      const disposeHTML = emmetHTML(window.monaco || monaco)
+      const disposeCSS = emmetCSS(window.monaco || monaco)
+      const disposeJSX = emmetJSX(window.monaco || monaco)
+
+      return () => {
+        disposeHTML()
+        disposeCSS()
+        disposeJSX()
+        disposable.dispose()
+      }
     }
   }, [monaco])
 
