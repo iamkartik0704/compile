@@ -18,6 +18,12 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
 
       - run: npm ci
+        env:
+          npm_config_loglevel: verbose
+        timeout-minutes: 10
+
+      - run: npx node-gyp --version
+
 
       - run: npm run dist:win
 
