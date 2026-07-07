@@ -150,8 +150,6 @@ function parseAndForwardMessages(language, entry, onMessage, setStatus) {
           const filePath = uriToPath(canonicalUri)
           const canonicalPath = normalizeCanonicalPath(filePath)
           const diagnostics = message.params.diagnostics || []
-          // [DIAG-TRACE-1] publishDiagnostics received from LSP.
-          console.log(`[DIAG-TRACE-1] publishDiagnostics lang=${language} uri=${canonicalUri} count=${diagnostics.length}`)
           // Backend cache can still use the aggressively mangled key
           diagnosticCache.set(canonicalPath, diagnostics)
           sendToWindow('lsp:diagnostics', {
@@ -205,8 +203,6 @@ export async function startLanguageServer(language, rootUri = null, onMessage, o
   }
   if (language === 'cpp' || language === 'c') {
     const validation = await validateHostToolchain()
-    // [DIAG-TRACE-2a] Toolchain gate outcome — if false, clangd never spawns.
-    console.log(`[DIAG-TRACE-2a] toolchain-gate lang=${language} success=${validation.success} error=${validation.error || 'none'}`)
     if (!validation.success) {
       sendToWindow('show-missing-toolchain-modal', validation)
       return { success: false, error: validation.error }
@@ -233,7 +229,6 @@ export async function startLanguageServer(language, rootUri = null, onMessage, o
   }
 
   console.log(`[LSP] Starting ${language}: ${command} ${args.join(' ')}`)
-  console.log(`[DIAG-TRACE-2b] spawn-attempt lang=${language} cmd=${command} args=${JSON.stringify(args)}`)
 
   try {
     const child = spawn(command, args, {
@@ -275,8 +270,6 @@ export async function startLanguageServer(language, rootUri = null, onMessage, o
     })
 
     child.on('error', (err) => {
-      // [DIAG-TRACE-2c] Spawn error — usually ENOENT means the binary isn't on PATH.
-      console.error(`[DIAG-TRACE-2c] spawn-error lang=${language} code=${err.code || 'unknown'} msg=${err.message}`)
       console.error(`[LSP ${language}] Process error:`, err)
       if (err.code === 'ENOENT') {
         sendToWindow('show-toast', {
@@ -294,15 +287,11 @@ export async function startLanguageServer(language, rootUri = null, onMessage, o
 
     child.stderr.on('data', (data) => {
       const msg = data.toString()
-      // [DIAG-TRACE-2d] stderr from the LSP — noisy but valuable if server dies during init.
-      console.error(`[DIAG-TRACE-2d] stderr lang=${language} bytes=${msg.length}`)
       console.error(`[LSP ${language}] stderr:`, msg)
       if (onError) onError(msg)
     })
 
     child.on('exit', (code) => {
-      // [DIAG-TRACE-2e] Process exit — non-zero code before we've even sent didOpen means the server died.
-      console.log(`[DIAG-TRACE-2e] process-exit lang=${language} code=${code}`)
       console.log(`[LSP ${language}] exited with code ${code}`)
       setStatus('idle')
       lspProcesses.delete(language)
@@ -346,7 +335,6 @@ export async function openDoc(absPath, text, languageId) {
   const uri = toLspUri(absPath)
   const language = languageId || 'plaintext'
 
-  // [DIAG-TRACE-4] For C/C++, check whether compile_commands.json is
   // present and non-empty AT THE MOMENT WE SEND didOpen. This is the
   // canonical race — if it's missing, clangd falls back to default flags
   // and produces bogus diagnostics for headers it can't resolve.
@@ -370,12 +358,9 @@ export async function openDoc(absPath, text, languageId) {
       }
       if (found) {
         const size = fs.statSync(found).size
-        console.log(`[DIAG-TRACE-4] compile-db at-didOpen file=${absPath} found=${found} bytes=${size}`)
       } else {
-        console.log(`[DIAG-TRACE-4] compile-db at-didOpen file=${absPath} found=none`)
       }
     } catch (e) {
-      console.log(`[DIAG-TRACE-4] compile-db at-didOpen file=${absPath} check-failed=${e.message}`)
     }
   }
 
@@ -397,8 +382,6 @@ export async function openDoc(absPath, text, languageId) {
     method: 'textDocument/didOpen',
     params: { textDocument: { uri, languageId: language, version: 1, text: text ?? '' } }
   }
-  // [DIAG-TRACE-2f] didOpen dispatched to language server (or queued if starting).
-  console.log(`[DIAG-TRACE-2f] didOpen lang=${language} uri=${uri} status=${entry.status} textLen=${(text||'').length}`)
   if (entry.status === 'starting') entry.requestQueue.push(msg)
   else sendToLanguageServer(language, msg)
   return uri

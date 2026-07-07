@@ -1681,7 +1681,6 @@ export const CodeEditor = ({
       // `path` prop changes — register whatever model just became active
       // so findMonacoModel's normalized-path cache knows about it.
       registerModelPath(editor.getModel());
-      console.log(`[ACTIVE TAB] onDidChangeModel | uri: ${editor.getModel()?.uri?.toString()} | model.id: ${editor.getModel()?.id}`);
       if (activeFile) {
         restoreCachedDiagnostics(activeFile);
         flushPendingMarkers(activeFile);

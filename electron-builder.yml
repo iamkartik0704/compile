@@ -1,5 +1,6 @@
 appId: com.compile.editor
 productName: comπle Editor
+compression: maximum
 directories:
   buildResources: build
 files:
@@ -23,3 +24,5 @@ protocols:
   - name: Comiple Deep Link
     schemes:
       - comiple
+asarUnpack:
+  - '**/node_modules/node-pty/**'
