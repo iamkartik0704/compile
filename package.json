@@ -9,7 +9,7 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "start": "electron-vite preview",
-    "postinstall": "electron-builder install-app-deps",
+    "rebuild-local": "electron-builder install-app-deps",
     "setup-lsp": "npm install -g typescript-language-server typescript bash-language-server",
     "dist:win": "electron-vite build && electron-builder --win",
     "dist:linux": "electron-vite build && electron-builder --linux",

@@ -17,15 +17,16 @@ jobs:
 
       - uses: ilammy/msvc-dev-cmd@v1
 
-      - run: npm ci
+      - name: Install Dependencies
+        run: npm ci
+        timeout-minutes: 5
+
+      - name: Build Windows Executable
+        run: npm run dist:win
         env:
-          npm_config_loglevel: verbose
-        timeout-minutes: 10
-
-      - run: npx node-gyp --version
-
-
-      - run: npm run dist:win
+          # Forces electron-builder and @electron/rebuild to print continuous, verbose internal logs
+          DEBUG: electron-builder,electron-rebuild:*
+        timeout-minutes: 15
 
       - uses: actions/upload-artifact@v4
         with:
