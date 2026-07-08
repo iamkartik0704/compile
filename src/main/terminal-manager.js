@@ -2,7 +2,7 @@ import { ipcMain } from 'electron'
 import { spawn } from 'child_process'
 
 const ptyHostCode = `
-const pty = require('node-pty')
+const pty = require(process.env.PTY_PATH || 'node-pty')
 const os = require('os')
 
 const ptys = {}
@@ -76,9 +76,19 @@ class TerminalManager {
   startHostProcess() {
     if (this.hostProcess) return
 
+    // Resolve node-pty path for packaged app
+    const { app } = require('electron')
+    const path = require('path')
+    let ptyPath = 'node-pty'
+    
+    if (app.isPackaged) {
+      ptyPath = path.join(app.getAppPath().replace('app.asar', 'app.asar.unpacked'), 'node_modules', 'node-pty')
+    }
+
     // Spawn a standard Node process, communicating via IPC
-    // Use 'node' to guarantee we run with the system Node ABI, bypassing Electron's ABI!
-    this.hostProcess = spawn('node', ['-e', ptyHostCode], {
+    // Use the Electron executable with ELECTRON_RUN_AS_NODE=1 to guarantee it works in packaged apps!
+    this.hostProcess = spawn(process.execPath, ['-e', ptyHostCode], {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', PTY_PATH: ptyPath },
       stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
       windowsHide: true
     })

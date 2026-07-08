@@ -1625,7 +1625,7 @@ if (!gotTheLock) {
       
       const url = commandLine.find(arg => arg.startsWith('comiple://'))
       if (url) {
-        event.sender.send('auth-callback', url)
+        mainWindow.webContents.send('auth-callback', url)
       }
     }
   })
@@ -1634,7 +1634,7 @@ if (!gotTheLock) {
     event.preventDefault()
     const mainWindow = BrowserWindow.getAllWindows()[0]
     if (mainWindow) {
-      event.sender.send('auth-callback', url)
+      mainWindow.webContents.send('auth-callback', url)
     }
   })
 
