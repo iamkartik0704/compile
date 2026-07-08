@@ -196,7 +196,7 @@ export function PostmanView() {
   const statusColor = responseStatus?.code >= 200 && responseStatus?.code < 300 ? '#10a37f' : 'var(--error-color)'
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, width: '100%', background: 'var(--bg-deep)', color: 'var(--text-primary)', fontSize: '13px' }}>
+    <div className="postman-view" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, width: '100%', background: 'var(--bg-deep)', color: 'var(--text-primary)', fontSize: '13px' }}>
       
       {/* Top Bar */}
       <div style={{ padding: '15px', borderBottom: '1px solid var(--border-base)', display: 'flex', gap: '8px' }}>
@@ -231,7 +231,7 @@ export function PostmanView() {
       <div ref={containerRef} style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
         
         {/* Request Config (Top Half) */}
-        <div style={{ display: 'flex', flexDirection: 'column', flexBasis: configHeight, flexShrink: 1, minHeight: '100px', overflow: 'hidden' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', height: configHeight, flexShrink: 0, minHeight: '100px', overflow: 'hidden' }}>
           <div style={{ display: 'flex', borderBottom: '1px solid var(--border-base)', padding: '0 10px' }}>
             {['Params', 'Headers', 'Body'].map(tab => (
               <div 

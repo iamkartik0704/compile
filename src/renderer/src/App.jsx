@@ -979,7 +979,7 @@ the new code
   const executeGlobalAction = (id) => {
     switch (id) {
       case 'general.commandPalette':
-        window.dispatchEvent(new CustomEvent('open-command-palette'))
+        window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.quickCommand' }))
         return true
       case 'general.terminal':
         setShowTerminal(prev => !prev)
@@ -1144,7 +1144,7 @@ the new code
         window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: `Feature '${id}' is not yet implemented in this preview.`, type: 'info' } }))
         return true
       case 'nav.goToFile':
-        window.dispatchEvent(new CustomEvent('open-command-palette'))
+        window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.quickCommand' }))
         return true
 
       case 'ai.autocomplete': {
@@ -1186,11 +1186,11 @@ the new code
         }
       }
 
-      // DSA Explainer overlay: when focus is anywhere inside the overlay
+      // DSA Explainer overlay and Postman View: when focus is anywhere inside these
       // (Monaco input area OR the sample-input textarea), skip the global
       // shortcut handler entirely so Ctrl+V / Ctrl+C / Ctrl+X / Ctrl+A land
       // natively on the target and don't get eaten by editor-action dispatch.
-      if (activeEl && activeEl.closest && activeEl.closest('.dsa-explainer-overlay')) {
+      if (activeEl && activeEl.closest && (activeEl.closest('.dsa-explainer-overlay') || activeEl.closest('.postman-view'))) {
         return;
       }
 

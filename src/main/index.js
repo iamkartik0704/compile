@@ -455,13 +455,21 @@ function createWindow() {
     mainWindow.webContents.setVisualZoomLevelLimits(1, 1)
   })
 
-  // Intercept Ctrl+=/Ctrl+-/Ctrl+0 BEFORE Electron consumes them for its own zoom.
-  // Forward them to the renderer so our custom editor zoom handler can process them.
+  // Intercept Ctrl+=/Ctrl+-/Ctrl+0 and handle application-wide zooming
   mainWindow.webContents.on('before-input-event', (event, input) => {
-    if (input.control && !input.alt && !input.meta) {
-      if (input.key === '-' || input.key === '=' || input.key === '+' || input.key === '0') {
-        event.preventDefault()
-        mainWindow.webContents.send('zoom-shortcut', input.key)
+    if ((input.control || input.meta) && !input.alt) {
+      if (input.type === 'keyDown') {
+        const currentZoom = mainWindow.webContents.zoomLevel;
+        if (input.key === '=' || input.key === '+') {
+          event.preventDefault();
+          mainWindow.webContents.zoomLevel = currentZoom + 0.5;
+        } else if (input.key === '-') {
+          event.preventDefault();
+          mainWindow.webContents.zoomLevel = currentZoom - 0.5;
+        } else if (input.key === '0') {
+          event.preventDefault();
+          mainWindow.webContents.zoomLevel = 0;
+        }
       }
     }
   })
@@ -1192,38 +1200,109 @@ ipcMain.handle('window-is-maximized', (event) => BrowserWindow.fromWebContents(e
       }
     }
   })
-  let liveServerProcess = null
-
   ipcMain.handle('start-live-server', async (event, rootPath, openPath = '') => {
-    if (liveServerProcess) {
-      return { success: false, error: 'Server already running' }
+    const id = event.sender.id;
+    if (liveServers.has(id)) {
+      return { success: false, error: 'Server already running for this window' }
     }
-    return new Promise((resolve) => {
-      // Spawn npx http-server
-      const { spawn } = require('child_process')
-      liveServerProcess = spawn('npx', ['http-server', './', '-c-1', '-p', '3000'], {
-        cwd: rootPath,
-        shell: true
-      })
-      
-      // Wait a moment for it to start
-      setTimeout(() => {
-        const targetUrl = `http://localhost:3000/${openPath.replace(/\\/g, '/')}`
-        const { shell } = require('electron')
-        shell.openExternal(targetUrl)
-        resolve({ success: true, url: targetUrl, baseUrl: 'http://localhost:3000' })
-      }, 1500)
 
-      liveServerProcess.on('exit', () => {
-        liveServers.delete(id);
-      })
-    })
+    return new Promise((resolve) => {
+      const http = require('http');
+      const fs = require('fs');
+      const path = require('path');
+      
+      const server = http.createServer((req, res) => {
+        let reqUrl = req.url.split('?')[0];
+        if (reqUrl.endsWith('/')) reqUrl += 'index.html';
+        if (reqUrl === '/') reqUrl = '/index.html';
+        
+        // Prevent directory traversal
+        const normalizedPath = path.normalize(reqUrl).replace(/^(\.\.(\/|\\|$))+/, '');
+        const filePath = path.join(rootPath, normalizedPath);
+        
+        fs.stat(filePath, (err, stats) => {
+          if (err) {
+            res.writeHead(404);
+            res.end('Not Found');
+            return;
+          }
+          if (stats.isDirectory()) {
+            const indexPath = path.join(filePath, 'index.html');
+            fs.readFile(indexPath, (err2, data) => {
+              if (err2) {
+                res.writeHead(404);
+                res.end('Not Found');
+                return;
+              }
+              res.writeHead(200, {
+                'Content-Type': 'text/html',
+                'Access-Control-Allow-Origin': '*'
+              });
+              res.end(data);
+            });
+            return;
+          }
+          
+          const ext = path.extname(filePath).toLowerCase();
+          const mimeTypes = {
+            '.html': 'text/html',
+            '.js': 'text/javascript',
+            '.css': 'text/css',
+            '.json': 'application/json',
+            '.png': 'image/png',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.svg': 'image/svg+xml',
+            '.ico': 'image/x-icon'
+          };
+          const contentType = mimeTypes[ext] || 'application/octet-stream';
+          
+          fs.readFile(filePath, (err, data) => {
+            if (err) {
+              res.writeHead(500);
+              res.end('Server Error');
+              return;
+            }
+            res.writeHead(200, {
+              'Content-Type': contentType,
+              'Access-Control-Allow-Origin': '*'
+            });
+            res.end(data);
+          });
+        });
+      });
+
+      let port = 3000;
+      server.on('error', (err) => {
+        if (err.code === 'EADDRINUSE') {
+          port++;
+          server.listen(port);
+        } else {
+          resolve({ success: false, error: err.message });
+        }
+      });
+
+      server.on('listening', () => {
+        // Mock kill method to match previous process-based server interface
+        server.kill = () => { server.close(); };
+        liveServers.set(id, server);
+        
+        const targetUrl = `http://localhost:${port}/${openPath.replace(/\\/g, '/')}`;
+        const { shell } = require('electron');
+        shell.openExternal(targetUrl);
+        resolve({ success: true, url: targetUrl, baseUrl: `http://localhost:${port}` });
+      });
+
+      server.listen(port);
+    });
   })
 
   ipcMain.handle('stop-live-server', async (event) => {
     const id = event.sender.id;
     if (liveServers.has(id)) {
-      liveServers.get(id).kill();
+      const server = liveServers.get(id);
+      if (typeof server.kill === 'function') server.kill();
+      else if (typeof server.close === 'function') server.close();
       liveServers.delete(id);
     }
     return { success: true }
