@@ -5,6 +5,7 @@ nativeRebuilder: legacy
 directories:
   buildResources: build
 files:
+  - '**/*'
   - '!**/.vscode/*'
   - '!src/*'
   - '!electron.vite.config.*'
