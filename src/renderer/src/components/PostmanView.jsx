@@ -59,7 +59,7 @@ export function PostmanView() {
 
       if (actionId === 'editor.action.clipboardPasteAction' || actionId === 'edit.paste') {
         try {
-          const text = await navigator.clipboard.readText()
+          const text = window.api ? await window.api.readClipboard() : await navigator.clipboard.readText()
           editor.executeEdits("context-menu", [{
             range: editor.getSelection(),
             text: text,
@@ -74,7 +74,11 @@ export function PostmanView() {
       if (actionId === 'editor.action.clipboardCopyAction' || actionId === 'edit.copy' || actionId === 'editor.action.clipboardCutAction' || actionId === 'edit.cut') {
         const text = editor.getModel().getValueInRange(editor.getSelection())
         if (text) {
-          await navigator.clipboard.writeText(text)
+          if (window.api) {
+            await window.api.writeClipboard(text)
+          } else {
+            await navigator.clipboard.writeText(text)
+          }
           if (actionId === 'editor.action.clipboardCutAction' || actionId === 'edit.cut') {
              editor.executeEdits("context-menu", [{ range: editor.getSelection(), text: "" }])
           }

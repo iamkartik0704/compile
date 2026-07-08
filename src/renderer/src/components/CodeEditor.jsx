@@ -1387,7 +1387,7 @@ export const CodeEditor = ({
       // Manually handle clipboard actions because native ones fail in Electron without an explicit edit menu
       if (actionId === 'edit.paste') {
         try {
-          const text = await navigator.clipboard.readText()
+          const text = window.api ? await window.api.readClipboard() : await navigator.clipboard.readText()
           editorRef.current.executeEdits("keyboard-shortcut", [{
             range: editorRef.current.getSelection(),
             text: text,
@@ -1402,7 +1402,11 @@ export const CodeEditor = ({
       if (actionId === 'edit.copy' || actionId === 'edit.cut') {
         const text = editorRef.current.getModel().getValueInRange(editorRef.current.getSelection());
         if (text) {
-          navigator.clipboard.writeText(text);
+          if (window.api) {
+            await window.api.writeClipboard(text);
+          } else {
+            navigator.clipboard.writeText(text);
+          }
           if (actionId === 'edit.cut') {
             editorRef.current.executeEdits("keyboard-shortcut", [{
               range: editorRef.current.getSelection(),

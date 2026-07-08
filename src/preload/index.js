@@ -53,6 +53,8 @@ const api = {
   getFileContents: (filePath) => ipcRenderer.invoke('get-file-contents', filePath),
   getWasmContent: (filePath) => ipcRenderer.invoke('get-wasm-content', filePath),
   saveFileContents: (filePath, content) => ipcRenderer.invoke('save-file-contents', filePath, content),
+  readClipboard: () => ipcRenderer.invoke('read-clipboard'),
+  writeClipboard: (text) => ipcRenderer.invoke('write-clipboard', text),
 
   // ── Git Operations ──
   gitStatus: (cwd) => ipcRenderer.invoke('git-status', cwd),
