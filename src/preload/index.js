@@ -51,6 +51,7 @@ const api = {
    * Sends a request to Main, awaits a single resolved value.
    */
   getFileContents: (filePath) => ipcRenderer.invoke('get-file-contents', filePath),
+  getWasmContent: (filePath) => ipcRenderer.invoke('get-wasm-content', filePath),
   saveFileContents: (filePath, content) => ipcRenderer.invoke('save-file-contents', filePath, content),
 
   // ── Git Operations ──

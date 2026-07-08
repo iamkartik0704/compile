@@ -81,8 +81,15 @@ export function PostmanView() {
         }
         return
       }
+      let monacoAction = actionId
+      if (actionId === 'view.zoomIn') monacoAction = 'editor.action.fontZoomIn'
+      if (actionId === 'view.zoomOut') monacoAction = 'editor.action.fontZoomOut'
+      if (actionId === 'view.zoomReset') monacoAction = 'editor.action.fontZoomReset'
+      if (actionId === 'edit.undo') monacoAction = 'undo'
+      if (actionId === 'edit.redo') monacoAction = 'redo'
+      if (actionId === 'edit.find') monacoAction = 'actions.find'
 
-      editor.trigger('menu', actionId, null)
+      editor.trigger('menu', monacoAction, null)
     }
 
     window.addEventListener('editor-action', handleEditorAction)

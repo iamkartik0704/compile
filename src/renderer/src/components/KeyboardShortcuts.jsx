@@ -105,9 +105,10 @@ export function KeyboardShortcuts() {
       window.addEventListener('keydown', handleKeyDown, { capture: true });
       return () => {
         window.removeEventListener('keydown', handleKeyDown, { capture: true });
+        setIsEditing(false); // Fix: Reset global editing state if component unmounts or editingId changes
       }
     }
-  }, [editingId, handleKeyDown]);
+  }, [editingId, handleKeyDown, setIsEditing]);
 
   // Support Ctrl+F to focus search
   useEffect(() => {

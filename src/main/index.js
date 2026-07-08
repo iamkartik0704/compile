@@ -1,5 +1,9 @@
-import { app, shell, BrowserWindow, ipcMain, safeStorage, dialog, nativeTheme, Menu } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, safeStorage, dialog, nativeTheme, Menu, protocol } from 'electron'
 import { join, resolve, sep } from 'path'
+
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'wasm', privileges: { standard: true, secure: true, supportFetchAPI: true, bypassCSP: true } }
+])
 import { readFileSync, writeFileSync, existsSync, chmodSync, promises as fsPromises } from 'fs'
 import { exec as execCallback } from 'child_process'
 import { promisify } from 'util'
@@ -786,6 +790,16 @@ ipcMain.handle('window-is-maximized', (event) => BrowserWindow.fromWebContents(e
       return { success: true, content }
     } catch (error) {
       console.error('Error reading file:', error)
+      return { success: false, error: error.message }
+    }
+  })
+
+  ipcMain.handle('get-wasm-content', async (_event, filePath) => {
+    try {
+      const content = await fsPromises.readFile(filePath)
+      return { success: true, content } // Returns a Buffer, which reaches renderer as Uint8Array
+    } catch (error) {
+      console.error('Error reading wasm:', error)
       return { success: false, error: error.message }
     }
   })
@@ -1780,6 +1794,12 @@ ipcMain.handle('toggle-dev-tools', () => {
 })
 
 app.whenReady().then(() => {
+    // Register custom protocol for fetching WASM files
+    protocol.registerFileProtocol('wasm', (request, callback) => {
+      const url = request.url.substring(7)
+      callback({ path: join(__dirname, '../renderer/wasm', url) })
+    })
+
     // Set app user model id for Windows
     electronApp.setAppUserModelId('com.compile.editor')
 
