@@ -9,7 +9,8 @@ export const defaultShortcuts = [
       { id: 'general.settings', name: 'Show Settings', keys: ['Ctrl', ','] },
       { id: 'general.extensions', name: 'Show Extensions', keys: ['Ctrl', 'Shift', 'X'] },
       { id: 'general.shortcuts', name: 'Show Keyboard Shortcuts', keys: ['Ctrl', 'K', 'Ctrl', 'S'] },
-      { id: 'general.terminal', name: 'Toggle Terminal', keys: ['Ctrl', 'Shift', '`'] },
+      { id: 'general.terminal', name: 'New Terminal', keys: ['Ctrl', 'Shift', '`'] },
+      { id: 'general.splitTerminal', name: 'Split Terminal', keys: ['Ctrl', 'Shift', '5'] },
       { id: 'general.sidebar', name: 'Toggle Sidebar', keys: ['Ctrl', 'B'] },
       { id: 'general.zen', name: 'Toggle Zen Mode', keys: ['Ctrl', 'K', 'Z'] },
       { id: 'general.fullscreen', name: 'Toggle Full Screen', keys: ['F11'] },
@@ -66,7 +67,7 @@ export const defaultShortcuts = [
       { id: 'nav.goForward', name: 'Go Forward', keys: ['Alt', 'Right'] },
       { id: 'nav.switchTab', name: 'Switch Editor Tab', keys: ['Ctrl', 'Tab'] },
       { id: 'nav.focusExplorer', name: 'Focus Explorer', keys: ['Ctrl', 'Shift', 'E'] },
-      { id: 'nav.focusTerminal', name: 'Focus Terminal', keys: ['Ctrl', '`'] },
+      { id: 'nav.focusTerminal', name: 'Toggle Terminal', keys: ['Ctrl', '`'] },
     ]
   },
   {
@@ -248,8 +249,13 @@ export const normalizeEventToKeys = (e) => {
   
   if (!['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) {
     let keyName = e.key;
-    if (keyName === ' ') keyName = 'Space';
-    if (keyName.length === 1) keyName = keyName.toUpperCase();
+    if (e.code === 'Backquote') {
+      keyName = '`';
+    } else if (keyName === ' ') {
+      keyName = 'Space';
+    } else if (keyName.length === 1) {
+      keyName = keyName.toUpperCase();
+    }
     keys.push(keyName);
   }
   return keys;

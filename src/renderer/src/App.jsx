@@ -9,7 +9,7 @@ import ReactMarkdown from 'react-markdown'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { applyDiff, unescapeXml } from './diffUtils'
-import { Play, Bug, Maximize2, Minimize2, Trash2, CheckCircle, Circle, RefreshCw, Command, ChevronRight, ChevronDown, File, Code, Cpu, Activity, Info, LogOut, ArrowRight, X, Search, Settings, User, LayoutGrid, PanelLeft, PanelBottom, PanelRight, Square, Minus, Terminal, Key, ShieldCheck, Sparkles, Folder, GitBranch } from 'lucide-react'
+import { Plus, Play, Bug, Maximize2, Minimize2, Trash2, CheckCircle, Circle, RefreshCw, Command, ChevronRight, ChevronDown, File, Code, Cpu, Activity, Info, LogOut, ArrowRight, X, Search, Settings, User, LayoutGrid, PanelLeft, PanelBottom, PanelRight, Square, Minus, Terminal, Key, ShieldCheck, Sparkles, Folder, GitBranch } from 'lucide-react'
 import { getEnclosingScope } from './utils/astParser'
 import { CodebaseVisualizer } from './components/CodebaseVisualizer'
 import { DSAExplainer } from './components/DSAExplainer'
@@ -32,6 +32,23 @@ import './assets/themes.css'
 import { useShortcutStore, normalizeEventToKeys, defaultShortcuts } from './store/shortcutStore'
 import { scanWorkspaceForDiagnostics } from './services/workspaceDiagnosticsScanner'
 import { useDiagnosticsStore } from './store/diagnosticsStore'
+import { useChatStore } from './store/chatStore'
+
+function timeAgo(timestamp) {
+  if (!timestamp) return '';
+  const seconds = Math.floor((new Date() - timestamp) / 1000);
+  let interval = seconds / 31536000;
+  if (interval >= 1) return Math.floor(interval) + "y ago";
+  interval = seconds / 2592000;
+  if (interval >= 1) return Math.floor(interval) + "mo ago";
+  interval = seconds / 86400;
+  if (interval >= 1) return Math.floor(interval) + "d ago";
+  interval = seconds / 3600;
+  if (interval >= 1) return Math.floor(interval) + "h ago";
+  interval = seconds / 60;
+  if (interval >= 1) return Math.floor(interval) + "m ago";
+  return "just now";
+}
 
 const renderMessageParts = (content) => {
   const parts = []
@@ -203,7 +220,27 @@ MODEL_GROUPS.forEach((g) => g.models.forEach((m) => (MODEL_MAP[m.id] = m)))
 function App() {
   // ── Chat State ──
 
-  const [messages, setMessages] = useState([])
+  const chatSessions = useChatStore(state => state.sessions)
+  const activeChatId = useChatStore(state => state.activeSessionId)
+  const createChat = useChatStore(state => state.createSession)
+  const deleteChat = useChatStore(state => state.deleteSession)
+  const setActiveChat = useChatStore(state => state.setActiveSession)
+  const updateChatMessages = useChatStore(state => state.updateMessages)
+  const chatHydrated = useChatStore(state => state._hasHydrated)
+
+  const activeSession = chatSessions.find(s => s.id === activeChatId)
+  const messages = activeSession?.messages || []
+
+  const streamingSessionIdRef = useRef(null)
+
+  useEffect(() => {
+    if (!chatHydrated) return;
+    if (!activeChatId && chatSessions.length === 0) {
+      createChat()
+    } else if (!activeChatId && chatSessions.length > 0) {
+      setActiveChat(chatSessions[0].id)
+    }
+  }, [chatHydrated, activeChatId, chatSessions, createChat, setActiveChat])
   const [prompt, setPrompt] = useState('')
   const [attachments, setAttachments] = useState([])
   const [isStreaming, setIsStreaming] = useState(false)
@@ -933,14 +970,17 @@ the new code
     window.api.onAIStream((chunk) => {
       if (chunk === undefined) return
       streamRef.current += chunk
-      setMessages((prev) => {
-        const updated = [...prev]
-        const last = updated[updated.length - 1]
-        if (last && last.role === 'assistant') {
-          updated[updated.length - 1] = { ...last, content: streamRef.current || '' }
-        }
-        return updated
-      })
+      const targetSessionId = streamingSessionIdRef.current || useChatStore.getState().activeSessionId;
+      if (targetSessionId) {
+        useChatStore.getState().updateMessages(targetSessionId, (prev) => {
+          const updated = [...prev]
+          const last = updated[updated.length - 1]
+          if (last && last.role === 'assistant') {
+            updated[updated.length - 1] = { ...last, content: streamRef.current || '' }
+          }
+          return updated
+        })
+      }
     })
 
     window.api.onAiDebuggerStream((chunk) => {
@@ -982,7 +1022,12 @@ the new code
         window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.quickCommand' }))
         return true
       case 'general.terminal':
-        setShowTerminal(prev => !prev)
+        setShowTerminal(true)
+        handleAddTerminal()
+        return true
+      case 'general.splitTerminal':
+        setShowTerminal(true)
+        handleAddTerminal()
         return true
       case 'general.sidebar':
         setActivePanel(useAppStore.getState().activePanel === 'explorer' ? null : 'explorer')
@@ -1128,8 +1173,12 @@ the new code
         setActivePanel('explorer')
         return true
       case 'nav.focusTerminal':
-        setShowTerminal(true)
-        setBottomTab('terminal')
+        if (showTerminal && bottomTab === 'terminal') {
+          setShowTerminal(false)
+        } else {
+          setShowTerminal(true)
+          setBottomTab('terminal')
+        }
         return true
       case 'edit.findInFiles':
         setActivePanel('search')
@@ -1187,10 +1236,10 @@ the new code
         console.log('[ZOOM DEBUG] e.key:', JSON.stringify(e.key), 'e.code:', e.code, 'e.keyCode:', e.keyCode)
       }
 
-      // Focus guard: ignore if typing in an input/textarea (unless it's the Monaco editor)
+      // Focus guard: ignore if typing in an input/textarea (unless it's the Monaco editor or xterm)
       const activeEl = document.activeElement;
       if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable)) {
-        if (!activeEl.classList.contains('inputarea')) {
+        if (!activeEl.classList.contains('inputarea') && !activeEl.classList.contains('xterm-helper-textarea')) {
           return;
         }
       }
@@ -1359,9 +1408,16 @@ the new code
     streamRef.current = ''
     setResolvedModel(null)
 
+    // Capture the session we are starting a stream for
+    let currentChatId = activeChatId
+    if (!currentChatId) {
+      currentChatId = createChat()
+    }
+    streamingSessionIdRef.current = currentChatId
+
     // Add user message + empty assistant placeholder
     const currentAttachments = [...attachments]
-    setMessages((prev) => [
+    updateChatMessages(currentChatId, (prev) => [
       ...prev,
       { role: 'user', content: trimmed, images: isDirectOverride ? [] : currentAttachments },
       { role: 'assistant', content: '' }
@@ -1470,10 +1526,12 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
       }
     } catch (err) {
       console.error('Send error:', err)
-      setMessages((prev) => [
-        ...prev.slice(0, -1),
-        { role: 'assistant', content: `// Error: ${err.message}` }
-      ])
+      if (streamingSessionIdRef.current) {
+        updateChatMessages(streamingSessionIdRef.current, (prev) => [
+          ...prev.slice(0, -1),
+          { role: 'assistant', content: `// Error: ${err.message}` }
+        ])
+      }
       setIsStreaming(false)
     }
   }
@@ -1715,7 +1773,11 @@ the new code
     if (!id) return fallback
     for (const group of customShortcuts) {
       const item = group.items.find(i => i.id === id)
-      if (item && item.keys && item.keys.length) return item.keys.join('+')
+      if (item && item.keys && item.keys.length) {
+        let joined = item.keys.join('+')
+        if (joined === 'Ctrl+Shift+~') return 'Ctrl+Shift+`'
+        return joined
+      }
     }
     return fallback
   }
@@ -2107,7 +2169,10 @@ the new code
                   { label: 'Problems', shortcut: 'Ctrl+Shift+M', action: () => { setShowTerminal(true); setBottomTab('ai-debugger'); } },
                   { label: 'Output', shortcut: 'Ctrl+Shift+U', action: () => { setShowTerminal(true); setBottomTab('terminal'); } },
                   { label: 'Debug Console', shortcut: 'Ctrl+Shift+Y', action: () => { setShowTerminal(true); setBottomTab('debugger-history'); } },
-                  { label: 'Terminal', shortcutId: 'nav.focusTerminal', shortcut: 'Ctrl+`', action: () => { setShowTerminal(true); setBottomTab('terminal'); } },
+                  { label: 'Terminal', shortcutId: 'nav.focusTerminal', shortcut: 'Ctrl+`', action: () => { 
+                    if (showTerminal && bottomTab === 'terminal') setShowTerminal(false);
+                    else { setShowTerminal(true); setBottomTab('terminal'); }
+                  } },
                   { type: 'separator' },
                   { label: 'Word Wrap', shortcut: 'Alt+Z', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.toggleWordWrap' })) }
                 ]
@@ -2146,7 +2211,7 @@ the new code
               {
                 name: 'Terminal', items: [
                   { label: 'New Terminal', shortcutId: 'general.terminal', shortcut: 'Ctrl+Shift+`', action: () => { setShowTerminal(true); handleAddTerminal(); } },
-                  { label: 'Split Terminal', shortcut: 'Ctrl+Shift+5', action: () => { setShowTerminal(true); handleAddTerminal(); } },
+                  { label: 'Split Terminal', shortcutId: 'general.splitTerminal', shortcut: 'Ctrl+Shift+5', action: () => { setShowTerminal(true); handleAddTerminal(); } },
                   { type: 'separator' },
                   { label: 'Run Active File', action: () => runFileRef.current && runFileRef.current() },
                   { label: 'Run Build Task...', shortcut: 'Ctrl+Shift+B', action: () => window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Build task started...', type: 'info' } })) },
@@ -2815,9 +2880,44 @@ the new code
                 <div className="right-pane" style={{ width: `${rightPanelWidth}px` }}>
                   {/* ── Chat Panel ── */}
                   {rightPanel === 'chat' && (
-                    <div className="chat-panel">
+                    <div className="chat-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                      <div className="chat-header" style={{ display: 'flex', padding: '10px 16px', borderBottom: '1px solid var(--border-subtle)', background: 'var(--bg-surface)', alignItems: 'center', gap: '8px' }}>
+                        <div className="model-selector-wrapper" style={{ flex: 1 }}>
+                          <select 
+                            className="model-selector"
+                            value={activeChatId || ''} 
+                            onChange={e => setActiveChat(e.target.value)}
+                            style={{ width: '100%', height: '28px', padding: '2px 28px 2px 8px', fontSize: '12px' }}
+                          >
+                            {chatSessions.map(session => (
+                              <option key={session.id} value={session.id}>
+                                {session.title} {session.updatedAt ? `— ${timeAgo(session.updatedAt)}` : ''}
+                              </option>
+                            ))}
+                          </select>
+                          <ChevronDown size={14} className="selector-chevron" />
+                        </div>
+                        <button 
+                          onClick={() => createChat()}
+                          title="New Chat"
+                          style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', transition: 'all 0.2s ease' }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-hover)'; e.currentTarget.style.color = 'var(--text-main)'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)'; }}
+                        >
+                          <Plus size={16} />
+                        </button>
+                        <button 
+                          onClick={() => { if (activeChatId) deleteChat(activeChatId); }}
+                          title="Delete Chat"
+                          style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', transition: 'all 0.2s ease' }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-hover)'; e.currentTarget.style.color = 'var(--text-main)'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)'; }}
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
                       {/* ── Message List ── */}
-                      <div className="message-list">
+                      <div className="message-list" style={{ flex: 1, overflowY: 'auto' }}>
                         {messages.length === 0 && (
                           <div className="empty-state">
                             <div className="empty-icon">π</div>
