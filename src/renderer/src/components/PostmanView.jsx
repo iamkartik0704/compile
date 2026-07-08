@@ -52,19 +52,43 @@ export function PostmanView() {
   useEffect(() => {
     const handleEditorAction = async (e) => {
       const actionId = e.detail
+      console.log('[PostmanView] Received editor-action:', actionId)
+      
+      // Global actions (zoom) apply to ALL editors in PostmanView regardless of focus
+      if (actionId === 'editor.action.fontZoomIn' || actionId === 'editor.action.fontZoomOut' || actionId === 'editor.action.fontZoomReset') {
+        const editors = [reqEditorRef.current, resEditorRef.current].filter(Boolean)
+        console.log('[PostmanView] Zooming editors:', editors.length)
+        editors.forEach(ed => {
+           const action = ed.getAction(actionId)
+           console.log('[PostmanView] Action found:', !!action)
+           if (action) action.run()
+        })
+        return
+      }
+
+      // Editor-specific actions (copy/cut/paste/undo) apply ONLY to the focused editor
       const editor = reqEditorRef.current?.hasWidgetFocus() ? reqEditorRef.current : 
                      (resEditorRef.current?.hasWidgetFocus() ? resEditorRef.current : null)
       
+      console.log('[PostmanView] Focused editor found:', !!editor)
       if (!editor) return
 
       if (actionId === 'editor.action.clipboardPasteAction' || actionId === 'edit.paste') {
         try {
-          const text = window.api ? await window.api.readClipboard() : await navigator.clipboard.readText()
-          editor.executeEdits("context-menu", [{
-            range: editor.getSelection(),
-            text: text,
-            forceMoveMarkers: true
-          }])
+          let text = ''
+          if (window.api && window.api.readClipboardText) {
+            const res = await window.api.readClipboardText()
+            text = res?.success ? res.text : (typeof res === 'string' ? res : '')
+          } else {
+            text = await navigator.clipboard.readText()
+          }
+          if (text) {
+            editor.executeEdits("context-menu", [{
+              range: editor.getSelection(),
+              text: text,
+              forceMoveMarkers: true
+            }])
+          }
         } catch (err) {
           console.error('Clipboard paste failed:', err)
         }
@@ -74,8 +98,8 @@ export function PostmanView() {
       if (actionId === 'editor.action.clipboardCopyAction' || actionId === 'edit.copy' || actionId === 'editor.action.clipboardCutAction' || actionId === 'edit.cut') {
         const text = editor.getModel().getValueInRange(editor.getSelection())
         if (text) {
-          if (window.api) {
-            await window.api.writeClipboard(text)
+          if (window.api && window.api.writeClipboardText) {
+            await window.api.writeClipboardText(text)
           } else {
             await navigator.clipboard.writeText(text)
           }
@@ -85,15 +109,18 @@ export function PostmanView() {
         }
         return
       }
+      
       let monacoAction = actionId
-      if (actionId === 'view.zoomIn') monacoAction = 'editor.action.fontZoomIn'
-      if (actionId === 'view.zoomOut') monacoAction = 'editor.action.fontZoomOut'
-      if (actionId === 'view.zoomReset') monacoAction = 'editor.action.fontZoomReset'
       if (actionId === 'edit.undo') monacoAction = 'undo'
       if (actionId === 'edit.redo') monacoAction = 'redo'
       if (actionId === 'edit.find') monacoAction = 'actions.find'
 
-      editor.trigger('menu', monacoAction, null)
+      const action = editor.getAction(monacoAction)
+      if (action) {
+        action.run()
+      } else {
+        editor.trigger('menu', monacoAction, null)
+      }
     }
 
     window.addEventListener('editor-action', handleEditorAction)

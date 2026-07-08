@@ -1387,12 +1387,20 @@ export const CodeEditor = ({
       // Manually handle clipboard actions because native ones fail in Electron without an explicit edit menu
       if (actionId === 'edit.paste') {
         try {
-          const text = window.api ? await window.api.readClipboard() : await navigator.clipboard.readText()
-          editorRef.current.executeEdits("keyboard-shortcut", [{
-            range: editorRef.current.getSelection(),
-            text: text,
-            forceMoveMarkers: true
-          }])
+          let text = ''
+          if (window.api && window.api.readClipboardText) {
+            const res = await window.api.readClipboardText()
+            text = res?.success ? res.text : (typeof res === 'string' ? res : '')
+          } else {
+            text = await navigator.clipboard.readText()
+          }
+          if (text) {
+            editorRef.current.executeEdits("keyboard-shortcut", [{
+              range: editorRef.current.getSelection(),
+              text: text,
+              forceMoveMarkers: true
+            }])
+          }
         } catch (err) {
           console.error('Clipboard paste failed:', err)
         }
@@ -1402,8 +1410,8 @@ export const CodeEditor = ({
       if (actionId === 'edit.copy' || actionId === 'edit.cut') {
         const text = editorRef.current.getModel().getValueInRange(editorRef.current.getSelection());
         if (text) {
-          if (window.api) {
-            await window.api.writeClipboard(text);
+          if (window.api && window.api.writeClipboardText) {
+            await window.api.writeClipboardText(text);
           } else {
             navigator.clipboard.writeText(text);
           }

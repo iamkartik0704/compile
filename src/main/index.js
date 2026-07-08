@@ -804,16 +804,6 @@ ipcMain.handle('window-is-maximized', (event) => BrowserWindow.fromWebContents(e
     }
   })
 
-  ipcMain.handle('read-clipboard', () => {
-    const { clipboard } = require('electron')
-    return clipboard.readText()
-  })
-
-  ipcMain.handle('write-clipboard', (_event, text) => {
-    const { clipboard } = require('electron')
-    clipboard.writeText(text)
-  })
-
   /**
    * Handler: File Save
    */
