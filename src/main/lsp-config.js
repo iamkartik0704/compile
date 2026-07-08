@@ -7,9 +7,15 @@ import { existsSync } from 'fs'
 function resolveNodeLsp(pkgName, scriptPath, fallbackBin) {
   const localScript = join(app.getAppPath(), 'node_modules', pkgName, scriptPath)
   if (existsSync(localScript)) {
+    let executablePath = localScript
+    if (app.isPackaged) {
+      // Node (using ELECTRON_RUN_AS_NODE) cannot read from inside app.asar.
+      // We must point it to the unpacked directory where we told electron-builder to put it.
+      executablePath = localScript.replace('app.asar', 'app.asar.unpacked')
+    }
     return {
       command: app.isPackaged ? process.execPath : 'node',
-      args: [localScript],
+      args: [executablePath],
       isNode: true
     }
   }

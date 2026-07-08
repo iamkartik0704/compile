@@ -30,3 +30,4 @@ protocols:
       - comiple
 asarUnpack:
   - '**/node_modules/node-pty/**'
+  - '**/node_modules/pyright/**'

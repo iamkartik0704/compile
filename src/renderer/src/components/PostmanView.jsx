@@ -26,6 +26,8 @@ export function PostmanView() {
   const [loading, setLoading] = useState(false)
   const [configHeight, setConfigHeight] = useState(250)
   const containerRef = useRef(null)
+  const reqEditorRef = useRef(null)
+  const resEditorRef = useRef(null)
 
   const [responseTab, setResponseTab] = useState('Response')
   const [aiDebugger, setAiDebugger] = useState({ explanation: '', codeFix: '', loading: false })
@@ -45,6 +47,46 @@ export function PostmanView() {
         })
       })
     }
+  }, [])
+
+  useEffect(() => {
+    const handleEditorAction = async (e) => {
+      const actionId = e.detail
+      const editor = reqEditorRef.current?.hasWidgetFocus() ? reqEditorRef.current : 
+                     (resEditorRef.current?.hasWidgetFocus() ? resEditorRef.current : null)
+      
+      if (!editor) return
+
+      if (actionId === 'editor.action.clipboardPasteAction') {
+        try {
+          const text = await navigator.clipboard.readText()
+          editor.executeEdits("context-menu", [{
+            range: editor.getSelection(),
+            text: text,
+            forceMoveMarkers: true
+          }])
+        } catch (err) {
+          console.error('Clipboard paste failed:', err)
+        }
+        return
+      }
+      
+      if (actionId === 'editor.action.clipboardCopyAction' || actionId === 'editor.action.clipboardCutAction') {
+        const text = editor.getModel().getValueInRange(editor.getSelection())
+        if (text) {
+          await navigator.clipboard.writeText(text)
+          if (actionId === 'editor.action.clipboardCutAction') {
+             editor.executeEdits("context-menu", [{ range: editor.getSelection(), text: "" }])
+          }
+        }
+        return
+      }
+
+      editor.trigger('menu', actionId, null)
+    }
+
+    window.addEventListener('editor-action', handleEditorAction)
+    return () => window.removeEventListener('editor-action', handleEditorAction)
   }, [])
 
   const handleSend = async () => {
@@ -292,6 +334,7 @@ export function PostmanView() {
                       theme={monacoTheme}
                       value={bodyContent}
                       onChange={setBodyContent}
+                      onMount={(editor) => { reqEditorRef.current = editor }}
                       options={{ minimap: { enabled: false }, lineNumbers: 'on', scrollBeyondLastLine: false }}
                     />
                   ) : bodyType === 'x-www-form-urlencoded' ? (
@@ -415,6 +458,7 @@ FIX:
                     language={response && (response.trim().startsWith('{') || response.trim().startsWith('[')) ? 'json' : 'plaintext'}
                     theme={monacoTheme}
                     value={response}
+                    onMount={(editor) => { resEditorRef.current = editor }}
                     options={{ 
                       minimap: { enabled: false }, 
                       readOnly: true, 

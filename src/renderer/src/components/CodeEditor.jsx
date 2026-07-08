@@ -1409,13 +1409,9 @@ export const CodeEditor = ({
 
       const mappedId = mapCustomIdToMonacoCommandId(actionId) || actionId
 
-      const action = editorRef.current.getAction(mappedId)
-      if (action) {
-        action.run()
-      } else {
-        // Fallback for native cursor history commands and editor core commands
-        editorRef.current.trigger('keyboard', mappedId, null)
-      }
+      // Trigger via Monaco's native keyboard dispatcher to ensure correct internal context
+      // This fixes issues where action.run() fails for UI widgets like the Command Palette
+      editorRef.current.trigger('keyboard', mappedId, null)
     }
 
     window.addEventListener('editor-action', handleEditorAction)

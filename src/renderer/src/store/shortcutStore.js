@@ -93,6 +93,9 @@ export const defaultShortcuts = [
   {
     category: 'View',
     items: [
+      { id: 'view.zoomIn', name: 'Zoom In', keys: ['Ctrl', '='] },
+      { id: 'view.zoomOut', name: 'Zoom Out', keys: ['Ctrl', '-'] },
+      { id: 'view.zoomReset', name: 'Reset Zoom', keys: ['Ctrl', '0'] }
     ]
   },
   {

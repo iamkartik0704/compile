@@ -455,24 +455,7 @@ function createWindow() {
     mainWindow.webContents.setVisualZoomLevelLimits(1, 1)
   })
 
-  // Intercept Ctrl+=/Ctrl+-/Ctrl+0 and handle application-wide zooming
-  mainWindow.webContents.on('before-input-event', (event, input) => {
-    if ((input.control || input.meta) && !input.alt) {
-      if (input.type === 'keyDown') {
-        const currentZoom = mainWindow.webContents.zoomLevel;
-        if (input.key === '=' || input.key === '+') {
-          event.preventDefault();
-          mainWindow.webContents.zoomLevel = currentZoom + 0.5;
-        } else if (input.key === '-') {
-          event.preventDefault();
-          mainWindow.webContents.zoomLevel = currentZoom - 0.5;
-        } else if (input.key === '0') {
-          event.preventDefault();
-          mainWindow.webContents.zoomLevel = 0;
-        }
-      }
-    }
-  })
+  // Zoom logic removed. We rely on the renderer's Monaco Editor font zooming instead.
 
   // Prevent white flash — show only when fully rendered
   mainWindow.on('ready-to-show', () => {

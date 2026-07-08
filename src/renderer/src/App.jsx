@@ -998,6 +998,15 @@ the new code
           document.exitFullscreen().catch(err => console.error(err))
         }
         return true
+      case 'view.zoomIn':
+        window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.fontZoomIn' }))
+        return true
+      case 'view.zoomOut':
+        window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.fontZoomOut' }))
+        return true
+      case 'view.zoomReset':
+        window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.fontZoomReset' }))
+        return true
       case 'general.closeWindow':
         window.close()
         return true
@@ -2031,6 +2040,14 @@ the new code
                 name: 'View', items: [
                   { label: 'Command Palette...', shortcutId: 'general.commandPalette', shortcut: 'Ctrl+Shift+P', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.quickCommand' })) },
                   { label: 'Open View...', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.quickCommand' })) },
+                  { type: 'separator' },
+                  {
+                    label: 'Zoom', hasSubmenu: true, submenu: [
+                      { label: 'Zoom In', shortcutId: 'view.zoomIn', shortcut: 'Ctrl+=', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.fontZoomIn' })) },
+                      { label: 'Zoom Out', shortcutId: 'view.zoomOut', shortcut: 'Ctrl+-', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.fontZoomOut' })) },
+                      { label: 'Reset Zoom', shortcutId: 'view.zoomReset', shortcut: 'Ctrl+0', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.fontZoomReset' })) }
+                    ]
+                  },
                   { type: 'separator' },
                   {
                     label: 'Appearance', hasSubmenu: true, submenu: [
