@@ -10,6 +10,7 @@ import { DapManager } from './dap-manager.js'
 import { setupCompilationDbHandlers } from './compilation-db.js'
 import { getCompilerPathsForLanguage, detectCppCompilers } from './compiler-detection.js'
 import os from 'os'
+import icon from '../../build/icon.png?asset'
 
 const exec = promisify(execCallback)
 
@@ -412,7 +413,7 @@ function createWindow() {
     height: 860,
     minWidth: 800,
     minHeight: 600,
-    icon: join(__dirname, '../../build/icon.ico'),
+    icon: icon,
     show: false,
     autoHideMenuBar: true,
     backgroundColor: '#0c0c14',
