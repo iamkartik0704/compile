@@ -205,6 +205,7 @@ export const useShortcutStore = create(
     }),
     {
       name: 'shortcut-storage',
+      partialize: (state) => ({ shortcuts: state.shortcuts }),
       merge: (persistedState, currentState) => {
         if (!persistedState || !persistedState.shortcuts) return currentState;
         const mergedShortcuts = currentState.shortcuts.map(defaultGroup => {
@@ -227,7 +228,11 @@ export const useShortcutStore = create(
             })
           };
         });
-        return { ...currentState, ...persistedState, shortcuts: mergedShortcuts };
+        
+        // CRITICAL: We only merge `shortcuts`. Never spread `persistedState` because 
+        // old versions might have saved UI state like `isEditing` or `confirmDialog`, 
+        // permanently locking the app.
+        return { ...currentState, shortcuts: mergedShortcuts };
       }
     }
   )
