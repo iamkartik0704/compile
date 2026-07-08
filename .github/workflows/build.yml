@@ -3,7 +3,13 @@ name: Build
 on:
   push:
     branches: [main]
+    tags:
+      - 'v*' # Triggers the build and release when you push a tag like v1.0.0
   workflow_dispatch:
+
+# CRITICAL: This gives the automatic GITHUB_TOKEN permission to create a Release page and upload files
+permissions:
+  contents: write
 
 jobs:
   build-win:
@@ -14,6 +20,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: 'npm' # Automatically caches node_modules for faster builds
 
       - uses: ilammy/msvc-dev-cmd@v1
 
@@ -24,13 +31,23 @@ jobs:
       - name: Build Windows Executable
         run: npm run dist:win
         env:
-          # Forces electron-builder and @electron/rebuild to print continuous, verbose internal logs
           DEBUG: electron-builder,electron-rebuild:*
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
         timeout-minutes: 15
 
+      # STEP A: Still saves the file as a temporary artifact on standard commits to main
       - uses: actions/upload-artifact@v4
         with:
           name: compile-windows
           path: dist/*.exe
+
+      # STEP B: Automatically creates a public Release and uploads the installer ONLY when you push a tag
+      - name: Create and Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/') # Only runs if a tag triggered this execution
+        with:
+          files: dist/*.exe
+          generate_release_notes: true # Auto-generates changelogs based on your commit history
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
