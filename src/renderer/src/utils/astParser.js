@@ -9,9 +9,9 @@ export async function initTreeSitter(languageName) {
     await Parser.init({
       locateFile(scriptName, scriptDirectory) {
         if (scriptName === 'tree-sitter.wasm' || scriptName === 'web-tree-sitter.wasm') {
-          return '/wasm/tree-sitter.wasm'
+          return './wasm/tree-sitter.wasm'
         }
-        return `/wasm/${scriptName}`
+        return `./wasm/${scriptName}`
       }
     })
     parser = new Parser()
@@ -48,7 +48,7 @@ export async function initTreeSitter(languageName) {
   if (!wasmFile) return null
 
   try {
-    const lang = await TreeSitter.Language.load(`/wasm/${wasmFile}`)
+    const lang = await TreeSitter.Language.load(`./wasm/${wasmFile}`)
     parser.setLanguage(lang)
     currentLang = normLang
     return parser

@@ -1195,13 +1195,7 @@ the new code
         }
       }
 
-      // DSA Explainer overlay and Postman View: when focus is anywhere inside these
-      // (Monaco input area OR the sample-input textarea), skip the global
-      // shortcut handler entirely so Ctrl+V / Ctrl+C / Ctrl+X / Ctrl+A land
-      // natively on the target and don't get eaten by editor-action dispatch.
-      if (activeEl && activeEl.closest && (activeEl.closest('.dsa-explainer-overlay') || activeEl.closest('.postman-view'))) {
-        return;
-      }
+
 
       // Ignore pure modifier presses (wait for the actual key)
       if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) {

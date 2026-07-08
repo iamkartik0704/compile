@@ -1373,6 +1373,12 @@ export const CodeEditor = ({
       const actionId = e.detail
       if (!editorRef.current) return
       
+      // Do not steal focus or hijack the event if a secondary view is currently focused
+      const activeEl = document.activeElement;
+      if (activeEl && activeEl.closest && (activeEl.closest('.postman-view') || activeEl.closest('.dsa-explainer-overlay'))) {
+        return;
+      }
+      
       // The editor loses focus when you click the top menu,
       // which causes interactive prompts (like Go to Line) to instantly close
       // or keystrokes to fail. We MUST refocus the editor first!
@@ -1409,9 +1415,18 @@ export const CodeEditor = ({
 
       const mappedId = mapCustomIdToMonacoCommandId(actionId) || actionId
 
-      // Trigger via Monaco's native keyboard dispatcher to ensure correct internal context
-      // This fixes issues where action.run() fails for UI widgets like the Command Palette
-      editorRef.current.trigger('keyboard', mappedId, null)
+      const action = editorRef.current.getAction(mappedId)
+      if (action) {
+        if (mappedId === 'editor.action.quickCommand') {
+          // The Command Palette widget fails to open properly via action.run() due to internal focus/key state checks.
+          editorRef.current.trigger('keyboard', mappedId, null)
+        } else {
+          action.run()
+        }
+      } else {
+        // Fallback for native cursor history commands and editor core commands
+        editorRef.current.trigger('keyboard', mappedId, null)
+      }
     }
 
     window.addEventListener('editor-action', handleEditorAction)

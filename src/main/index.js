@@ -1810,7 +1810,12 @@ app.whenReady().then(() => {
 
     // Default open or close DevTools by F12 in dev, ignore in production
     app.on('browser-window-created', (_, window) => {
-      optimizer.watchWindowShortcuts(window)
+      window.webContents.on('before-input-event', (event, input) => {
+        if (input.type === 'keyDown' && input.key === 'F12' && is.dev) {
+          window.webContents.toggleDevTools()
+          event.preventDefault()
+        }
+      })
     })
 
     createWindow()
