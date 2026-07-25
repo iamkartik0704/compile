@@ -40,7 +40,7 @@ jobs:
 
       - name: Build Windows Executable
         if: matrix.os == 'windows-latest'
-        run: npm run dist:win
+        run: npm run dist:win -- -p never
         env:
           DEBUG: electron-builder,electron-rebuild:*
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
@@ -52,7 +52,7 @@ jobs:
         if: startsWith(matrix.os, 'macos')
         run: |
           sips -z 1024 1024 build/icon.png
-          npm run dist:mac:${{ matrix.arch }}
+          npm run dist:mac:${{ matrix.arch }} -- -p never
         env:
           DEBUG: electron-builder,electron-rebuild:*
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
