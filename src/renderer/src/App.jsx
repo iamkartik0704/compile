@@ -1968,7 +1968,7 @@ the new code
       <header className="global-title-bar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 16px', height: '40px', background: 'var(--bg-activity)', borderBottom: '1px solid var(--border-base)', flexShrink: 0, userSelect: 'none', WebkitAppRegion: 'drag' }}>
 
         {/* Left Section */}
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '24px', WebkitAppRegion: 'no-drag' }}>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '24px', WebkitAppRegion: 'no-drag', paddingLeft: navigator.userAgent.toLowerCase().includes('mac') ? '72px' : '0' }}>
           <span style={{ fontSize: '14px', fontWeight: 'bold', color: 'var(--accent-color, #8b5cf6)', letterSpacing: '0.5px' }}>comπle</span>
           <div style={{ display: 'flex', gap: '16px', fontSize: '13px', color: 'var(--text-muted)' }}>
             {[
