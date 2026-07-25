@@ -2,6 +2,10 @@
   "name": "compile-editor",
   "version": "1.0.0",
   "description": "comπle Code Editor — A secure Electron IDE with AI streaming",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/iamkartik0704/compile.git"
+  },
   "main": "./out/main/index.js",
   "author": "comπle",
   "license": "MIT",
@@ -12,6 +16,8 @@
     "rebuild-local": "electron-builder install-app-deps",
     "setup-lsp": "npm install -g typescript-language-server typescript bash-language-server",
     "dist:win": "electron-vite build && electron-builder --win --publish never",
+    "dist:mac:x64": "electron-vite build && electron-builder --mac --x64",
+    "dist:mac:arm64": "electron-vite build && electron-builder --mac --arm64",
     "dist:linux": "electron-vite build && electron-builder --linux",
     "dist": "electron-vite build && electron-builder"
   },
@@ -31,12 +37,14 @@
     "chokidar": "^5.0.0",
     "dagre": "^0.8.5",
     "diff": "^9.0.0",
+    "electron-updater": "^6.8.9",
     "emmet-monaco-es": "^5.7.0",
     "lucide-react": "^1.21.0",
     "monaco-editor": "^0.55.1",
     "monaco-languageclient": "^8.1.1",
     "node-pty": "^1.1.0",
     "openai": "^4.77.0",
+    "pyright": "^1.1.410",
     "react-markdown": "^10.1.0",
     "react-syntax-highlighter": "^16.1.1",
     "reactflow": "^11.11.4",
@@ -47,8 +55,7 @@
     "ws": "^8.21.0",
     "xterm": "^5.3.0",
     "xterm-addon-fit": "^0.8.0",
-    "zustand": "^5.0.14",
-    "pyright": "^1.1.410"
+    "zustand": "^5.0.14"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",

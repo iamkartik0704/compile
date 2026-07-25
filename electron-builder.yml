@@ -12,10 +12,14 @@ files:
   - '!{.eslintignore,.eslintrc.cjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
   - 'build/icon.ico'
+publish:
+  - provider: github
 win:
   executableName: compile-editor
   icon: build/icon.ico
 mac:
+  target: ['dmg', 'zip']
+  entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
 linux:
   target:

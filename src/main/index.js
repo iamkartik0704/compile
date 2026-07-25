@@ -1,5 +1,6 @@
 import { app, shell, BrowserWindow, ipcMain, safeStorage, dialog, nativeTheme, Menu, protocol } from 'electron'
 import { join, resolve, sep } from 'path'
+import { autoUpdater } from 'electron-updater'
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'wasm', privileges: { standard: true, secure: true, supportFetchAPI: true, bypassCSP: true } }
@@ -1839,6 +1840,36 @@ app.whenReady().then(() => {
     })
 
     createWindow()
+
+    // --- Auto Updater Setup ---
+    if (!is.dev) {
+      if (process.platform === 'win32') {
+        autoUpdater.on('update-downloaded', (info) => {
+          dialog.showMessageBox({
+            type: 'info',
+            title: 'Update Ready',
+            message: 'A new version of comπle Editor has been downloaded. Restart the application to apply the updates.',
+            buttons: ['Restart', 'Later']
+          }).then((result) => {
+            if (result.response === 0) {
+              autoUpdater.quitAndInstall()
+            }
+          })
+        })
+        autoUpdater.on('error', (err) => {
+          console.error('Auto-updater error:', err)
+        })
+        // Wrap in try-catch to prevent crashes if update checking fails
+        try {
+          autoUpdater.checkForUpdatesAndNotify()
+        } catch (e) {
+          console.error('Failed to check for updates:', e)
+        }
+      } else if (process.platform === 'darwin') {
+        // Bypass autoUpdater for macOS until the application is code-signed.
+        console.log('macOS auto-updater bypassed: requires code signing.')
+      }
+    }
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow()
