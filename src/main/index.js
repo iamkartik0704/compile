@@ -1,6 +1,5 @@
 import { app, shell, BrowserWindow, ipcMain, safeStorage, dialog, nativeTheme, Menu, protocol } from 'electron'
 import { join, resolve, sep } from 'path'
-import { autoUpdater } from 'electron-updater'
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'wasm', privileges: { standard: true, secure: true, supportFetchAPI: true, bypassCSP: true } }
@@ -8,15 +7,15 @@ protocol.registerSchemesAsPrivileged([
 import { readFileSync, writeFileSync, existsSync, chmodSync, promises as fsPromises } from 'fs'
 import { exec as execCallback } from 'child_process'
 import { promisify } from 'util'
-import { electronApp, is } from '@electron-toolkit/utils'
+import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { terminalManager } from './terminal-manager.js'
-import { setupLspIpcHandlers, setMainWindowLspRef, openDoc } from './lsp-manager.js'
+import { setupLspIpcHandlers, setMainWindowLspRef } from './lsp-manager.js'
 import { DapManager } from './dap-manager.js'
 import { setupCompilationDbHandlers } from './compilation-db.js'
 import { getCompilerPathsForLanguage, detectCppCompilers } from './compiler-detection.js'
-import os from 'os'
 import icon from '../../build/icon.png?asset'
-
+import { autoUpdater } from 'electron-updater'
+          
 const exec = promisify(execCallback)
 
 const watchers = new Map();
@@ -1877,6 +1876,7 @@ app.whenReady().then(() => {
 
     if (process.env.TEMP_TEST === '1') {
       setTimeout(async () => {
+        const { openDoc } = await import('./lsp-manager.js')
         const path = require('path')
         const absPath = path.join(process.cwd(), 'dev-fixtures', 'broken.py')
         openDoc(absPath, 'print(naem)', 'python')
