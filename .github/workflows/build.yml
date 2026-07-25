@@ -50,7 +50,9 @@ jobs:
 
       - name: Build macOS Executable
         if: startsWith(matrix.os, 'macos')
-        run: npm run dist:mac:${{ matrix.arch }}
+        run: |
+          sips -z 1024 1024 build/icon.png
+          npm run dist:mac:${{ matrix.arch }}
         env:
           DEBUG: electron-builder,electron-rebuild:*
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
