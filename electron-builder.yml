@@ -21,6 +21,8 @@ mac:
   target: ['zip']
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
+  binaries:
+    - './node_modules/node-pty/build/Release/spawn-helper'
 linux:
   target:
     - AppImage
