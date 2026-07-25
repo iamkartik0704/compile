@@ -11,6 +11,9 @@ function getDefaultShell() {
   if (os.platform() === 'win32') {
     return process.env.COMSPEC || 'powershell.exe'
   }
+  if (os.platform() === 'darwin') {
+    return process.env.SHELL || '/bin/zsh'
+  }
   return process.env.SHELL || '/bin/bash'
 }
 

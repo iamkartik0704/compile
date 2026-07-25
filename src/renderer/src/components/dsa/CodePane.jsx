@@ -39,7 +39,13 @@ export function CodePane({ code, language, activeLine, onCodeChange, editable })
       precondition: '!editorReadonly',
       run: async (ed) => {
         try {
-          const text = await navigator.clipboard.readText()
+          let text = ''
+          if (window.api && window.api.readClipboardText) {
+            const res = await window.api.readClipboardText()
+            text = res?.success ? res.text : (typeof res === 'string' ? res : '')
+          } else {
+            text = await navigator.clipboard.readText()
+          }
           if (!text) return
           const sel = ed.getSelection()
           ed.executeEdits('dsa-paste', [{ range: sel, text, forceMoveMarkers: true }])
@@ -53,10 +59,16 @@ export function CodePane({ code, language, activeLine, onCodeChange, editable })
       id: 'dsa.clipboardCopy',
       label: 'Copy (DSA)',
       keybindings: [KM.CtrlCmd | KC.KeyC],
-      run: (ed) => {
+      run: async (ed) => {
         const sel = ed.getSelection()
         const text = ed.getModel().getValueInRange(sel)
-        if (text) navigator.clipboard.writeText(text).catch(() => {})
+        if (text) {
+          if (window.api && window.api.writeClipboardText) {
+            await window.api.writeClipboardText(text)
+          } else {
+            navigator.clipboard.writeText(text).catch(() => {})
+          }
+        }
       }
     })
 
@@ -65,11 +77,15 @@ export function CodePane({ code, language, activeLine, onCodeChange, editable })
       label: 'Cut (DSA)',
       keybindings: [KM.CtrlCmd | KC.KeyX],
       precondition: '!editorReadonly',
-      run: (ed) => {
+      run: async (ed) => {
         const sel = ed.getSelection()
         const text = ed.getModel().getValueInRange(sel)
         if (text) {
-          navigator.clipboard.writeText(text).catch(() => {})
+          if (window.api && window.api.writeClipboardText) {
+            await window.api.writeClipboardText(text)
+          } else {
+            navigator.clipboard.writeText(text).catch(() => {})
+          }
           ed.executeEdits('dsa-cut', [{ range: sel, text: '', forceMoveMarkers: true }])
         }
       }
