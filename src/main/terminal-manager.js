@@ -10,11 +10,7 @@ class TerminalManager {
   }
 
   getPty() {
-    let ptyPath = 'node-pty'
-    if (app.isPackaged) {
-      ptyPath = path.join(app.getAppPath().replace('app.asar', 'app.asar.unpacked'), 'node_modules', 'node-pty')
-    }
-    return require(ptyPath)
+    return require('node-pty')
   }
 
   getDefaultShell() {
@@ -36,6 +32,8 @@ class TerminalManager {
       pty = this.getPty()
     } catch (err) {
       console.error('Failed to load node-pty:', err)
+      const { dialog } = require('electron')
+      dialog.showErrorBox('Terminal Load Error', `Failed to load node-pty:\n\n${err.message}\n\nStack:\n${err.stack}`)
       return
     }
 
@@ -75,6 +73,8 @@ class TerminalManager {
         return id
       } catch (err) {
         console.error('Failed to create terminal:', err)
+        const { dialog } = require('electron')
+        dialog.showErrorBox('Terminal Spawn Error', `Failed to spawn shell:\n\n${err.message}\n\nStack:\n${err.stack}`)
         return null
       }
     })

@@ -421,7 +421,7 @@ function createWindow() {
     show: false,
     autoHideMenuBar: true,
     backgroundColor: '#0c0c14',
-    titleBarStyle: 'hidden',
+    titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 12, y: 12 },
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
