@@ -1,6 +1,6 @@
 {
   "name": "compile-editor",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "comπle Code Editor — A secure Electron IDE with AI streaming",
   "repository": {
     "type": "git",
@@ -15,11 +15,11 @@
     "start": "electron-vite preview",
     "rebuild-local": "electron-builder install-app-deps",
     "setup-lsp": "npm install -g typescript-language-server typescript bash-language-server",
-    "dist:win": "electron-vite build && electron-builder --win --publish never",
-    "dist:mac:x64": "electron-vite build && electron-builder --mac --x64 --publish never",
-    "dist:mac:arm64": "electron-vite build && electron-builder --mac --arm64 --publish never",
-    "dist:linux": "electron-vite build && electron-builder --linux --publish never",
-    "dist": "electron-vite build && electron-builder --publish never"
+    "dist:win": "electron-vite build && electron-builder --win --publish always",
+    "dist:mac:x64": "electron-vite build && electron-builder --mac --x64 --publish always",
+    "dist:mac:arm64": "electron-vite build && electron-builder --mac --arm64 --publish always",
+    "dist:linux": "electron-vite build && electron-builder --linux --publish always",
+    "dist": "electron-vite build && electron-builder --publish always"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
