@@ -1,5 +1,6 @@
 appId: com.compile.editor
 productName: comπle Editor
+artifactName: compile-${version}-${os}-${arch}.${ext}
 compression: normal
 nativeRebuilder: legacy
 directories:
