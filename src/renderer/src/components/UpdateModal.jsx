@@ -184,7 +184,7 @@ const buttonBase = {
 const primaryButtonStyle = {
   ...buttonBase,
   backgroundColor: 'var(--accent-blue, #007acc)',
-  color: '#fff',
+  color: 'var(--accent-text, #fff)',
   flex: 1
 }
 
