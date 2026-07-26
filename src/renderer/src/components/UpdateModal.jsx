@@ -86,6 +86,12 @@ const UpdateModal = () => {
             : `A new version of comπle Editor ${updateInfo?.version ? `(v${updateInfo.version}) ` : ''}has been downloaded in the background. Restart the application to apply the updates.`}
         </p>
 
+        {updateInfo?.releaseNotes && (
+          <div style={{ textAlign: 'left', background: 'var(--bg-input)', padding: '12px', borderRadius: '6px', marginBottom: '20px', width: '100%', maxHeight: '120px', overflowY: 'auto', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+            <div dangerouslySetInnerHTML={{ __html: updateInfo.releaseNotes }} />
+          </div>
+        )}
+
         <div style={buttonContainerStyle}>
           <button 
             style={secondaryButtonStyle} 
@@ -184,7 +190,7 @@ const buttonBase = {
 const primaryButtonStyle = {
   ...buttonBase,
   backgroundColor: 'var(--accent-blue, #007acc)',
-  color: 'var(--accent-text, #fff)',
+  color: 'var(--bg-deep, #fff)',
   flex: 1
 }
 

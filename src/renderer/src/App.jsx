@@ -2272,6 +2272,7 @@ the new code
                     }
                   } },
                   { type: 'separator' },
+                  { label: `Version: ${appVersion}`, action: () => {} },
                   { label: 'About comπle', action: () => window.open('https://kartikchawla.in', '_blank') }
                 ]
               }
