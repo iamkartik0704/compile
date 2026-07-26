@@ -1,6 +1,6 @@
 {
   "name": "compile-editor",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "comπle Code Editor — A secure Electron IDE with AI streaming",
   "repository": {
     "type": "git",
