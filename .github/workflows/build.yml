@@ -12,9 +12,23 @@ permissions:
   contents: write
 
 jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feature/auto-update' || startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create Draft Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          gh release create v$version --draft --title "v$version" --notes "Release v$version" || true
+
   build:
+    needs: create-release
     strategy:
-      max-parallel: 1
       matrix:
         include:
           - os: windows-latest
