@@ -250,6 +250,7 @@ function App() {
   // ── Model State ──
   const [selectedModel, setSelectedModel] = useState('auto')
   const [resolvedModel, setResolvedModel] = useState(null)
+  const [appVersion, setAppVersion] = useState('')
 
   // ── Multi-Provider API Key State ──
   const [providerKeys, setProviderKeys] = useState({})
@@ -344,6 +345,18 @@ function App() {
     }
     window.addEventListener('open-dsa-explainer', handleOpenDsa)
     return () => window.removeEventListener('open-dsa-explainer', handleOpenDsa)
+  }, [])
+
+  // Fetch API keys and app version on mount
+  useEffect(() => {
+    if (window.api && window.api.getApiKeys) {
+      window.api.getApiKeys().then(keys => {
+        setProviderKeys(keys)
+      }).catch(err => console.error('Failed to load keys', err))
+    }
+    if (window.api && window.api.getAppVersion) {
+      window.api.getAppVersion().then(v => setAppVersion(v)).catch(() => {})
+    }
   }, [])
 
   useEffect(() => {
@@ -2236,6 +2249,7 @@ the new code
               },
               {
                 name: 'Help', items: [
+                  ...(appVersion ? [{ label: `Version: ${appVersion}`, disabled: true }, { type: 'separator' }] : []),
                   { label: 'Toggle Developer Tools', action: () => { if (window.api && window.api.toggleDevTools) window.api.toggleDevTools() } },
                   { type: 'separator' },
                   { label: 'Check for Updates...', action: async () => {

@@ -10,6 +10,7 @@ import { electronAPI } from '@electron-toolkit/preload'
 const api = {
   // ── Window Controls ──
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   installUpdate: () => ipcRenderer.send('install-update'),
   onUpdateDownloaded: (callback) => {
     ipcRenderer.removeAllListeners('update-downloaded')

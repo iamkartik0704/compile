@@ -1881,6 +1881,10 @@ app.whenReady().then(() => {
       autoUpdater.quitAndInstall()
     })
 
+    ipcMain.handle('get-app-version', () => {
+      return app.getVersion()
+    })
+
     ipcMain.handle('check-for-updates', async () => {
       if (is.dev) return { status: 'dev' }
       if (isUpdateDownloaded) return { status: 'downloaded' }
