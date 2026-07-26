@@ -567,6 +567,8 @@ function App() {
       cmd = isWindows
         ? `g++ "${activeFile}" -o out.exe && out.exe`
         : `g++ "${activeFile}" -o out && ./out`
+    } else if (activeFile.endsWith('.toad')) {
+      cmd = `toadcode "${activeFile}"`
     } else {
       console.log('Unsupported file type for running')
       return

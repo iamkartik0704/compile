@@ -25,6 +25,7 @@ import {
   installSharedLspDispatcher,
   subscribeToLspMessages
 } from '../services/workspaceDiagnosticsScanner'
+import { registerToadCode } from '../monaco-toadcode'
 
 // --- Monaco Workers ---
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
@@ -46,6 +47,7 @@ if (!self.MonacoEnvironment) {
 }
 
 loader.config({ monaco })
+registerToadCode(monaco)
 
 // ─── Global Keybinding Registry Sync ───
 let isMonacoKeybindingsSynced = false;
@@ -304,7 +306,8 @@ const getLanguageFromPath = (path) => {
     cs: 'csharp', csx: 'csharp',
     // Other
     php: 'php', rb: 'ruby', kt: 'kotlin', swift: 'swift', m: 'objective-c',
-    scala: 'scala', groovy: 'groovy', sql: 'sql'
+    scala: 'scala', groovy: 'groovy', sql: 'sql',
+    toad: 'toadcode'
   }
   return map[ext] || 'plaintext'
 }
@@ -2560,13 +2563,39 @@ export const CodeEditor = ({
           : activeFile
         const parts = relPath.split(/[\\/]/).filter(Boolean)
         return (
-          <div className="editor-breadcrumb">
-            {parts.map((part, i) => (
-              <span key={i} className="breadcrumb-segment">
-                {i > 0 && <ChevronRight size={12} className="breadcrumb-sep" />}
-                <span className={i === parts.length - 1 ? 'breadcrumb-current' : 'breadcrumb-part'}>{part}</span>
-              </span>
-            ))}
+          <div className="editor-breadcrumb" style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <div>
+              {parts.map((part, i) => (
+                <span key={i} className="breadcrumb-segment">
+                  {i > 0 && <ChevronRight size={12} className="breadcrumb-sep" />}
+                  <span className={i === parts.length - 1 ? 'breadcrumb-current' : 'breadcrumb-part'}>{part}</span>
+                </span>
+              ))}
+            </div>
+            {activeFile.endsWith('.toad') && (
+              <button 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  window.dispatchEvent(new CustomEvent('global-run-file'));
+                }}
+                title="Run ToadCode"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  background: 'var(--accent-blue, #007acc)',
+                  color: 'var(--accent-text, #fff)',
+                  border: 'none',
+                  padding: '4px 10px',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontSize: '0.75rem',
+                  fontWeight: 600
+                }}
+              >
+                <Play size={12} /> Run
+              </button>
+            )}
           </div>
         )
       })()}
