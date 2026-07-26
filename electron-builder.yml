@@ -23,6 +23,7 @@ mac:
   entitlementsInherit: build/entitlements.mac.plist
   binaries:
     - './node_modules/node-pty/build/Release/spawn-helper'
+afterPack: build/fix-permissions.js
 linux:
   target:
     - AppImage
