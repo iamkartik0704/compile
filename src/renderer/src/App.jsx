@@ -1232,6 +1232,10 @@ the new code
 
       default:
         if (id.startsWith('edit.') || id.startsWith('ai.') || id.startsWith('nav.')) {
+          const activeEl = document.activeElement;
+          if (activeEl && activeEl.closest && (activeEl.closest('.postman-view') || activeEl.closest('.dsa-explainer-overlay'))) {
+            return false;
+          }
           window.dispatchEvent(new CustomEvent('editor-action', { detail: id }))
           return true
         }
