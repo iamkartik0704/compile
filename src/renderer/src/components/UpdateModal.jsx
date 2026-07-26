@@ -7,6 +7,16 @@ const UpdateModal = () => {
   const [macosUrl, setMacosUrl] = useState('')
 
   useEffect(() => {
+    // Check if an update is already downloaded on startup
+    if (window.api && window.api.checkForUpdates) {
+      window.api.checkForUpdates().then(res => {
+        if (res.status === 'downloaded') {
+          setIsMacosManual(false)
+          setShow(true)
+        }
+      }).catch(() => {})
+    }
+
     // Listen for downloaded updates (Windows/Linux)
     if (window.api && window.api.onUpdateDownloaded) {
       window.api.onUpdateDownloaded((info) => {
@@ -59,7 +69,7 @@ const UpdateModal = () => {
     <div style={overlayStyle}>
       <div style={modalStyle}>
         <div style={iconContainerStyle}>
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--accent, #d4af37)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--accent-blue, #007acc)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
             <polyline points="7 10 12 15 17 10"></polyline>
             <line x1="12" y1="15" x2="12" y2="3"></line>
@@ -80,7 +90,7 @@ const UpdateModal = () => {
           <button 
             style={secondaryButtonStyle} 
             onClick={handleLater}
-            onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-tertiary, #2a2a2a)'}
+            onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-hover, #2a2a2a)'}
             onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
           >
             Later
@@ -115,8 +125,8 @@ const overlayStyle = {
 }
 
 const modalStyle = {
-  backgroundColor: 'var(--bg-secondary, #1e1e1e)',
-  border: '1px solid var(--border-color, #333)',
+  backgroundColor: 'var(--bg-surface, #1e1e1e)',
+  border: '1px solid var(--border-base, #333)',
   borderRadius: '12px',
   padding: '32px',
   width: '100%',
@@ -129,7 +139,7 @@ const modalStyle = {
 }
 
 const iconContainerStyle = {
-  backgroundColor: 'var(--bg-tertiary, #2a2a2a)',
+  backgroundColor: 'var(--bg-elevated, #2a2a2a)',
   borderRadius: '50%',
   width: '80px',
   height: '80px',
@@ -173,15 +183,15 @@ const buttonBase = {
 
 const primaryButtonStyle = {
   ...buttonBase,
-  backgroundColor: 'var(--accent, #d4af37)',
-  color: '#000',
+  backgroundColor: 'var(--accent-blue, #007acc)',
+  color: '#fff',
   flex: 1
 }
 
 const secondaryButtonStyle = {
   ...buttonBase,
   backgroundColor: 'transparent',
-  border: '1px solid var(--border-color, #444)',
+  border: '1px solid var(--border-base, #444)',
   color: 'var(--text-secondary, #ccc)',
   flex: 1
 }
