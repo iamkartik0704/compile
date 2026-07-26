@@ -1,5 +1,6 @@
 import { app, shell, BrowserWindow, ipcMain, safeStorage, dialog, nativeTheme, Menu, protocol } from 'electron'
 import { join, resolve, sep } from 'path'
+import os from 'os'
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'wasm', privileges: { standard: true, secure: true, supportFetchAPI: true, bypassCSP: true } }
