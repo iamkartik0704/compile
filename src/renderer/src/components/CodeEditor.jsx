@@ -36,18 +36,25 @@ import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker'
 
 if (!self.MonacoEnvironment) {
   self.MonacoEnvironment = {
-    getWorker(_, label) {
-      if (label === 'json') return new jsonWorker()
-      if (label === 'css' || label === 'scss' || label === 'less') return new cssWorker()
-      if (label === 'html' || label === 'handlebars' || label === 'razor') return new htmlWorker()
-      if (label === 'typescript' || label === 'javascript') return new tsWorker()
+    getWorker: function (_, label) {
+      if (label === 'json') {
+        return new jsonWorker()
+      }
+      if (label === 'css' || label === 'scss' || label === 'less') {
+        return new cssWorker()
+      }
+      if (label === 'html' || label === 'handlebars' || label === 'razor') {
+        return new htmlWorker()
+      }
+      if (label === 'typescript' || label === 'javascript') {
+        return new tsWorker()
+      }
       return new editorWorker()
     }
   }
 }
 
 loader.config({ monaco })
-registerToadCode(monaco)
 
 // ─── Global Keybinding Registry Sync ───
 let isMonacoKeybindingsSynced = false;
@@ -1558,6 +1565,13 @@ export const CodeEditor = ({
   useEffect(() => {
     isGitLensEnabledRef.current = isGitLensEnabled
   }, [isGitLensEnabled])
+
+  const isToadCodeEnabled = extensions.some(ext => ext.id === 'ext-lang-toadcode' && ext.enabled)
+  useEffect(() => {
+    if (isToadCodeEnabled && window.monaco) {
+      registerToadCode(window.monaco)
+    }
+  }, [isToadCodeEnabled])
   const [cursorLine, setCursorLine] = useState(null)
   const monacoTheme = activeTheme === 'light-modern' ? 'vs' : 'vs-dark'
   const [originalText, setOriginalText] = useState(null)
@@ -2572,7 +2586,7 @@ export const CodeEditor = ({
                 </span>
               ))}
             </div>
-            {activeFile.endsWith('.toad') && (
+            {activeFile.endsWith('.toad') && isToadCodeEnabled && (
               <button 
                 onClick={(e) => {
                   e.stopPropagation();

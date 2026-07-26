@@ -568,7 +568,13 @@ function App() {
         ? `g++ "${activeFile}" -o out.exe && out.exe`
         : `g++ "${activeFile}" -o out && ./out`
     } else if (activeFile.endsWith('.toad')) {
-      cmd = `toadcode "${activeFile}"`
+      const isToadCodeEnabled = useAppStore.getState().extensions.some(e => e.id === 'ext-lang-toadcode' && e.enabled)
+      if (isToadCodeEnabled) {
+        cmd = `toadcode "${activeFile}"`
+      } else {
+        console.log('ToadCode extension is not enabled')
+        return
+      }
     } else {
       console.log('Unsupported file type for running')
       return

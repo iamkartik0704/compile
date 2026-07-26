@@ -38,6 +38,12 @@ export const EXTENSIONS = [
     author: 'IDE Core', installed: false, enabled: false 
   },
   { 
+    id: 'ext-lang-toadcode', name: 'ToadCode', category: 'language', 
+    description: 'Language support and runner for ToadCode.', 
+    longDescription: 'Provides syntax highlighting, snippets, and execution for the ToadCode programming language.',
+    author: 'Community', installed: true, enabled: false 
+  },
+  { 
     id: 'ext-dbg-chrome', name: 'Debugger for Chrome', category: 'debugging', 
     description: 'Debug your JavaScript code in the Chrome browser.', 
     longDescription: 'Debug your JavaScript code running in Google Chrome from your IDE.',
