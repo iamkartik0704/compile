@@ -1846,8 +1846,9 @@ app.whenReady().then(() => {
     if (!is.dev) {
       autoUpdater.on('update-downloaded', (info) => {
         isUpdateDownloaded = true
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('update-downloaded', info)
+        const window = BrowserWindow.getAllWindows()[0]
+        if (window && !window.isDestroyed()) {
+          window.webContents.send('update-downloaded', info)
         }
       })
       autoUpdater.on('error', (err) => {
@@ -1864,8 +1865,9 @@ app.whenReady().then(() => {
             .then(data => {
               const latestVersion = data.tag_name.replace('v', '')
               if (latestVersion !== app.getVersion()) {
-                if (mainWindow && !mainWindow.isDestroyed()) {
-                  mainWindow.webContents.send('update-available-macos', data.html_url)
+                const window = BrowserWindow.getAllWindows()[0]
+                if (window && !window.isDestroyed()) {
+                  window.webContents.send('update-available-macos', data.html_url)
                 }
               }
             }).catch(e => console.error('macOS manual update check failed:', e))
