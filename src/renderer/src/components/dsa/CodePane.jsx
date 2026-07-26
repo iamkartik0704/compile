@@ -32,62 +32,47 @@ export function CodePane({ code, language, activeLine, onCodeChange, editable })
     const KM = monaco.KeyMod
     const KC = monaco.KeyCode
 
-    editor.addAction({
-      id: 'dsa.clipboardPaste',
-      label: 'Paste (DSA)',
-      keybindings: [KM.CtrlCmd | KC.KeyV],
-      precondition: '!editorReadonly',
-      run: async (ed) => {
-        try {
-          let text = ''
-          if (window.api && window.api.readClipboardText) {
-            const res = await window.api.readClipboardText()
-            text = res?.success ? res.text : (typeof res === 'string' ? res : '')
-          } else {
-            text = await navigator.clipboard.readText()
-          }
-          if (!text) return
-          const sel = ed.getSelection()
-          ed.executeEdits('dsa-paste', [{ range: sel, text, forceMoveMarkers: true }])
-        } catch (err) {
-          console.error('[DSA] paste failed:', err)
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyV, async () => {
+      if (!editable) return
+      try {
+        let text = ''
+        if (window.api && window.api.readClipboardText) {
+          const res = await window.api.readClipboardText()
+          text = res?.success ? res.text : (typeof res === 'string' ? res : '')
+        } else {
+          text = await navigator.clipboard.readText()
+        }
+        if (!text) return
+        const sel = editorRef.current.getSelection()
+        editorRef.current.executeEdits('dsa-paste', [{ range: sel, text, forceMoveMarkers: true }])
+      } catch (err) {
+        console.error('[DSA] paste failed:', err)
+      }
+    })
+
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyC, async () => {
+      const sel = editorRef.current.getSelection()
+      const text = editorRef.current.getModel().getValueInRange(sel)
+      if (text) {
+        if (window.api && window.api.writeClipboardText) {
+          await window.api.writeClipboardText(text)
+        } else {
+          navigator.clipboard.writeText(text).catch(() => {})
         }
       }
     })
 
-    editor.addAction({
-      id: 'dsa.clipboardCopy',
-      label: 'Copy (DSA)',
-      keybindings: [KM.CtrlCmd | KC.KeyC],
-      run: async (ed) => {
-        const sel = ed.getSelection()
-        const text = ed.getModel().getValueInRange(sel)
-        if (text) {
-          if (window.api && window.api.writeClipboardText) {
-            await window.api.writeClipboardText(text)
-          } else {
-            navigator.clipboard.writeText(text).catch(() => {})
-          }
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyX, async () => {
+      if (!editable) return
+      const sel = editorRef.current.getSelection()
+      const text = editorRef.current.getModel().getValueInRange(sel)
+      if (text) {
+        if (window.api && window.api.writeClipboardText) {
+          await window.api.writeClipboardText(text)
+        } else {
+          navigator.clipboard.writeText(text).catch(() => {})
         }
-      }
-    })
-
-    editor.addAction({
-      id: 'dsa.clipboardCut',
-      label: 'Cut (DSA)',
-      keybindings: [KM.CtrlCmd | KC.KeyX],
-      precondition: '!editorReadonly',
-      run: async (ed) => {
-        const sel = ed.getSelection()
-        const text = ed.getModel().getValueInRange(sel)
-        if (text) {
-          if (window.api && window.api.writeClipboardText) {
-            await window.api.writeClipboardText(text)
-          } else {
-            navigator.clipboard.writeText(text).catch(() => {})
-          }
-          ed.executeEdits('dsa-cut', [{ range: sel, text: '', forceMoveMarkers: true }])
-        }
+        editorRef.current.executeEdits('dsa-cut', [{ range: sel, text: '', forceMoveMarkers: true }])
       }
     })
 
