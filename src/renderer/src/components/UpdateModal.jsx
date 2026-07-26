@@ -82,8 +82,8 @@ const UpdateModal = () => {
         
         <p style={messageStyle}>
           {isMacosManual 
-            ? 'A new version of comπle Editor is available on GitHub. Would you like to download it now?'
-            : 'A new version of comπle Editor has been downloaded in the background. Restart the application to apply the updates.'}
+            ? `A new version of comπle Editor is available on GitHub. Would you like to download it now?`
+            : `A new version of comπle Editor ${updateInfo?.version ? `(v${updateInfo.version}) ` : ''}has been downloaded in the background. Restart the application to apply the updates.`}
         </p>
 
         <div style={buttonContainerStyle}>
