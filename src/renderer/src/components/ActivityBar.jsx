@@ -83,6 +83,8 @@ export function ActivityBar({ projectRoot, onShowVisualizer, onShowDsaExplainer,
         const res = await window.api.checkForUpdates()
         if (res.status === 'downloading') {
           window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Downloading update in background...', type: 'info' } }))
+        } else if (res.status === 'downloaded') {
+          window.dispatchEvent(new CustomEvent('show-update-modal'))
         } else if (res.status === 'up-to-date') {
           window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'comπle is up to date.', type: 'success' } }))
         } else if (res.status === 'error') {

@@ -10,6 +10,16 @@ import { electronAPI } from '@electron-toolkit/preload'
 const api = {
   // ── Window Controls ──
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+  installUpdate: () => ipcRenderer.send('install-update'),
+  onUpdateDownloaded: (callback) => {
+    ipcRenderer.removeAllListeners('update-downloaded')
+    ipcRenderer.on('update-downloaded', (_event, data) => callback(data))
+  },
+  onUpdateAvailableMacos: (callback) => {
+    ipcRenderer.removeAllListeners('update-available-macos')
+    ipcRenderer.on('update-available-macos', (_event, url) => callback(url))
+  },
+  openUrl: (url) => ipcRenderer.invoke('open-url', url),
   minimizeWindow: () => ipcRenderer.invoke('window-minimize'),
   maximizeWindow: () => ipcRenderer.invoke('window-maximize-toggle'),
   closeWindow: () => ipcRenderer.invoke('window-close'),

@@ -1841,18 +1841,14 @@ app.whenReady().then(() => {
     createWindow()
 
     // --- Auto Updater Setup ---
+    let isUpdateDownloaded = false
+    
     if (!is.dev) {
       autoUpdater.on('update-downloaded', (info) => {
-        dialog.showMessageBox({
-          type: 'info',
-          title: 'Update Ready',
-          message: 'A new version of comπle Editor has been downloaded. Restart the application to apply the updates.',
-          buttons: ['Restart', 'Later']
-        }).then((result) => {
-          if (result.response === 0) {
-            autoUpdater.quitAndInstall()
-          }
-        })
+        isUpdateDownloaded = true
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('update-downloaded', info)
+        }
       })
       autoUpdater.on('error', (err) => {
         console.error('Auto-updater error:', err)
@@ -1868,16 +1864,9 @@ app.whenReady().then(() => {
             .then(data => {
               const latestVersion = data.tag_name.replace('v', '')
               if (latestVersion !== app.getVersion()) {
-                dialog.showMessageBox({
-                  type: 'info',
-                  title: 'Update Available',
-                  message: `A new version of comπle Editor (${latestVersion}) is available on GitHub. Would you like to download it now?`,
-                  buttons: ['Download', 'Later']
-                }).then((result) => {
-                  if (result.response === 0) {
-                    shell.openExternal(data.html_url)
-                  }
-                })
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                  mainWindow.webContents.send('update-available-macos', data.html_url)
+                }
               }
             }).catch(e => console.error('macOS manual update check failed:', e))
         }
@@ -1886,8 +1875,13 @@ app.whenReady().then(() => {
       }
     }
 
+    ipcMain.on('install-update', () => {
+      autoUpdater.quitAndInstall()
+    })
+
     ipcMain.handle('check-for-updates', async () => {
       if (is.dev) return { status: 'dev' }
+      if (isUpdateDownloaded) return { status: 'downloaded' }
       
       try {
         if (process.platform === 'darwin') {

@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom'
 import { Sidebar } from './components/Sidebar'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { CodeEditor } from './components/CodeEditor'
+import { ThemeManager } from './components/ThemeManager'
+import UpdateModal from './components/UpdateModal'
 import { TerminalPanel } from './components/TerminalPanel'
 import { Resizer } from './components/Resizer'
 import ReactMarkdown from 'react-markdown'
@@ -2243,6 +2245,8 @@ the new code
                       const res = await window.api.checkForUpdates()
                       if (res.status === 'downloading') {
                         window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Downloading update in background...', type: 'info' } }))
+                      } else if (res.status === 'downloaded') {
+                        window.dispatchEvent(new CustomEvent('show-update-modal'))
                       } else if (res.status === 'up-to-date') {
                         window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'comπle is up to date.', type: 'success' } }))
                       } else if (res.status === 'error') {
@@ -3308,6 +3312,7 @@ the new code
           </div>
         )}
       </div>
+      <UpdateModal />
     </div>
   )
 }
