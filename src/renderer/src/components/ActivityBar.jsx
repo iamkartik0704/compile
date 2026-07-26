@@ -77,7 +77,21 @@ export function ActivityBar({ projectRoot, onShowVisualizer, onShowDsaExplainer,
     { label: 'Extensions', shortcut: 'Ctrl+Shift+X', action: () => setActivePanel('extensions') },
     { label: 'Keyboard Shortcuts', shortcut: 'Ctrl+K Ctrl+S', action: () => onOpenFile('settings:shortcuts', 'Keyboard Shortcuts') },
     { type: 'separator' },
-    { label: 'Check for Updates...', action: () => window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'comπle is up to date.', type: 'success' } })) }
+    { label: 'Check for Updates...', action: async () => {
+      window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Checking for updates...', type: 'info' } }))
+      try {
+        const res = await window.api.checkForUpdates()
+        if (res.status === 'downloading') {
+          window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Downloading update in background...', type: 'info' } }))
+        } else if (res.status === 'up-to-date') {
+          window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'comπle is up to date.', type: 'success' } }))
+        } else if (res.status === 'error') {
+          window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Update check failed: ' + res.message, type: 'error' } }))
+        }
+      } catch (e) {
+        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Error checking updates.', type: 'error' } }))
+      }
+    } }
   ]
 
   return (

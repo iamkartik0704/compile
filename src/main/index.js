@@ -1842,33 +1842,74 @@ app.whenReady().then(() => {
 
     // --- Auto Updater Setup ---
     if (!is.dev) {
-      if (process.platform === 'win32') {
-        autoUpdater.on('update-downloaded', (info) => {
-          dialog.showMessageBox({
-            type: 'info',
-            title: 'Update Ready',
-            message: 'A new version of comπle Editor has been downloaded. Restart the application to apply the updates.',
-            buttons: ['Restart', 'Later']
-          }).then((result) => {
-            if (result.response === 0) {
-              autoUpdater.quitAndInstall()
-            }
-          })
+      autoUpdater.on('update-downloaded', (info) => {
+        dialog.showMessageBox({
+          type: 'info',
+          title: 'Update Ready',
+          message: 'A new version of comπle Editor has been downloaded. Restart the application to apply the updates.',
+          buttons: ['Restart', 'Later']
+        }).then((result) => {
+          if (result.response === 0) {
+            autoUpdater.quitAndInstall()
+          }
         })
-        autoUpdater.on('error', (err) => {
-          console.error('Auto-updater error:', err)
-        })
-        // Wrap in try-catch to prevent crashes if update checking fails
-        try {
+      })
+      autoUpdater.on('error', (err) => {
+        console.error('Auto-updater error:', err)
+      })
+      
+      try {
+        if (process.platform === 'win32') {
           autoUpdater.checkForUpdatesAndNotify()
-        } catch (e) {
-          console.error('Failed to check for updates:', e)
+        } else if (process.platform === 'darwin') {
+          // Manual fallback for macOS
+          fetch('https://api.github.com/repos/iamkartik0704/compile/releases/latest')
+            .then(res => res.json())
+            .then(data => {
+              const latestVersion = data.tag_name.replace('v', '')
+              if (latestVersion !== app.getVersion()) {
+                dialog.showMessageBox({
+                  type: 'info',
+                  title: 'Update Available',
+                  message: `A new version of comπle Editor (${latestVersion}) is available on GitHub. Would you like to download it now?`,
+                  buttons: ['Download', 'Later']
+                }).then((result) => {
+                  if (result.response === 0) {
+                    shell.openExternal(data.html_url)
+                  }
+                })
+              }
+            }).catch(e => console.error('macOS manual update check failed:', e))
         }
-      } else if (process.platform === 'darwin') {
-        // Bypass autoUpdater for macOS until the application is code-signed.
-        console.log('macOS auto-updater bypassed: requires code signing.')
+      } catch (e) {
+        console.error('Failed to check for updates on startup:', e)
       }
     }
+
+    ipcMain.handle('check-for-updates', async () => {
+      if (is.dev) return { status: 'dev' }
+      
+      try {
+        if (process.platform === 'darwin') {
+          const res = await fetch('https://api.github.com/repos/iamkartik0704/compile/releases/latest')
+          const data = await res.json()
+          const latestVersion = data.tag_name.replace('v', '')
+          if (latestVersion !== app.getVersion()) {
+            return { status: 'available', version: latestVersion, url: data.html_url }
+          }
+          return { status: 'up-to-date' }
+        } else {
+          const result = await autoUpdater.checkForUpdates()
+          if (result && result.updateInfo && result.updateInfo.version !== app.getVersion()) {
+            return { status: 'downloading', version: result.updateInfo.version }
+          }
+          return { status: 'up-to-date' }
+        }
+      } catch (e) {
+        console.error(e)
+        return { status: 'error', message: e.message }
+      }
+    })
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow()

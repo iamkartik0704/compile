@@ -80,3 +80,18 @@ jobs:
             dist/*.yml
             dist/*.blockmap
             dist/*.app/**/*
+
+  publish-release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: success() && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feature/auto-update' || startsWith(github.ref, 'refs/tags/'))
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish Draft Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          gh release edit v$version --draft=false || true

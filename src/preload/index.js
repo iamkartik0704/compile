@@ -9,6 +9,7 @@ import { electronAPI } from '@electron-toolkit/preload'
 // ============================================================
 const api = {
   // ── Window Controls ──
+  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   minimizeWindow: () => ipcRenderer.invoke('window-minimize'),
   maximizeWindow: () => ipcRenderer.invoke('window-maximize-toggle'),
   closeWindow: () => ipcRenderer.invoke('window-close'),
