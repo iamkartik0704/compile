@@ -389,6 +389,7 @@ body {
 .message-list {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 20px 0;
 }
 
@@ -438,16 +439,34 @@ body {
 .message {
   display: flex;
   gap: 12px;
-  padding: 16px 24px;
+  padding: 12px 24px;
   transition: background var(--duration-fast) var(--ease);
 }
 
 .message:hover {
-  background: var(--bg-hover);
+  background: transparent;
 }
 
+/* User message: boxed like Antigravity — no header, just content in a rounded box */
+.message-user {
+  padding: 8px 24px 8px 12px;
+}
+
+.message-user .message-header {
+  display: none;
+}
+
+.message-user .message-body {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  padding: 12px 16px;
+}
+
+/* AI message: clean, no box */
 .message-assistant {
   background: transparent;
+  padding: 8px 24px 16px;
 }
 
 .message-avatar {
@@ -502,17 +521,19 @@ body {
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 500;
-  color: var(--accent-purple);
-  background: rgba(139, 92, 246, 0.1);
+  color: var(--text-muted);
+  background: var(--bg-elevated);
   padding: 1px 6px;
   border-radius: 3px;
-  border: 1px solid rgba(139, 92, 246, 0.15);
+  border: 1px solid var(--border-base);
 }
 
 .message-content p {
   font-size: 13px;
   color: var(--text-primary);
   line-height: 1.6;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
 }
 
 /* ── Code Block ── */
@@ -637,9 +658,9 @@ body {
 }
 
 .meta-model {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  color: var(--accent-purple);
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  color: var(--text-muted);
 }
 
 .meta-hint {
@@ -969,7 +990,7 @@ body {
   flex-shrink: 0;
   overflow: hidden;
   z-index: 50;
-  font-family: var(--font-base);
+  font-family: var(--font-sans);
 }
 
 .status-left, .status-right {
@@ -1172,4 +1193,206 @@ button.status-item {
 
 .spin {
   animation: spin 1s linear infinite;
+}
+/* -- Cascading Model Menu -- */
+.model-menu-popover {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-base);
+  border-radius: 8px;
+  padding: 4px 0;
+  min-width: 150px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+}
+.model-menu-item {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 12px;
+  cursor: pointer;
+  color: var(--text-primary);
+  font-size: 11.5px;
+}
+.model-menu-item:hover {
+  background: var(--bg-elevated);
+}
+.model-submenu {
+  display: none;
+  position: absolute;
+  right: calc(100% - 4px);
+  bottom: -4px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-base);
+  border-radius: 8px;
+  padding: 4px 0;
+  min-width: 150px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+}
+.model-menu-item:hover > .model-submenu {
+  display: block;
+}
+.model-submenu-item {
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 11.5px;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+.model-submenu-item:not(.disabled):hover {
+  background: var(--bg-elevated);
+}
+
+/* -- Antigravity Composer -- */
+.input-bar {
+  padding: 12px 16px;
+  background: var(--bg-deep);
+  flex-shrink: 0;
+}
+.ag-composer {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-base);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 12px;
+  gap: 8px;
+}
+.ag-composer:focus-within {
+  border-color: var(--border-hover);
+}
+.composer-input-row {
+  display: flex;
+  width: 100%;
+}
+.prompt-input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  resize: none;
+  outline: none;
+  line-height: 1.5;
+  max-height: 200px;
+}
+.prompt-input::placeholder {
+  color: var(--text-muted);
+}
+.composer-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 4px;
+}
+.toolbar-left, .toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.toolbar-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.toolbar-btn:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+.meta-model-selector {
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+.meta-model-selector:hover {
+  background: var(--bg-elevated);
+}
+.send-btn {
+  background: var(--accent-color);
+  color: var(--bg-deep);
+  border: 1px solid var(--accent-color);
+  border-radius: 50%;
+  width: 30px;
+  height: 30px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  filter: brightness(1.1);
+}
+.send-btn:hover:not(:disabled) {
+  filter: brightness(1.2);
+}
+.send-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* -- Context Chips & Autocomplete -- */
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.context-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+.remove-context-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.remove-context-btn:hover {
+  color: var(--text-primary);
+}
+.autocomplete-popover {
+  position: absolute;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-base);
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  min-width: 200px;
+  max-height: 250px;
+  overflow-y: auto;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+}
+.popover-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.popover-item:hover, .popover-item.selected {
+  background: var(--bg-elevated);
+}
+.popover-item-label {
+  font-size: 13px;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.popover-item-desc {
+  font-size: 11px;
+  color: var(--text-muted);
 }

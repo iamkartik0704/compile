@@ -127,7 +127,7 @@ To fully understand the architecture, follow the data when a user types "Hello" 
 2. **Preload (`index.js`)**: intercepts the call and executes `ipcRenderer.invoke('send-ai-prompt', ...)` passing it across the security boundary.
 3. **Main (`index.js`)**: 
    - Receives the IPC call.
-   - Looks up `gemini-pro` in `MODEL_CONFIG` → identifies it as `gemini-2.5-pro` (Google).
+   - Looks up `gemini-pro` in `MODEL_CONFIG` → identifies it as `gemini-3.1-pro` (Google).
    - Looks up `apiKeyCache['google']`.
    - Calls the actual Google Gemini SDK.
    - Listens to the SDK stream. For every chunk of text received, it calls `sender.send('ai-stream-chunk', text)`.

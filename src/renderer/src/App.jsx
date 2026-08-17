@@ -175,28 +175,48 @@ function detectProviderFromKey(key) {
 // ============================================================
 const MODEL_GROUPS = [
   {
-    label: 'Fast',
+    label: 'Auto',
     models: [
-      { id: 'auto', name: 'Auto Mode', badge: 'DEFAULT' },
-      { id: 'gemini-flash', name: 'Gemini Flash', provider: 'google' },
-      { id: 'deepseek-chat', name: 'DeepSeek', provider: 'deepseek' },
-      { id: 'groq-llama-3', name: 'Llama 3.3 (Groq)', provider: 'groq' }
+      { id: 'auto', name: 'Auto Mode', badge: 'DEFAULT' }
     ]
   },
   {
-    label: 'Balanced',
+    label: 'Google Gemini',
+    models: [
+      { id: 'gemini-flash', name: 'Gemini 3.7 Flash', provider: 'google' },
+      { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', provider: 'google' },
+      { id: 'gemini-pro', name: 'Gemini 3.1 Pro', provider: 'google' },
+      { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', provider: 'google' }
+    ]
+  },
+  {
+    label: 'Anthropic',
     models: [
       { id: 'claude-sonnet', name: 'Claude Sonnet', provider: 'anthropic' },
-      { id: 'gemini-pro', name: 'Gemini Pro', provider: 'google' },
-      { id: 'qwen-plus', name: 'Qwen', provider: 'qwen' },
-      { id: 'groq-mixtral', name: 'Mixtral (Groq)', provider: 'groq' }
+      { id: 'claude-opus', name: 'Claude Opus', provider: 'anthropic' }
     ]
   },
   {
-    label: 'Deep Reasoning',
+    label: 'DeepSeek',
     models: [
-      { id: 'claude-opus', name: 'Claude Opus', provider: 'anthropic' },
+      { id: 'deepseek-chat', name: 'DeepSeek', provider: 'deepseek' },
       { id: 'deepseek-r1', name: 'DeepSeek R1', provider: 'deepseek' }
+    ]
+  },
+  {
+    label: 'Groq',
+    models: [
+      { id: 'groq-llama-3', name: 'Llama 3.3 70B', provider: 'groq' },
+      { id: 'groq-llama-70b', name: 'Llama 3 70B', provider: 'groq' },
+      { id: 'groq-llama-8b', name: 'Llama 3 8B', provider: 'groq' },
+      { id: 'groq-mixtral', name: 'Mixtral 8x7B', provider: 'groq' },
+      { id: 'groq-gemma', name: 'Gemma 7B', provider: 'groq' }
+    ]
+  },
+  {
+    label: 'Qwen',
+    models: [
+      { id: 'qwen-plus', name: 'Qwen', provider: 'qwen' }
     ]
   },
   {
@@ -217,6 +237,14 @@ const MODEL_GROUPS = [
 // Flat lookup for display names
 const MODEL_MAP = {}
 MODEL_GROUPS.forEach((g) => g.models.forEach((m) => (MODEL_MAP[m.id] = m)))
+
+// ── Command Registry ──
+const COMMAND_REGISTRY = [
+  { id: 'explain', trigger: 'explain', label: 'Explain Code', desc: 'Explain selection or active file' },
+  { id: 'fix', trigger: 'fix', label: 'Fix Diagnostics', desc: 'Attempt to fix current errors' },
+  { id: 'clear', trigger: 'clear', label: 'Clear Chat', desc: 'Clear the current conversation' },
+  { id: 'model', trigger: 'model', label: 'Switch Model', desc: 'Quick select a different model' }
+]
 
 function App() {
   // ── Chat State ──
@@ -244,17 +272,43 @@ function App() {
   }, [chatHydrated, activeChatId, chatSessions, createChat, setActiveChat])
   const [prompt, setPrompt] = useState('')
   const [attachments, setAttachments] = useState([])
-  const [isStreaming, setIsStreaming] = useState(false)
-  const streamRef = useRef('')
+  const [contextMentions, setContextMentions] = useState([])
 
-  // ── Model State ──
+  const [popoverState, setPopoverState] = useState({
+    isOpen: false,
+    type: null,
+    query: '',
+    x: 0,
+    y: 0,
+    selectedIndex: 0,
+    options: []
+  })
+  const [isStreaming, setIsStreaming] = useState(false)
   const [selectedModel, setSelectedModel] = useState('auto')
+  const [isModelMenuOpen, setIsModelMenuOpen] = useState(false)
+  const [modelMenuRect, setModelMenuRect] = useState(null)
+  const modelMenuBtnRef = useRef(null)
   const [resolvedModel, setResolvedModel] = useState(null)
   const [appVersion, setAppVersion] = useState('')
 
   // ── Multi-Provider API Key State ──
   const [providerKeys, setProviderKeys] = useState({})
-  // e.g. { anthropic: { exists: true, hint: '••••xyz' }, google: { exists: true, hint: '••••abc' } }
+  const [autoDetectedProvider, setAutoDetectedProvider] = useState(null)
+  const [isDetecting, setIsDetecting] = useState(false)
+
+  // System status
+  const [systemInfo, setSystemInfo] = useState({ os: '', electron: '', chrome: '', node: '', arch: '' })
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (!e.target.closest('.meta-model-selector') && !e.target.closest('.model-menu-popover')) {
+        setIsModelMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
   const [selectedProvider, setSelectedProvider] = useState('openai')
   const [apiKeyInput, setApiKeyInput] = useState('')
   const [keySaving, setKeySaving] = useState(false)
@@ -263,7 +317,6 @@ function App() {
   // ── File Explorer State ──
   const [projectRoot, setProjectRoot] = useState(null)
   const [deletingProvider, setDeletingProvider] = useState(null) // which provider is pending delete confirmation
-  const [autoDetectedProvider, setAutoDetectedProvider] = useState(null)
 
   useEffect(() => {
     if (projectRoot) {
@@ -1027,6 +1080,17 @@ the new code
   useEffect(() => {
     window.api.onModelResolved((model) => {
       setResolvedModel(model)
+      const targetSessionId = streamingSessionIdRef.current || useChatStore.getState().activeSessionId;
+      if (targetSessionId) {
+        useChatStore.getState().updateMessages(targetSessionId, (prev) => {
+          const updated = [...prev]
+          const last = updated[updated.length - 1]
+          if (last && last.role === 'assistant') {
+            updated[updated.length - 1] = { ...last, resolvedModel: model }
+          }
+          return updated
+        })
+      }
     })
   }, [])
 
@@ -1430,6 +1494,22 @@ the new code
     const trimmed = isDirectOverride ? directPromptOverride.trim() : prompt.trim()
     if (!trimmed || isStreaming) return
 
+    // Intercept Commands
+    if (!isDirectOverride && trimmed.startsWith('/')) {
+      const parts = trimmed.split(' ')
+      const cmd = parts[0].substring(1).toLowerCase()
+      
+      if (cmd === 'clear') {
+        createChat() // Start a new chat session
+        setPrompt('')
+        setAttachments([])
+        setContextMentions([])
+        return
+      }
+      
+      // Handle other commands later...
+    }
+
     // Reset stream accumulator
     streamRef.current = ''
     setResolvedModel(null)
@@ -1446,12 +1526,14 @@ the new code
     updateChatMessages(currentChatId, (prev) => [
       ...prev,
       { role: 'user', content: trimmed, images: isDirectOverride ? [] : currentAttachments },
-      { role: 'assistant', content: '' }
+      { role: 'assistant', content: '', modelId: selectedModel }
     ])
 
     if (!isDirectOverride) {
       setPrompt('')
       setAttachments([])
+      // Keep contextMentions active? Usually they clear after send
+      setContextMentions([])
     }
 
     setIsStreaming(true)
@@ -1562,13 +1644,155 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
     }
   }
 
-  // ── Handle Enter key ──
+  // ── Autocomplete / Popover Logic ──
+  const textareaRef = useRef(null)
+
+  const getCaretCoordinates = (element, position) => {
+    // Simple mirror div approach for caret positioning
+    const div = document.createElement('div');
+    const style = div.style;
+    const computed = window.getComputedStyle(element);
+    
+    style.whiteSpace = 'pre-wrap';
+    style.wordWrap = 'break-word';
+    style.position = 'absolute';
+    style.visibility = 'hidden';
+    
+    ['fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'paddingTop', 'paddingBottom', 'paddingLeft', 'paddingRight', 'width'].forEach(prop => {
+      style[prop] = computed[prop];
+    });
+    
+    div.textContent = element.value.substring(0, position);
+    
+    const span = document.createElement('span');
+    span.textContent = element.value.substring(position) || '.';
+    div.appendChild(span);
+    
+    document.body.appendChild(div);
+    const coordinates = {
+      top: span.offsetTop + parseInt(computed.borderTopWidth),
+      left: span.offsetLeft + parseInt(computed.borderLeftWidth)
+    };
+    document.body.removeChild(div);
+    return coordinates;
+  }
+
+  const handlePromptChange = (e) => {
+    const val = e.target.value
+    setPrompt(val)
+
+    const caretPos = e.target.selectionStart
+    const textBeforeCaret = val.slice(0, caretPos)
+    
+    // Strict trigger regex: Must be preceded by space or start of line
+    const match = textBeforeCaret.match(/(?:^|\s)(@|\/)([\w\-./]*)$/)
+
+    if (match) {
+      const type = match[1]
+      const query = match[2].toLowerCase()
+      
+      let options = []
+      if (type === '/') {
+        options = COMMAND_REGISTRY.filter(c => c.trigger.includes(query))
+      } else if (type === '@') {
+        // V1: Just map open files (and projectRoot files if we had them loaded, for now just openFiles)
+        const allFiles = editorGroups.flatMap(g => g.openFiles.map(f => f.path))
+        // Deduplicate and map
+        const uniqueFiles = [...new Set(allFiles)].map(path => ({
+          id: path,
+          label: path.split(/[/\\]/).pop(),
+          desc: path
+        }))
+        // Add hardcoded context providers
+        options = [
+          { id: '@selection', label: 'Selection', desc: 'Active editor selection' },
+          { id: '@problems', label: 'Problems', desc: 'Current file diagnostics' },
+          ...uniqueFiles
+        ].filter(opt => opt.label.toLowerCase().includes(query) || opt.id.toLowerCase().includes(query))
+      }
+
+      if (options.length > 0) {
+        const coords = getCaretCoordinates(e.target, caretPos)
+        setPopoverState({
+          isOpen: true,
+          type,
+          query,
+          x: coords.left,
+          // Shift up above the input box roughly
+          y: coords.top - (options.length * 30) - 20, 
+          selectedIndex: 0,
+          options
+        })
+        return
+      }
+    }
+    
+    setPopoverState(prev => prev.isOpen ? { ...prev, isOpen: false } : prev)
+  }
+
+  const applyPopoverSelection = (option) => {
+    if (!option) return
+    
+    const caretPos = textareaRef.current.selectionStart
+    const textBeforeCaret = prompt.slice(0, caretPos)
+    const textAfterCaret = prompt.slice(caretPos)
+    
+    // Find where the trigger started
+    const match = textBeforeCaret.match(/(?:^|\s)(@|\/)([\w\-./]*)$/)
+    if (match) {
+      const triggerIndex = textBeforeCaret.lastIndexOf(match[0]) + (match[0].startsWith(' ') ? 1 : 0)
+      
+      if (popoverState.type === '@') {
+        // Remove the typed @query and add to contextMentions
+        const newTextBefore = textBeforeCaret.slice(0, triggerIndex)
+        setPrompt(newTextBefore + textAfterCaret)
+        setContextMentions(prev => {
+          if (!prev.find(m => m.id === option.id)) {
+            return [...prev, option]
+          }
+          return prev
+        })
+      } else if (popoverState.type === '/') {
+        // Replace the /query with the full command
+        const newTextBefore = textBeforeCaret.slice(0, triggerIndex) + '/' + option.trigger + ' '
+        setPrompt(newTextBefore + textAfterCaret)
+      }
+    }
+    setPopoverState(prev => ({ ...prev, isOpen: false }))
+    textareaRef.current?.focus()
+  }
+
   const handleKeyDown = (e) => {
+    if (popoverState.isOpen) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setPopoverState(prev => ({ ...prev, selectedIndex: (prev.selectedIndex + 1) % prev.options.length }))
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setPopoverState(prev => ({ ...prev, selectedIndex: (prev.selectedIndex - 1 + prev.options.length) % prev.options.length }))
+        return
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        applyPopoverSelection(popoverState.options[popoverState.selectedIndex])
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setPopoverState(prev => ({ ...prev, isOpen: false }))
+        return
+      }
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSend()
     }
   }
+
+
 
   // ── Handle Image Attachment ──
   const fileInputRef = useRef(null)
@@ -2976,23 +3200,16 @@ the new code
                         )}
                         {messages.map((msg, i) => (
                           <div key={i} className={`message message-${msg.role}`}>
-                            <div className="message-avatar">
-                              {msg.role === 'user' ? (
-                                <span className="avatar-user">U</span>
-                              ) : (
-                                <span className="avatar-ai">π</span>
-                              )}
-                            </div>
                             <div className="message-body">
                               <div className="message-header">
                                 <span className="message-sender">
-                                  {msg.role === 'user' ? 'You' : getModelName(resolvedModel || selectedModel)}
+                                  {msg.role === 'user' ? 'You' : (getModelName(msg.resolvedModel || msg.modelId) || 'AI Assistant')}
                                 </span>
-                                {msg.role === 'assistant' && resolvedModel && selectedModel === 'auto' && (
-                                  <span className="auto-badge">Auto → {getModelName(resolvedModel)}</span>
+                                {msg.role === 'assistant' && msg.modelId === 'auto' && msg.resolvedModel && (
+                                  <span className="auto-badge">Auto → {getModelName(msg.resolvedModel)}</span>
                                 )}
                               </div>
-                              <div className="message-content" style={{ overflowX: 'auto' }}>
+                              <div className="message-content">
                                 {msg.role === 'assistant' ? (
                                   renderMessageParts(msg.content + (isStreaming && i === messages.length - 1 ? ' ▌' : '')).map((part, idx) => (
                                     part.type === 'text' ? (
@@ -3091,79 +3308,170 @@ the new code
                         <div ref={chatEndRef} />
                       </div>
 
-                      {/* ── Input Bar ── */}
+                      {/* ── Input Bar (Composer) ── */}
                       <div className="input-bar">
-                        {attachments.length > 0 && (
-                          <div style={{ display: 'flex', gap: '8px', padding: '8px', background: 'var(--bg-dark)', borderBottom: '1px solid var(--border-color)', flexWrap: 'wrap' }}>
-                            {attachments.map((src, idx) => (
-                              <div key={idx} style={{ position: 'relative' }}>
-                                <img src={src} alt="preview" style={{ width: '60px', height: '60px', objectFit: 'cover', borderRadius: '4px', border: '1px solid var(--border-light)' }} />
-                                <button
-                                  onClick={() => removeAttachment(idx)}
-                                  style={{ position: 'absolute', top: '-6px', right: '-6px', background: 'var(--bg-light)', color: 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '50%', width: '20px', height: '20px', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                                >
-                                  ×
-                                </button>
+                        <div className="ag-composer">
+                          {attachments.length > 0 && (
+                            <div className="composer-attachments">
+                              {attachments.map((src, idx) => (
+                                <div key={idx} style={{ position: 'relative' }}>
+                                  <img src={src} alt="preview" style={{ width: '60px', height: '60px', objectFit: 'cover', borderRadius: '4px', border: '1px solid var(--border-light)' }} />
+                                  <button
+                                    onClick={() => removeAttachment(idx)}
+                                    className="remove-attachment-btn"
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {contextMentions.length > 0 && (
+                            <div className="composer-attachments">
+                              {contextMentions.map((mention, idx) => (
+                                <div key={idx} className="context-chip">
+                                  <span style={{opacity: 0.7}}>📄</span> {mention.label}
+                                  <button
+                                    onClick={() => setContextMentions(prev => prev.filter((_, i) => i !== idx))}
+                                    className="remove-context-btn"
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          
+                          <div className="composer-input-row" style={{ position: 'relative' }}>
+                            {popoverState.isOpen && (
+                              <div 
+                                className="autocomplete-popover" 
+                                style={{ top: popoverState.y, left: popoverState.x }}
+                              >
+                                {popoverState.options.map((opt, idx) => (
+                                  <div
+                                    key={opt.id}
+                                    className={`popover-item ${idx === popoverState.selectedIndex ? 'selected' : ''}`}
+                                    onClick={() => applyPopoverSelection(opt)}
+                                  >
+                                    <div className="popover-item-label">{opt.label}</div>
+                                    <div className="popover-item-desc">{opt.desc}</div>
+                                  </div>
+                                ))}
                               </div>
-                            ))}
+                            )}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              multiple
+                              ref={fileInputRef}
+                              onChange={handleFileChange}
+                              style={{ display: 'none' }}
+                            />
+                            <textarea
+                              id="prompt-input"
+                              ref={textareaRef}
+                              className="prompt-input"
+                              value={prompt}
+                              onChange={handlePromptChange}
+                              onKeyDown={handleKeyDown}
+                              onPaste={handlePaste}
+                              placeholder="Ask anything, @ to mention, / for actions"
+                              rows={1}
+                              disabled={isStreaming}
+                            />
                           </div>
-                        )}
-                        <div className="input-wrapper">
-                          <input
-                            type="file"
-                            accept="image/*"
-                            multiple
-                            ref={fileInputRef}
-                            onChange={handleFileChange}
-                            style={{ display: 'none' }}
-                          />
-                          <button
-                            className="attachment-btn"
-                            onClick={() => fileInputRef.current?.click()}
-                            title="Attach Image"
-                            disabled={isStreaming}
-                            style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '0 8px' }}
-                          >
-                            <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" strokeWidth="2" fill="none"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
-                          </button>
-                          <textarea
-                            id="prompt-input"
-                            className="prompt-input"
-                            value={prompt}
-                            onChange={(e) => setPrompt(e.target.value)}
-                            onKeyDown={handleKeyDown}
-                            onPaste={handlePaste}
-                            placeholder="Send a message... (Paste images here)"
-                            rows={1}
-                            disabled={isStreaming}
-                          />
-                          <button
-                            id="send-btn"
-                            className={`send-btn ${isStreaming ? 'streaming' : ''}`}
-                            onClick={handleSend}
-                            disabled={isStreaming || !prompt.trim()}
-                            title="Send (Enter)"
-                          >
-                            {isStreaming ? (
-                              <span className="send-loader"></span>
-                            ) : (
-                              <svg viewBox="0 0 24 24" fill="currentColor">
-                                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
-                              </svg>
-                            )}
-                          </button>
-                        </div>
-                        <div className="input-meta">
-                          <span className="meta-model">
-                            {getModelName(selectedModel)}
-                            {selectedModel === 'auto' && resolvedModel && ` → ${getModelName(resolvedModel)}`}
-                            {selectedModel !== 'auto' && (
-                              <span className={`meta-key-status ${hasKeyForModel(selectedModel) ? 'has-key' : 'no-key'}`}>
-                                {hasKeyForModel(selectedModel) ? ' ✓' : ' ⚠ no key'}
-                              </span>
-                            )}
-                          </span>
-                          <span className="meta-hint">Enter to send · Shift+Enter for new line</span>
+                          
+                          <div className="composer-toolbar">
+                            <div className="toolbar-left">
+                              <button
+                                className="toolbar-btn attachment-btn"
+                                onClick={() => fileInputRef.current?.click()}
+                                title="Attach Image"
+                                disabled={isStreaming}
+                              >
+                                <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                              </button>
+                              <div 
+                                className="meta-model-selector" 
+                                ref={modelMenuBtnRef}
+                                style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: 'var(--text-muted)' }}
+                                onClick={(e) => {
+                                  if (!isStreaming) {
+                                    if (!isModelMenuOpen && modelMenuBtnRef.current) {
+                                      setModelMenuRect(modelMenuBtnRef.current.getBoundingClientRect());
+                                    }
+                                    setIsModelMenuOpen(!isModelMenuOpen);
+                                  }
+                                }}
+                              >
+                                <span className="meta-model" style={{ color: 'inherit' }}>
+                                  {getModelName(selectedModel)}
+                                  {selectedModel === 'auto' && resolvedModel && ` → ${getModelName(resolvedModel)}`}
+                                </span>
+                                <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none"><polyline points="18 15 12 9 6 15"></polyline></svg>
+                                
+                                {isModelMenuOpen && modelMenuRect && createPortal(
+                                  <div className="model-menu-popover" style={{
+                                    position: 'fixed',
+                                    bottom: window.innerHeight - modelMenuRect.top + 8,
+                                    left: modelMenuRect.left,
+                                    zIndex: 100000
+                                  }}>
+                                    {MODEL_GROUPS.map((group) => {
+                                      const validModels = group.models.filter(m => !m.provider || providerKeys[m.provider]?.exists);
+                                      if (validModels.length === 0) return null;
+                                      return (
+                                      <div key={group.label} className="model-menu-item">
+                                        <span>{group.label}</span>
+                                        <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none">
+                                          <polyline points="9 18 15 12 9 6"></polyline>
+                                        </svg>
+                                        <div className="model-submenu">
+                                          {validModels.map(m => (
+                                            <div 
+                                              key={m.id} 
+                                              className={`model-submenu-item ${selectedModel === m.id ? 'active' : ''}`}
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setSelectedModel(m.id);
+                                                setIsModelMenuOpen(false);
+                                              }}
+                                            >
+                                              {m.id === 'custom' ? (customName || 'Custom Model') : m.name}
+                                              {m.badge ? ` (${m.badge})` : ''}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                      );
+                                    })}
+                                  </div>,
+                                  document.body
+                                )}
+                              </div>
+                            </div>
+                            
+                            <div className="toolbar-right">
+
+                              <button
+                                id="send-btn"
+                                className={`send-btn ${isStreaming ? 'streaming' : ''}`}
+                                onClick={handleSend}
+                                disabled={isStreaming || !prompt.trim()}
+                                title="Send (Enter)"
+                              >
+                                {isStreaming ? (
+                                  <span className="send-loader"></span>
+                                ) : (
+                                  <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+                                    <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+                                  </svg>
+                                )}
+                              </button>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>

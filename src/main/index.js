@@ -85,12 +85,22 @@ function resolveAutoMode(prompt) {
 const MODEL_CONFIG = {
   'gemini-flash': {
     provider: 'google',
-    apiModel: 'gemini-2.5-flash',
+    apiModel: 'gemini-3.7-flash',
+    type: 'gemini'
+  },
+  'gemini-1.5-flash': {
+    provider: 'google',
+    apiModel: 'gemini-1.5-flash',
     type: 'gemini'
   },
   'gemini-pro': {
     provider: 'google',
-    apiModel: 'gemini-2.5-pro',
+    apiModel: 'gemini-3.1-pro-preview',
+    type: 'gemini'
+  },
+  'gemini-1.5-pro': {
+    provider: 'google',
+    apiModel: 'gemini-1.5-pro',
     type: 'gemini'
   },
   'claude-sonnet': {
@@ -124,6 +134,24 @@ const MODEL_CONFIG = {
   'groq-llama-3': {
     provider: 'groq',
     apiModel: 'llama-3.3-70b-versatile',
+    type: 'openai-compatible',
+    baseURL: 'https://api.groq.com/openai/v1'
+  },
+  'groq-llama-8b': {
+    provider: 'groq',
+    apiModel: 'llama3-8b-8192',
+    type: 'openai-compatible',
+    baseURL: 'https://api.groq.com/openai/v1'
+  },
+  'groq-llama-70b': {
+    provider: 'groq',
+    apiModel: 'llama3-70b-8192',
+    type: 'openai-compatible',
+    baseURL: 'https://api.groq.com/openai/v1'
+  },
+  'groq-gemma': {
+    provider: 'groq',
+    apiModel: 'gemma-7b-it',
     type: 'openai-compatible',
     baseURL: 'https://api.groq.com/openai/v1'
   },
