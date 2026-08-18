@@ -436,6 +436,16 @@ async function routeToProvider(modelId, prompt, sender, fullConfig = {}) {
       userFriendlyError = `Billing/quota issue with your "${config.provider}" account. Check your API plan.`
     } else if (errorMessage.includes('ENOTFOUND') || errorMessage.includes('ECONNREFUSED') || errorMessage.includes('fetch failed')) {
       userFriendlyError = `Network error — cannot reach "${config.provider}" API. Check your internet connection.`
+    } else if (errorMessage.includes('503') || errorMessage.includes('overloaded') || errorMessage.includes('high demand') || errorMessage.includes('Service Unavailable')) {
+      userFriendlyError = `API Overloaded: "${config.provider}" is currently experiencing high demand. Please try again later.`
+    } else if (errorMessage.includes('500') || errorMessage.includes('502')) {
+      userFriendlyError = `Server Error: The "${config.provider}" API is currently down or unresponsive.`
+    } else {
+      userFriendlyError = errorMessage.replace(/\[.*?Error\]:\s*/ig, '')
+                                      .replace(/Error fetching from https?:\/\/[^\s]+:\s*/ig, '')
+                                      .replace(/\[\d{3}.*?\]\s*/ig, '')
+                                      .trim()
+      if (!userFriendlyError) userFriendlyError = 'An unknown API error occurred.'
     }
 
     sender.send(emitEvent, `\n// ❌ Error: ${userFriendlyError}\n`)

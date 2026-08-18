@@ -374,50 +374,71 @@ function App() {
   }
 
   const [shareLoading, setShareLoading] = useState(false)
-  const shareChatLive = async () => {
+  const [shareModal, setShareModal] = useState({ isOpen: false, mode: '', data: null, error: null })
+
+  const handleOpenShare = () => {
     if (!activeSession) return
-    const storedToken = localStorage.getItem(`share_token_${activeChatId}`)
-    
-    if (storedToken) {
-      if (window.confirm("This chat is currently shared. Do you want to revoke the public link?")) {
-        setShareLoading(true)
-        const { error } = await supabase.rpc('revoke_shared_chat', { chat_id: activeChatId, token: storedToken })
-        setShareLoading(false)
-        if (!error) {
-          localStorage.removeItem(`share_token_${activeChatId}`)
-          alert("Share link revoked successfully.")
-        } else {
-          alert("Failed to revoke share link.")
-        }
-      }
-      return
+    let storedObj = null
+    try {
+      storedObj = JSON.parse(localStorage.getItem(`share_info_${activeChatId}`))
+    } catch(e) {}
+
+    // Cleanup old bugged token from previous version
+    if (!storedObj && localStorage.getItem(`share_token_${activeChatId}`)) {
+      localStorage.removeItem(`share_token_${activeChatId}`)
     }
 
-    if (!window.confirm("This chat will be publicly visible to anyone with the link. Continue?")) return
-    
+    if (storedObj) {
+      setShareModal({ isOpen: true, mode: 'confirm-revoke', data: storedObj, error: null })
+    } else {
+      setShareModal({ isOpen: true, mode: 'confirm-share', data: null, error: null })
+    }
+  }
+
+  const handleConfirmShare = async () => {
     const markdown = formatChatAsMarkdown(activeSession)
     if (!markdown) return
     if (markdown.length > 500000) {
-      alert("Chat is too large to share (max 500KB).")
+      setShareModal(prev => ({ ...prev, error: "Chat is too large to share (max 500KB)." }))
       return
     }
 
     setShareLoading(true)
+    setShareModal(prev => ({ ...prev, error: null }))
     const { data, error } = await supabase.rpc('share_chat_limited', { chat_content: markdown })
     setShareLoading(false)
 
     if (error) {
-      alert("Failed to share chat: " + error.message)
+      setShareModal(prev => ({ ...prev, error: "Failed to share chat: " + error.message }))
       return
     }
 
     if (data && data.id && data.delete_token) {
-      localStorage.setItem(`share_token_${activeChatId}`, data.delete_token)
-      const shareUrl = `https://compile.dev/share/${data.id}`
-      navigator.clipboard.writeText(shareUrl)
-      alert(`Chat shared! Link copied to clipboard:\n${shareUrl}`)
+      localStorage.setItem(`share_info_${activeChatId}`, JSON.stringify(data))
+      setShareModal({ isOpen: true, mode: 'shared-success', data, error: null })
     }
   }
+
+  const handleConfirmRevoke = async () => {
+    const { data } = shareModal
+    if (!data || !data.id || !data.delete_token) return
+
+    setShareLoading(true)
+    setShareModal(prev => ({ ...prev, error: null }))
+    const { error, data: returnedData } = await supabase.rpc('revoke_shared_chat', { chat_id: data.id, token: data.delete_token })
+    setShareLoading(false)
+
+    if (error) {
+      setShareModal(prev => ({ ...prev, error: "Failed to revoke: " + error.message }))
+      return
+    }
+
+    localStorage.removeItem(`share_info_${activeChatId}`)
+    setShareModal({ isOpen: false, mode: '', data: null, error: null })
+    window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Share link revoked successfully.', type: 'success' } }))
+  }
+
+  const closeShareModal = () => setShareModal({ isOpen: false, mode: '', data: null, error: null })
 
   const streamingSessionIdRef = useRef(null)
 
@@ -3435,12 +3456,12 @@ the new code
                           <Download size={15} />
                         </button>
                         <button 
-                          onClick={shareChatLive}
+                          onClick={handleOpenShare}
                           disabled={shareLoading}
-                          title={localStorage.getItem(`share_token_${activeChatId}`) ? "Revoke Share" : "Live Share"}
-                          style={{ background: 'transparent', border: 'none', color: localStorage.getItem(`share_token_${activeChatId}`) ? 'var(--accent-green, #34d399)' : 'var(--text-muted)', cursor: shareLoading ? 'wait' : 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', transition: 'all 0.2s ease', opacity: shareLoading ? 0.5 : 1 }}
+                          title={localStorage.getItem(`share_info_${activeChatId}`) ? "Revoke Share" : "Live Share"}
+                          style={{ background: 'transparent', border: 'none', color: localStorage.getItem(`share_info_${activeChatId}`) ? 'var(--accent-green, #34d399)' : 'var(--text-muted)', cursor: shareLoading ? 'wait' : 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', transition: 'all 0.2s ease', opacity: shareLoading ? 0.5 : 1 }}
                           onMouseEnter={(e) => { if (!shareLoading) { e.currentTarget.style.background = 'var(--bg-hover)'; e.currentTarget.style.color = 'var(--text-main)'; } }}
-                          onMouseLeave={(e) => { if (!shareLoading) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = localStorage.getItem(`share_token_${activeChatId}`) ? 'var(--accent-green, #34d399)' : 'var(--text-muted)'; } }}
+                          onMouseLeave={(e) => { if (!shareLoading) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = localStorage.getItem(`share_info_${activeChatId}`) ? 'var(--accent-green, #34d399)' : 'var(--text-muted)'; } }}
                         >
                           <Share2 size={15} />
                         </button>
@@ -3926,6 +3947,53 @@ the new code
           </div>
         )}
       </div>
+
+      {/* Share Modal */}
+      {shareModal.isOpen && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0, 0, 0, 0.6)', backdropFilter: 'blur(4px)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999, animation: 'fadeIn 0.2s ease-out' }}>
+          <div style={{ backgroundColor: 'var(--bg-surface, #1e1e1e)', border: '1px solid var(--border-base, #333)', borderRadius: '12px', padding: '24px', width: '100%', maxWidth: '400px', boxShadow: '0 10px 30px rgba(0,0,0,0.5)', display: 'flex', flexDirection: 'column' }}>
+            <h2 style={{ margin: '0 0 16px 0', color: 'var(--text-primary)', fontSize: '1.25rem', fontWeight: '600' }}>
+              {shareModal.mode === 'confirm-share' ? 'Live Share Chat' : shareModal.mode === 'confirm-revoke' ? 'Revoke Public Link' : 'Chat Shared!'}
+            </h2>
+            
+            <div style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', lineHeight: '1.5', marginBottom: '24px' }}>
+              {shareModal.mode === 'confirm-share' && "This chat will be publicly visible to anyone with the link. Continue?"}
+              {shareModal.mode === 'confirm-revoke' && "This chat is currently shared. Do you want to revoke the public link?"}
+              {shareModal.mode === 'shared-success' && (
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', background: 'var(--bg-input)', padding: '8px 12px', borderRadius: '6px', border: '1px solid var(--border-base)' }}>
+                  <input type="text" readOnly value={`https://kartikchawla.in/share/${shareModal.data.id}`} style={{ flex: 1, background: 'transparent', border: 'none', color: 'var(--text-main)', outline: 'none', fontSize: '0.9rem' }} />
+                  <CopyButton textToCopy={`https://kartikchawla.in/share/${shareModal.data.id}`} />
+                </div>
+              )}
+              {shareModal.error && <div style={{ color: 'var(--accent-red, #f87171)', marginTop: '12px', fontSize: '0.85rem' }}>{shareModal.error}</div>}
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+              {shareModal.mode !== 'shared-success' && (
+                <button onClick={closeShareModal} style={{ padding: '8px 16px', borderRadius: '6px', fontSize: '0.9rem', fontWeight: '500', cursor: 'pointer', border: '1px solid var(--border-base)', backgroundColor: 'transparent', color: 'var(--text-secondary)' }}>
+                  Cancel
+                </button>
+              )}
+              {shareModal.mode === 'confirm-share' && (
+                <button onClick={handleConfirmShare} disabled={shareLoading} style={{ padding: '8px 16px', borderRadius: '6px', fontSize: '0.9rem', fontWeight: '500', cursor: shareLoading ? 'wait' : 'pointer', border: 'none', backgroundColor: 'var(--accent-color, #007acc)', color: 'var(--accent-text, #fff)', opacity: shareLoading ? 0.7 : 1 }}>
+                  {shareLoading ? 'Sharing...' : 'Share Chat'}
+                </button>
+              )}
+              {shareModal.mode === 'confirm-revoke' && (
+                <button onClick={handleConfirmRevoke} disabled={shareLoading} style={{ padding: '8px 16px', borderRadius: '6px', fontSize: '0.9rem', fontWeight: '500', cursor: shareLoading ? 'wait' : 'pointer', border: 'none', backgroundColor: 'var(--accent-red, #e11d48)', color: '#fff', opacity: shareLoading ? 0.7 : 1 }}>
+                  {shareLoading ? 'Revoking...' : 'Revoke'}
+                </button>
+              )}
+              {shareModal.mode === 'shared-success' && (
+                <button onClick={closeShareModal} style={{ padding: '8px 16px', borderRadius: '6px', fontSize: '0.9rem', fontWeight: '500', cursor: 'pointer', border: 'none', backgroundColor: 'var(--accent-color, #007acc)', color: 'var(--accent-text, #fff)' }}>
+                  Done
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <UpdateModal />
     </div>
   )
