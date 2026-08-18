@@ -1107,8 +1107,12 @@ the new code
 
   // ── Auto-scroll chat ──
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+    if (rightPanel === 'chat') {
+      setTimeout(() => {
+        chatEndRef.current?.scrollIntoView({ behavior: 'auto' })
+      }, 50)
+    }
+  }, [messages, rightPanel, activeChatId])
 
   const pendingChordRef = useRef([])
   const [currentChordDisplay, setCurrentChordDisplay] = useState('')
