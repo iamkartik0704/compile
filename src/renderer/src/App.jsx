@@ -3295,36 +3295,17 @@ the new code
                                             return !inline && match ? (
                                               <div className="code-block-wrapper" style={{ position: 'relative', marginTop: '10px', marginBottom: '10px' }}>
                                                 <button
-                                                  className="apply-code-btn"
-                                                  title="Apply to Editor"
+                                                  className="copy-code-btn"
+                                                  title="Copy to Clipboard"
                                                   onClick={() => {
-                                                    if (activeFile) {
-                                                      window.dispatchEvent(new CustomEvent('apply-code', {
-                                                        detail: {
-                                                          code: String(children).replace(/\n$/, ''),
-                                                          path: activeFile
-                                                        }
-                                                      }))
-                                                    }
-                                                  }}
-                                                  style={{
-                                                    position: 'absolute',
-                                                    top: '8px',
-                                                    right: '8px',
-                                                    background: 'var(--bg-accent)',
-                                                    color: 'var(--text-main)',
-                                                    border: '1px solid var(--border-light)',
-                                                    borderRadius: '4px',
-                                                    padding: '4px 8px',
-                                                    fontSize: '12px',
-                                                    cursor: 'pointer',
-                                                    zIndex: 10
+                                                    const textToCopy = String(children).replace(/\n$/, '');
+                                                    navigator.clipboard.writeText(textToCopy);
                                                   }}
                                                 >
-                                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14" style={{ verticalAlign: 'middle', marginRight: '4px' }}>
-                                                    <path d="M5 13l4 4L19 7" />
+                                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
+                                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                                                   </svg>
-                                                  Apply
                                                 </button>
                                                 <SyntaxHighlighter
                                                   {...props}
@@ -3332,7 +3313,9 @@ the new code
                                                   style={vscDarkPlus}
                                                   language={match[1]}
                                                   PreTag="div"
-                                                  customStyle={{ margin: 0, borderRadius: '6px' }}
+                                                  wrapLines={true}
+                                                  wrapLongLines={true}
+                                                  customStyle={{ margin: 0, borderRadius: '6px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
                                                 />
                                               </div>
                                             ) : (
@@ -3430,12 +3413,19 @@ the new code
                             <div className="composer-attachments">
                               {fileAttachments.map((file, idx) => (
                                 <div key={idx} className="context-chip">
-                                  <span style={{opacity: 0.7}}>📎</span> {file.name}
+                                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.8 }}>
+                                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
+                                  </svg>
+                                  {file.name}
                                   <button
                                     onClick={() => setFileAttachments(prev => prev.filter((_, i) => i !== idx))}
                                     className="remove-context-btn"
+                                    title="Remove attachment"
                                   >
-                                    ×
+                                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                      <line x1="18" y1="6" x2="6" y2="18"></line>
+                                      <line x1="6" y1="6" x2="18" y2="18"></line>
+                                    </svg>
                                   </button>
                                 </div>
                               ))}

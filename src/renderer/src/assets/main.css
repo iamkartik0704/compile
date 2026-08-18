@@ -1343,26 +1343,36 @@ button.status-item {
 .context-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   background: var(--bg-elevated);
   border: 1px solid var(--border-light);
-  border-radius: 4px;
-  padding: 4px 8px;
+  border-radius: 6px;
+  padding: 6px 12px;
   font-size: 12px;
+  font-weight: 500;
   color: var(--text-primary);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  transition: all 0.2s ease;
+}
+.context-chip:hover {
+  background: var(--bg-input);
+  border-color: rgba(255, 255, 255, 0.2);
 }
 .remove-context-btn {
   background: transparent;
   border: none;
   color: var(--text-muted);
   cursor: pointer;
-  padding: 0;
+  padding: 2px;
   display: flex;
   align-items: center;
   justify-content: center;
+  border-radius: 50%;
+  transition: all 0.2s ease;
 }
 .remove-context-btn:hover {
-  color: var(--text-primary);
+  background: rgba(255,255,255,0.1);
+  color: #ff5555;
 }
 .autocomplete-popover {
   position: absolute;
@@ -1396,3 +1406,38 @@ button.status-item {
   font-size: 11px;
   color: var(--text-muted);
 }
+
+/* Code block copy button */
+.code-block-wrapper:hover .copy-code-btn {
+  opacity: 1;
+}
+
+.copy-code-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-base);
+  color: var(--text-muted);
+  padding: 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  opacity: 0;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+.copy-code-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-light);
+}
+
+.copy-code-btn:active {
+  transform: scale(0.95);
+}
+
