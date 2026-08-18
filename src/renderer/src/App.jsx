@@ -1314,9 +1314,22 @@ the new code
       default:
         if (id.startsWith('edit.') || id.startsWith('ai.') || id.startsWith('nav.')) {
           const activeEl = document.activeElement;
-          if (activeEl && activeEl.closest && (activeEl.closest('.postman-view') || activeEl.closest('.dsa-explainer-overlay'))) {
-            return false;
+          
+          if (activeEl && activeEl.closest) {
+            // Ignore if we are inside special views or the AI chat panel (right-pane)
+            if (activeEl.closest('.postman-view') || activeEl.closest('.dsa-explainer-overlay') || activeEl.closest('.right-pane')) {
+              return false;
+            }
           }
+
+          // Global fallback: if the user has text selected outside of Monaco/Terminal and hits copy/cut,
+          // let the browser handle it natively so they can copy text from the UI.
+          if ((id === 'edit.copy' || id === 'edit.cut') && window.getSelection().toString() !== '') {
+            if (activeEl && !activeEl.classList.contains('inputarea') && !activeEl.classList.contains('xterm-helper-textarea')) {
+              return false;
+            }
+          }
+
           window.dispatchEvent(new CustomEvent('editor-action', { detail: id }))
           return true
         }
