@@ -3288,12 +3288,33 @@ the new code
                         {messages.map((msg, i) => (
                           <div key={i} className={`message message-${msg.role}`}>
                             <div className="message-body">
-                              <div className="message-header">
-                                <span className="message-sender">
-                                  {msg.role === 'user' ? 'You' : (getModelName(msg.resolvedModel || msg.modelId) || 'AI Assistant')}
-                                </span>
-                                {msg.role === 'assistant' && msg.modelId === 'auto' && msg.resolvedModel && (
-                                  <span className="auto-badge">Auto → {getModelName(msg.resolvedModel)}</span>
+                              <div className="message-header" style={{ justifyContent: 'space-between' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <span className="message-sender">
+                                    {msg.role === 'user' ? 'You' : (getModelName(msg.resolvedModel || msg.modelId) || 'AI Assistant')}
+                                  </span>
+                                  {msg.role === 'assistant' && msg.modelId === 'auto' && msg.resolvedModel && (
+                                    <span className="auto-badge">Auto → {getModelName(msg.resolvedModel)}</span>
+                                  )}
+                                </div>
+                                {msg.role === 'assistant' && (
+                                  <button
+                                    className="copy-msg-btn"
+                                    title="Copy Response"
+                                    onClick={() => navigator.clipboard.writeText(msg.content)}
+                                    style={{
+                                      background: 'transparent', border: 'none', color: 'var(--text-muted)',
+                                      cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center',
+                                      justifyContent: 'center', borderRadius: '4px', transition: 'all 0.2s ease'
+                                    }}
+                                    onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.background = 'var(--bg-hover)'; }}
+                                    onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'transparent'; }}
+                                  >
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
+                                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                    </svg>
+                                  </button>
                                 )}
                               </div>
                               <div className="message-content">
