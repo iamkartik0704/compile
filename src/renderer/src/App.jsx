@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { Sidebar } from './components/Sidebar'
 import { ErrorBoundary } from './components/ErrorBoundary'
@@ -1106,11 +1106,9 @@ the new code
   }, [])
 
   // ── Auto-scroll chat ──
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (rightPanel === 'chat') {
-      setTimeout(() => {
-        chatEndRef.current?.scrollIntoView({ behavior: 'auto' })
-      }, 50)
+      chatEndRef.current?.scrollIntoView({ behavior: 'auto' })
     }
   }, [messages, rightPanel, activeChatId])
 
