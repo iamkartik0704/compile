@@ -10,7 +10,7 @@ import ReactMarkdown from 'react-markdown'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { applyDiff, unescapeXml } from './diffUtils'
-import { Plus, Play, Bug, Maximize2, Minimize2, Trash2, CheckCircle, Circle, RefreshCw, Command, ChevronRight, ChevronDown, File, Code, Cpu, Activity, Info, LogOut, ArrowRight, X, Search, Settings, User, LayoutGrid, PanelLeft, PanelBottom, PanelRight, Square, Minus, Terminal, Key, ShieldCheck, Sparkles, Folder, GitBranch } from 'lucide-react'
+import { Plus, Play, Bug, Maximize2, Minimize2, Trash2, CheckCircle, Circle, RefreshCw, Command, ChevronRight, ChevronDown, File, Code, Cpu, Activity, Info, LogOut, ArrowRight, X, Search, Settings, User, LayoutGrid, PanelLeft, PanelBottom, PanelRight, Square, Minus, Terminal, Key, ShieldCheck, Sparkles, Folder, GitBranch, Download, Share2 } from 'lucide-react'
 import { getEnclosingScope } from './utils/astParser'
 import { CodebaseVisualizer } from './components/CodebaseVisualizer'
 import { DSAExplainer } from './components/DSAExplainer'
@@ -342,6 +342,82 @@ function App() {
 
   const activeSession = chatSessions.find(s => s.id === activeChatId)
   const messages = activeSession?.messages || []
+
+  const formatChatAsMarkdown = (session) => {
+    if (!session || !session.messages || session.messages.length === 0) return null
+
+    let markdown = `# ${session.title}\n\n`
+    session.messages.forEach(msg => {
+      const roleName = msg.role === 'user' ? 'User' : 'Assistant'
+      markdown += `### ${roleName}\n\n`
+      
+      if (msg.files && msg.files.length > 0) {
+        markdown += `*Attached Files:* ${msg.files.map(f => `\`${f.name}\``).join(', ')}\n\n`
+      }
+      if (msg.images && msg.images.length > 0) {
+        markdown += `*Attached Images:* ${msg.images.length} image(s)\n\n`
+      }
+
+      markdown += `${msg.content}\n\n---\n\n`
+    })
+    return markdown
+  }
+
+  const exportChatAsMarkdown = async () => {
+    const markdown = formatChatAsMarkdown(activeSession)
+    if (!markdown) return
+
+    const defaultFilename = `${activeSession.title.replace(/[^a-z0-9]/gi, '-').toLowerCase()}-${Date.now()}.md`
+    if (window.api && window.api.exportChat) {
+      await window.api.exportChat(defaultFilename, markdown)
+    }
+  }
+
+  const [shareLoading, setShareLoading] = useState(false)
+  const shareChatLive = async () => {
+    if (!activeSession) return
+    const storedToken = localStorage.getItem(`share_token_${activeChatId}`)
+    
+    if (storedToken) {
+      if (window.confirm("This chat is currently shared. Do you want to revoke the public link?")) {
+        setShareLoading(true)
+        const { error } = await supabase.rpc('revoke_shared_chat', { chat_id: activeChatId, token: storedToken })
+        setShareLoading(false)
+        if (!error) {
+          localStorage.removeItem(`share_token_${activeChatId}`)
+          alert("Share link revoked successfully.")
+        } else {
+          alert("Failed to revoke share link.")
+        }
+      }
+      return
+    }
+
+    if (!window.confirm("This chat will be publicly visible to anyone with the link. Continue?")) return
+    
+    const markdown = formatChatAsMarkdown(activeSession)
+    if (!markdown) return
+    if (markdown.length > 500000) {
+      alert("Chat is too large to share (max 500KB).")
+      return
+    }
+
+    setShareLoading(true)
+    const { data, error } = await supabase.rpc('share_chat_limited', { chat_content: markdown })
+    setShareLoading(false)
+
+    if (error) {
+      alert("Failed to share chat: " + error.message)
+      return
+    }
+
+    if (data && data.id && data.delete_token) {
+      localStorage.setItem(`share_token_${activeChatId}`, data.delete_token)
+      const shareUrl = `https://compile.dev/share/${data.id}`
+      navigator.clipboard.writeText(shareUrl)
+      alert(`Chat shared! Link copied to clipboard:\n${shareUrl}`)
+    }
+  }
 
   const streamingSessionIdRef = useRef(null)
 
@@ -3347,6 +3423,26 @@ the new code
                           onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)'; }}
                         >
                           <Trash2 size={15} />
+                        </button>
+                        <div style={{ width: '1px', height: '16px', background: 'var(--border-base)', margin: '0 4px' }} />
+                        <button 
+                          onClick={exportChatAsMarkdown}
+                          title="Export as Markdown"
+                          style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', transition: 'all 0.2s ease' }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-hover)'; e.currentTarget.style.color = 'var(--text-main)'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)'; }}
+                        >
+                          <Download size={15} />
+                        </button>
+                        <button 
+                          onClick={shareChatLive}
+                          disabled={shareLoading}
+                          title={localStorage.getItem(`share_token_${activeChatId}`) ? "Revoke Share" : "Live Share"}
+                          style={{ background: 'transparent', border: 'none', color: localStorage.getItem(`share_token_${activeChatId}`) ? 'var(--accent-green, #34d399)' : 'var(--text-muted)', cursor: shareLoading ? 'wait' : 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', transition: 'all 0.2s ease', opacity: shareLoading ? 0.5 : 1 }}
+                          onMouseEnter={(e) => { if (!shareLoading) { e.currentTarget.style.background = 'var(--bg-hover)'; e.currentTarget.style.color = 'var(--text-main)'; } }}
+                          onMouseLeave={(e) => { if (!shareLoading) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = localStorage.getItem(`share_token_${activeChatId}`) ? 'var(--accent-green, #34d399)' : 'var(--text-muted)'; } }}
+                        >
+                          <Share2 size={15} />
                         </button>
                       </div>
                       {/* ── Message List ── */}

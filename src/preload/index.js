@@ -116,6 +116,7 @@ const api = {
    */
   sendAIPrompt: (prompt, config) => ipcRenderer.invoke('send-ai-prompt', prompt, config),
   extractFileText: (filePath) => ipcRenderer.invoke('extract-file-text', filePath),
+  exportChat: (filename, content) => ipcRenderer.invoke('export-chat', filename, content),
   selectFilesForChat: () => ipcRenderer.invoke('select-files-for-chat'),
   readImageBase64: (filePath) => ipcRenderer.invoke('read-image-base64', filePath),
 

@@ -896,6 +896,23 @@ ipcMain.handle('window-is-maximized', (event) => BrowserWindow.fromWebContents(e
     }
   })
 
+  ipcMain.handle('export-chat', async (_event, defaultFilename, content) => {
+    try {
+      const { canceled, filePath } = await dialog.showSaveDialog({
+        defaultPath: require('path').join(app.getPath('downloads'), defaultFilename),
+        filters: [{ name: 'Markdown', extensions: ['md'] }],
+        title: 'Export Chat'
+      })
+      if (canceled || !filePath) return { success: false, canceled: true }
+
+      await fsPromises.writeFile(filePath, content, 'utf-8')
+      return { success: true, filePath }
+    } catch (error) {
+      console.error('Error exporting chat:', error)
+      return { success: false, error: error.message }
+    }
+  })
+
   // ============================================================
   // LANGUAGE SERVER PROTOCOL (LSP) — Multi-language
   // ============================================================
