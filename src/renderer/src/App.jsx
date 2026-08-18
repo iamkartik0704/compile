@@ -255,6 +255,80 @@ const COMMAND_REGISTRY = [
   { id: 'model', trigger: 'model', label: 'Switch Model', desc: 'Quick select a different model' }
 ]
 
+// ── CopyButton Component ──
+function CopyButton({ textToCopy, className, style, title = "Copy to Clipboard" }) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(textToCopy)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  return (
+    <button
+      className={className}
+      title={copied ? "Copied!" : title}
+      onClick={handleCopy}
+      style={{ ...style, position: 'relative' }}
+      onMouseEnter={(e) => { 
+        if (!copied && (!className || !className.includes('copy-code-btn'))) {
+          e.currentTarget.style.color = 'var(--text-primary)'; 
+          e.currentTarget.style.background = 'var(--bg-hover)'; 
+        }
+      }}
+      onMouseLeave={(e) => { 
+        if (!className || !className.includes('copy-code-btn')) {
+          e.currentTarget.style.color = 'var(--text-muted)'; 
+          e.currentTarget.style.background = 'transparent'; 
+        }
+      }}
+    >
+      {copied ? (
+        <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent-green, #34d399)" strokeWidth="2" width="14" height="14">
+          <polyline points="20 6 9 17 4 12"></polyline>
+        </svg>
+      ) : (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+        </svg>
+      )}
+      {copied && (
+        <span style={{
+          position: 'absolute',
+          bottom: '100%',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          marginBottom: '6px',
+          background: 'var(--bg-elevated)',
+          color: 'var(--text-bright)',
+          fontSize: '11px',
+          padding: '4px 8px',
+          borderRadius: '4px',
+          border: '1px solid var(--border-base)',
+          pointerEvents: 'none',
+          whiteSpace: 'nowrap',
+          boxShadow: '0 4px 6px rgba(0,0,0,0.3)',
+          zIndex: 100,
+          fontFamily: 'var(--font-sans)',
+          fontWeight: 500
+        }}>
+          Copied!
+          <span style={{
+            position: 'absolute', top: '100%', left: '50%', transform: 'translateX(-50%)',
+            borderWidth: '4px', borderStyle: 'solid', borderColor: 'var(--border-base) transparent transparent transparent'
+          }}></span>
+          <span style={{
+            position: 'absolute', top: '100%', left: '50%', transform: 'translateX(-50%)', marginTop: '-1px',
+            borderWidth: '4px', borderStyle: 'solid', borderColor: 'var(--bg-elevated) transparent transparent transparent'
+          }}></span>
+        </span>
+      )}
+    </button>
+  )
+}
+
 function App() {
   // ── Chat State ──
 
@@ -3300,23 +3374,16 @@ the new code
                                   )}
                                 </div>
                                 {msg.role === 'assistant' && (
-                                  <button
+                                  <CopyButton
                                     className="copy-msg-btn"
                                     title="Copy Response"
-                                    onClick={() => navigator.clipboard.writeText(msg.content)}
+                                    textToCopy={msg.content}
                                     style={{
                                       background: 'transparent', border: 'none', color: 'var(--text-muted)',
                                       cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center',
                                       justifyContent: 'center', borderRadius: '4px', transition: 'all 0.2s ease'
                                     }}
-                                    onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.background = 'var(--bg-hover)'; }}
-                                    onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'transparent'; }}
-                                  >
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
-                                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                                    </svg>
-                                  </button>
+                                  />
                                 )}
                               </div>
                               <div className="message-content">
@@ -3330,19 +3397,11 @@ the new code
                                             const match = /language-(\w+)/.exec(className || '')
                                             return !inline && match ? (
                                               <div className="code-block-wrapper" style={{ position: 'relative', marginTop: '10px', marginBottom: '10px' }}>
-                                                <button
+                                                <CopyButton
                                                   className="copy-code-btn"
                                                   title="Copy to Clipboard"
-                                                  onClick={() => {
-                                                    const textToCopy = String(children).replace(/\n$/, '');
-                                                    navigator.clipboard.writeText(textToCopy);
-                                                  }}
-                                                >
-                                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
-                                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                                                  </svg>
-                                                </button>
+                                                  textToCopy={String(children).replace(/\n$/, '')}
+                                                />
                                                 <SyntaxHighlighter
                                                   {...props}
                                                   children={String(children).replace(/\n$/, '')}
