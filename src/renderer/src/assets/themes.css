@@ -17,6 +17,7 @@ body.theme-dark-plus {
   --accent-color: #ebd79e;
   --accent-text: #111111;
   --git-modify-color: #ebd79e;
+  --selection-bg: rgba(255, 255, 255, 0.2);
 }
 
 /* Light Modern */
@@ -38,6 +39,7 @@ body.theme-light-modern {
   --accent-color: #007acc;
   --accent-text: #ffffff;
   --git-modify-color: #b59b58; /* slightly darker beige for light theme visibility */
+  --selection-bg: rgba(0, 122, 204, 0.25);
 }
 
 /* Dracula */
@@ -59,6 +61,7 @@ body.theme-dracula {
   --accent-color: #bd93f9;
   --accent-text: #282a36;
   --git-modify-color: #ebd79e;
+  --selection-bg: rgba(189, 147, 249, 0.3);
 }
 
 /* comple Dark */
@@ -80,4 +83,5 @@ body.theme-compile-dark {
   --accent-color: #ebd79e;
   --accent-text: #111111;
   --git-modify-color: #ebd79e;
+  --selection-bg: rgba(255, 255, 255, 0.2);
 }
