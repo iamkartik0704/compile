@@ -115,6 +115,9 @@ const api = {
    * Actual data arrives via the 'ai-stream-chunk' push channel.
    */
   sendAIPrompt: (prompt, config) => ipcRenderer.invoke('send-ai-prompt', prompt, config),
+  extractFileText: (filePath) => ipcRenderer.invoke('extract-file-text', filePath),
+  selectFilesForChat: () => ipcRenderer.invoke('select-files-for-chat'),
+  readImageBase64: (filePath) => ipcRenderer.invoke('read-image-base64', filePath),
 
   /**
    * AI Stream Listener — Push model (Main → Renderer).

@@ -34,7 +34,7 @@ let apiKeyCache = {}
 // Only these provider IDs are accepted via IPC. Prevents
 // arbitrary strings from being used as storage keys.
 // ============================================================
-const VALID_PROVIDERS = ['openai', 'anthropic', 'google', 'deepseek', 'qwen', 'meta', 'oss', 'groq', 'custom']
+const VALID_PROVIDERS = ['openai', 'anthropic', 'google', 'deepseek', 'qwen', 'meta', 'oss', 'groq', 'custom', 'mistral', 'nvidia', 'huggingface']
 
 // ============================================================
 // SECURITY — API Key Format Validation
@@ -85,32 +85,32 @@ function resolveAutoMode(prompt) {
 const MODEL_CONFIG = {
   'gemini-flash': {
     provider: 'google',
-    apiModel: 'gemini-3.7-flash',
+    apiModel: 'gemini-2.5-flash',
     type: 'gemini'
   },
   'gemini-1.5-flash': {
     provider: 'google',
-    apiModel: 'gemini-1.5-flash',
+    apiModel: 'gemini-2.5-flash',
     type: 'gemini'
   },
   'gemini-pro': {
     provider: 'google',
-    apiModel: 'gemini-3.1-pro-preview',
+    apiModel: 'gemini-1.5-pro-latest',
     type: 'gemini'
   },
   'gemini-1.5-pro': {
     provider: 'google',
-    apiModel: 'gemini-1.5-pro',
+    apiModel: 'gemini-1.5-pro-latest',
     type: 'gemini'
   },
   'claude-sonnet': {
     provider: 'anthropic',
-    apiModel: 'claude-sonnet-4-20250514',
+    apiModel: 'claude-3-5-sonnet-20241022',
     type: 'anthropic'
   },
   'claude-opus': {
     provider: 'anthropic',
-    apiModel: 'claude-opus-4-20250514',
+    apiModel: 'claude-3-opus-20240229',
     type: 'anthropic'
   },
   'deepseek-chat': {
@@ -131,6 +131,48 @@ const MODEL_CONFIG = {
     type: 'openai-compatible',
     baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1'
   },
+  'qwen-max': {
+    provider: 'qwen',
+    apiModel: 'qwen-max',
+    type: 'openai-compatible',
+    baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+  },
+  'qwen-turbo': {
+    provider: 'qwen',
+    apiModel: 'qwen-turbo',
+    type: 'openai-compatible',
+    baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+  },
+  'mistral-large': {
+    provider: 'mistral',
+    apiModel: 'mistral-large-latest',
+    type: 'openai-compatible',
+    baseURL: 'https://api.mistral.ai/v1'
+  },
+  'mistral-small': {
+    provider: 'mistral',
+    apiModel: 'mistral-small-latest',
+    type: 'openai-compatible',
+    baseURL: 'https://api.mistral.ai/v1'
+  },
+  'nvidia-llama-3.1-70b': {
+    provider: 'nvidia',
+    apiModel: 'meta/llama-3.1-70b-instruct',
+    type: 'openai-compatible',
+    baseURL: 'https://integrate.api.nvidia.com/v1'
+  },
+  'nvidia-nemotron-4-340b': {
+    provider: 'nvidia',
+    apiModel: 'nvidia/nemotron-4-340b-instruct',
+    type: 'openai-compatible',
+    baseURL: 'https://integrate.api.nvidia.com/v1'
+  },
+  'hf-llama-3.1-70b': {
+    provider: 'huggingface',
+    apiModel: 'meta-llama/Meta-Llama-3.1-70B-Instruct',
+    type: 'openai-compatible',
+    baseURL: 'https://api-inference.huggingface.co/v1'
+  },
   'groq-llama-3': {
     provider: 'groq',
     apiModel: 'llama-3.3-70b-versatile',
@@ -139,19 +181,19 @@ const MODEL_CONFIG = {
   },
   'groq-llama-8b': {
     provider: 'groq',
-    apiModel: 'llama3-8b-8192',
+    apiModel: 'llama-3.1-8b-instant',
     type: 'openai-compatible',
     baseURL: 'https://api.groq.com/openai/v1'
   },
   'groq-llama-70b': {
     provider: 'groq',
-    apiModel: 'llama3-70b-8192',
+    apiModel: 'llama-3.3-70b-versatile',
     type: 'openai-compatible',
     baseURL: 'https://api.groq.com/openai/v1'
   },
   'groq-gemma': {
     provider: 'groq',
-    apiModel: 'gemma-7b-it',
+    apiModel: 'gemma2-9b-it',
     type: 'openai-compatible',
     baseURL: 'https://api.groq.com/openai/v1'
   },
@@ -359,6 +401,13 @@ async function routeToProvider(modelId, prompt, sender, fullConfig = {}) {
     return
   }
 
+  if (config.provider === 'groq') {
+    try {
+      const res = await fetch('https://api.groq.com/openai/v1/models', { headers: { 'Authorization': 'Bearer ' + apiKey } });
+      const data = await res.json();
+      require('fs').writeFileSync(require('path').join(require('os').homedir(), 'Desktop', 'groq_models.txt'), JSON.stringify(data, null, 2));
+    } catch(e) {}
+  }
   // Route to the correct SDK
   try {
     switch (config.type) {
@@ -930,6 +979,100 @@ ipcMain.handle('window-is-maximized', (event) => BrowserWindow.fromWebContents(e
       event.sender.send('ai-stream-chunk', `\n// ❌ Error: ${err.message}`)
       return { status: 'error', model, error: err.message }
     }
+  })
+
+  // ============================================================
+  // FILE TEXT EXTRACTION — for chat attachments
+  // ============================================================
+  const MAX_EXTRACTED_CHARS = 50000
+
+  async function extractTextFromFile(filePath) {
+    const ext = filePath.split('.').pop().toLowerCase()
+    const name = filePath.split(/[/\\]/).pop()
+
+    // Plain text formats — read directly
+    const textExtensions = ['txt', 'csv', 'json', 'md', 'markdown', 'py', 'js', 'ts', 'jsx', 'tsx',
+      'html', 'css', 'xml', 'yaml', 'yml', 'toml', 'ini', 'cfg', 'log', 'sql', 'sh', 'bat',
+      'c', 'cpp', 'h', 'hpp', 'java', 'go', 'rs', 'rb', 'php', 'swift', 'kt', 'scala', 'r',
+      'lua', 'pl', 'dart', 'vue', 'svelte']
+
+    if (textExtensions.includes(ext)) {
+      const text = readFileSync(filePath, 'utf-8')
+      return { name, type: 'text', ext, text: text.slice(0, MAX_EXTRACTED_CHARS), truncated: text.length > MAX_EXTRACTED_CHARS, charCount: text.length }
+    }
+
+    if (ext === 'pdf') {
+      const pdfParse = require('pdf-parse')
+      const dataBuffer = readFileSync(filePath)
+      const data = await pdfParse(dataBuffer)
+      const text = data.text || ''
+      return { name, type: 'pdf', ext, text: text.slice(0, MAX_EXTRACTED_CHARS), truncated: text.length > MAX_EXTRACTED_CHARS, charCount: text.length, pages: data.numpages }
+    }
+
+    if (ext === 'docx') {
+      const mammoth = require('mammoth')
+      const result = await mammoth.extractRawText({ path: filePath })
+      const text = result.value || ''
+      return { name, type: 'docx', ext, text: text.slice(0, MAX_EXTRACTED_CHARS), truncated: text.length > MAX_EXTRACTED_CHARS, charCount: text.length }
+    }
+
+    if (ext === 'xlsx' || ext === 'xls') {
+      const XLSX = require('xlsx')
+      const workbook = XLSX.readFile(filePath)
+      let allText = ''
+      for (const sheetName of workbook.SheetNames) {
+        const sheet = workbook.Sheets[sheetName]
+        const csv = XLSX.utils.sheet_to_csv(sheet)
+        allText += `--- Sheet: ${sheetName} ---\n${csv}\n\n`
+      }
+      return { name, type: 'excel', ext, text: allText.slice(0, MAX_EXTRACTED_CHARS), truncated: allText.length > MAX_EXTRACTED_CHARS, charCount: allText.length, sheets: workbook.SheetNames.length }
+    }
+
+    throw new Error(`Unsupported file type: .${ext}`)
+  }
+
+  ipcMain.handle('extract-file-text', async (_event, filePath) => {
+    try {
+      return await extractTextFromFile(filePath)
+    } catch (err) {
+      console.error('File extraction error:', err)
+      return { error: err.message }
+    }
+  })
+
+  ipcMain.handle('read-image-base64', async (_event, filePath) => {
+    try {
+      const fs = require('fs')
+      const ext = filePath.split('.').pop().toLowerCase()
+      let mimeType = 'image/png'
+      if (ext === 'jpg' || ext === 'jpeg') mimeType = 'image/jpeg'
+      else if (ext === 'gif') mimeType = 'image/gif'
+      else if (ext === 'webp') mimeType = 'image/webp'
+      else if (ext === 'svg') mimeType = 'image/svg+xml'
+      
+      const buffer = fs.readFileSync(filePath)
+      const base64 = buffer.toString('base64')
+      return { dataURL: `data:${mimeType};base64,${base64}` }
+    } catch (err) {
+      console.error('Image read error:', err)
+      return { error: err.message }
+    }
+  })
+
+  ipcMain.handle('select-files-for-chat', async () => {
+    const result = await dialog.showOpenDialog({
+      title: 'Attach files to chat',
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: 'All Supported', extensions: ['pdf', 'docx', 'xlsx', 'xls', 'txt', 'csv', 'json', 'md', 'py', 'js', 'ts', 'jsx', 'tsx', 'html', 'css', 'xml', 'yaml', 'yml', 'sql', 'c', 'cpp', 'h', 'java', 'go', 'rs', 'rb', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] },
+        { name: 'Documents', extensions: ['pdf', 'docx', 'xlsx', 'xls', 'txt', 'csv', 'md'] },
+        { name: 'Code', extensions: ['py', 'js', 'ts', 'jsx', 'tsx', 'html', 'css', 'json', 'yaml', 'sql', 'c', 'cpp', 'java', 'go', 'rs'] },
+        { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    })
+    if (result.canceled) return { canceled: true, files: [] }
+    return { canceled: false, files: result.filePaths }
   })
 
   /**

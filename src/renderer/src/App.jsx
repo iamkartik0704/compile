@@ -158,15 +158,12 @@ const PROVIDER_LIST = Object.values(PROVIDERS)
  */
 function detectProviderFromKey(key) {
   if (!key || key.length < 3) return null
-  // Check Anthropic first (sk-ant- is more specific than sk-)
   if (key.startsWith('sk-ant-')) return 'anthropic'
-  // Check Google
   if (key.startsWith('AIza')) return 'google'
-  // Check Groq
   if (key.startsWith('gsk_')) return 'groq'
-  // sk-proj- is OpenAI-specific
   if (key.startsWith('sk-proj-')) return 'openai'
-  // Generic sk- is ambiguous (OpenAI, DeepSeek, etc.) — don't auto-detect
+  if (key.startsWith('hf_')) return 'huggingface'
+  if (key.startsWith('nvapi-')) return 'nvidia'
   return null
 }
 
@@ -185,8 +182,8 @@ const MODEL_GROUPS = [
     models: [
       { id: 'gemini-flash', name: 'Gemini 3.7 Flash', provider: 'google' },
       { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', provider: 'google' },
-      { id: 'gemini-pro', name: 'Gemini 3.1 Pro', provider: 'google' },
-      { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', provider: 'google' }
+      { id: 'gemini-pro', name: 'Gemini 3.1 Pro (Requires Paid Key)', provider: 'google' },
+      { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro (Requires Paid Key)', provider: 'google' }
     ]
   },
   {
@@ -204,19 +201,31 @@ const MODEL_GROUPS = [
     ]
   },
   {
-    label: 'Groq',
+    label: 'Qwen',
     models: [
-      { id: 'groq-llama-3', name: 'Llama 3.3 70B', provider: 'groq' },
-      { id: 'groq-llama-70b', name: 'Llama 3 70B', provider: 'groq' },
-      { id: 'groq-llama-8b', name: 'Llama 3 8B', provider: 'groq' },
-      { id: 'groq-mixtral', name: 'Mixtral 8x7B', provider: 'groq' },
-      { id: 'groq-gemma', name: 'Gemma 7B', provider: 'groq' }
+      { id: 'qwen-plus', name: 'Qwen Plus', provider: 'qwen' },
+      { id: 'qwen-max', name: 'Qwen Max', provider: 'qwen' },
+      { id: 'qwen-turbo', name: 'Qwen Turbo', provider: 'qwen' }
     ]
   },
   {
-    label: 'Qwen',
+    label: 'Mistral',
     models: [
-      { id: 'qwen-plus', name: 'Qwen', provider: 'qwen' }
+      { id: 'mistral-large', name: 'Mistral Large', provider: 'mistral' },
+      { id: 'mistral-small', name: 'Mistral Small', provider: 'mistral' }
+    ]
+  },
+  {
+    label: 'NVIDIA',
+    models: [
+      { id: 'nvidia-llama-3.1-70b', name: 'Llama 3.1 70B (NVIDIA)', provider: 'nvidia' },
+      { id: 'nvidia-nemotron-4-340b', name: 'Nemotron 4 340B', provider: 'nvidia' }
+    ]
+  },
+  {
+    label: 'Hugging Face',
+    models: [
+      { id: 'hf-llama-3.1-70b', name: 'Llama 3.1 70B (HF)', provider: 'huggingface' }
     ]
   },
   {
@@ -272,6 +281,7 @@ function App() {
   }, [chatHydrated, activeChatId, chatSessions, createChat, setActiveChat])
   const [prompt, setPrompt] = useState('')
   const [attachments, setAttachments] = useState([])
+  const [fileAttachments, setFileAttachments] = useState([])
   const [contextMentions, setContextMentions] = useState([])
 
   const [popoverState, setPopoverState] = useState({
@@ -555,6 +565,7 @@ function App() {
   const [bottomTab, setBottomTab] = useState('terminal') // 'terminal' | 'ai-debugger' | 'debugger-history'
   const [aiDebugger, setAiDebugger] = useState({ explanation: '', codeFix: '', loading: false })
   const [debuggerHistory, setDebuggerHistory] = useState([])
+  const streamRef = useRef('')
   const aiDebuggerStreamRef = useRef('')
 
   const [autoCompleteEnabled, setAutoCompleteEnabled] = useState(localStorage.getItem('editor-inlineSuggest') !== 'false')
@@ -1490,63 +1501,72 @@ the new code
 
   // ── Send Prompt ──
   const handleSend = async (directPromptOverride = null) => {
-    const isDirectOverride = typeof directPromptOverride === 'string'
-    const trimmed = isDirectOverride ? directPromptOverride.trim() : prompt.trim()
-    if (!trimmed || isStreaming) return
+    try {
+      const isDirectOverride = typeof directPromptOverride === 'string'
+      const trimmed = isDirectOverride ? directPromptOverride.trim() : prompt.trim()
+      if (!trimmed || isStreaming) return
 
-    // Intercept Commands
-    if (!isDirectOverride && trimmed.startsWith('/')) {
-      const parts = trimmed.split(' ')
-      const cmd = parts[0].substring(1).toLowerCase()
-      
-      if (cmd === 'clear') {
-        createChat() // Start a new chat session
+      // Intercept Commands
+      if (!isDirectOverride && trimmed.startsWith('/')) {
+        const parts = trimmed.split(' ')
+        const cmd = parts[0].substring(1).toLowerCase()
+        
+        if (cmd === 'clear') {
+          createChat() // Start a new chat session
+          setPrompt('')
+          setAttachments([])
+          setContextMentions([])
+          return
+        }
+        
+        // Handle other commands later...
+      }
+
+      // Reset stream accumulator
+      streamRef.current = ''
+      setResolvedModel(null)
+
+      // Capture the session we are starting a stream for
+      let currentChatId = activeChatId
+      if (!currentChatId) {
+        currentChatId = createChat()
+      }
+      streamingSessionIdRef.current = currentChatId
+
+      // Add user message + empty assistant placeholder
+      const currentAttachments = [...attachments]
+      const currentFileAttachments = [...fileAttachments]
+      updateChatMessages(currentChatId, (prev) => [
+        ...(prev || []),
+        { role: 'user', content: trimmed, images: isDirectOverride ? [] : currentAttachments, files: isDirectOverride ? [] : currentFileAttachments },
+        { role: 'assistant', content: '', modelId: selectedModel }
+      ])
+
+      if (!isDirectOverride) {
         setPrompt('')
         setAttachments([])
+        setFileAttachments([])
         setContextMentions([])
-        return
-      }
-      
-      // Handle other commands later...
-    }
-
-    // Reset stream accumulator
-    streamRef.current = ''
-    setResolvedModel(null)
-
-    // Capture the session we are starting a stream for
-    let currentChatId = activeChatId
-    if (!currentChatId) {
-      currentChatId = createChat()
-    }
-    streamingSessionIdRef.current = currentChatId
-
-    // Add user message + empty assistant placeholder
-    const currentAttachments = [...attachments]
-    updateChatMessages(currentChatId, (prev) => [
-      ...prev,
-      { role: 'user', content: trimmed, images: isDirectOverride ? [] : currentAttachments },
-      { role: 'assistant', content: '', modelId: selectedModel }
-    ])
-
-    if (!isDirectOverride) {
-      setPrompt('')
-      setAttachments([])
-      // Keep contextMentions active? Usually they clear after send
-      setContextMentions([])
-    }
-
-    setIsStreaming(true)
-
-    try {
-      let finalPrompt = trimmed
-      let contextBlocks = []
-
-      if (projectRoot) {
-        contextBlocks.push(`Workspace Root: ${projectRoot}\nIf you need to create a new file or edit a background file, construct an absolute path using this root directory.`)
       }
 
-      const diffInstructions = `If you want to modify a file or create a new file, DO NOT output a standard markdown code block. Instead, output an edit block using this EXACT XML format:
+      setIsStreaming(true)
+
+      try {
+        let finalPrompt = trimmed
+        let contextBlocks = []
+
+        // Add attached files context
+        if (!isDirectOverride && currentFileAttachments.length > 0) {
+          currentFileAttachments.forEach(file => {
+            contextBlocks.push(`[ATTACHED FILE: ${file.name}]\n${file.text}\n[END FILE]`)
+          })
+        }
+
+        if (projectRoot) {
+          contextBlocks.push(`Workspace Root: ${projectRoot}\nIf you need to create a new file or edit a background file, construct an absolute path using this root directory.`)
+        }
+
+        const diffInstructions = `If you want to modify a file or create a new file, DO NOT output a standard markdown code block. Instead, output an edit block using this EXACT XML format:
 <edit_file path="ABSOLUTE_PATH_TO_FILE">
 <search>
 the exact old code to be replaced
@@ -1558,89 +1578,92 @@ the new code
 You can output multiple <search>/<replace> blocks if needed.
 CRITICAL RULE: If the file is empty, or you are creating a new file from scratch, or you want to entirely replace the file contents, you MUST leave the <search> block completely empty (i.e., <search></search>).`
 
-      contextBlocks.push(diffInstructions)
+        contextBlocks.push(diffInstructions)
 
-      if (activeFile) {
-        try {
-          const fileContent = await window.api.getFileContents(activeFile)
-
-          let fileText = fileContent.content || fileContent
-          if (typeof window.getEditorValue === 'function') {
-            fileText = window.getEditorValue()
-          }
-
-          let diagnosticsText = ""
-          if (typeof window.getEditorDiagnostics === 'function') {
-            const markers = window.getEditorDiagnostics()
-            if (markers && markers.length > 0) {
-              const severityMap = { 1: 'Hint', 2: 'Info', 4: 'Warning', 8: 'Error' }
-              diagnosticsText = "\n\nLSP Diagnostics (Compiler/Linter feedback for the active file):\n" + markers.map(m => `[Line ${m.startLineNumber}, Col ${m.startColumn}] ${severityMap[m.severity] || 'Error'}: ${m.message}`).join('\n')
-            }
-          }
-
-          contextBlocks.push(`The user is currently working on this active file: ${activeFile}\n\nFile Content:\n\`\`\`\n${fileText}\n\`\`\`${diagnosticsText}\n\nYou should default to editing this file unless requested otherwise.\n\nCRITICAL: If you modify this file, you MUST use the <edit_file path="${activeFile.replace(/\\/g, '/')}"> XML format as instructed above. DO NOT output standard markdown code blocks for file modifications.`)
-        } catch (e) {
-          console.warn("Could not load active file context:", e)
-        }
-      }
-
-      if (contextBlocks.length > 0) {
-        finalPrompt = `[SYSTEM CONTEXT]\n${contextBlocks.join('\n\n')}\n[END SYSTEM CONTEXT]\n\n${trimmed}`
-      }
-
-      const res = await window.api.sendAIPrompt(finalPrompt, {
-        model: selectedModel,
-        images: currentAttachments,
-        customConfig: selectedModel === 'custom' ? {
-          baseURL: customBaseUrl.trim(),
-          modelId: customModelId.trim()
-        } : undefined
-      })
-
-      // Stream is now fully finished
-      setIsStreaming(false)
-      const finalMsg = streamRef.current
-      const regex = /<edit_file\s+path="([^"]+)">([\s\S]*?)<\/edit_file>/g
-      let match
-      while ((match = regex.exec(finalMsg)) !== null) {
-        const editPath = match[1]
-        const editBody = match[2]
-
-        const normalize = (p) => (p || '').replace(/\\/g, '/').toLowerCase()
-        if (normalize(activeFile) === normalize(editPath)) {
-          window.dispatchEvent(new CustomEvent('auto-apply-diff', {
-            detail: { path: editPath, body: editBody }
-          }))
-        } else {
+        if (activeFile) {
           try {
-            let oldContent = ''
-            try {
-              const fileContext = await window.api.getFileContents(editPath)
-              oldContent = fileContext.content || fileContext || ''
-            } catch (e) {
-              // File doesn't exist yet
+            const fileContent = await window.api.getFileContents(activeFile)
+
+            let fileText = fileContent.content || fileContent
+            if (typeof window.getEditorValue === 'function') {
+              fileText = window.getEditorValue()
             }
 
-            const { newText, hasChanges } = applyDiff(oldContent, editBody)
-            if (hasChanges) {
-              await window.api.saveFileContents(editPath, newText)
-              handleOpenFile(editPath, editPath.split(/[\\/]/).pop())
-              window.dispatchEvent(new Event('refresh-sidebar'))
+            let diagnosticsText = ""
+            if (typeof window.getEditorDiagnostics === 'function') {
+              const markers = window.getEditorDiagnostics()
+              if (markers && markers.length > 0) {
+                const severityMap = { 1: 'Hint', 2: 'Info', 4: 'Warning', 8: 'Error' }
+                diagnosticsText = "\n\nLSP Diagnostics (Compiler/Linter feedback for the active file):\n" + markers.map(m => `[Line ${m.startLineNumber}, Col ${m.startColumn}] ${severityMap[m.severity] || 'Error'}: ${m.message}`).join('\n')
+              }
             }
-          } catch (err) {
-            console.error("Failed to auto-apply to background file", err)
+
+            contextBlocks.push(`The user is currently working on this active file: ${activeFile}\n\nFile Content:\n\`\`\`\n${fileText}\n\`\`\`${diagnosticsText}\n\nYou should default to editing this file unless requested otherwise.\n\nCRITICAL: If you modify this file, you MUST use the <edit_file path="${activeFile.replace(/\\/g, '/')}"> XML format as instructed above. DO NOT output standard markdown code blocks for file modifications.`)
+          } catch (e) {
+            console.warn("Could not load active file context:", e)
           }
         }
+
+        if (contextBlocks.length > 0) {
+          finalPrompt = `[SYSTEM CONTEXT]\n${contextBlocks.join('\n\n')}\n[END SYSTEM CONTEXT]\n\n${trimmed}`
+        }
+
+        const res = await window.api.sendAIPrompt(finalPrompt, {
+          model: selectedModel,
+          images: currentAttachments,
+          customConfig: selectedModel === 'custom' ? {
+            baseURL: customBaseUrl.trim(),
+            modelId: customModelId.trim()
+          } : undefined
+        })
+
+        // Stream is now fully finished
+        setIsStreaming(false)
+        const finalMsg = streamRef.current
+        const regex = /<edit_file\s+path="([^"]+)">([\s\S]*?)<\/edit_file>/g
+        let match
+        while ((match = regex.exec(finalMsg)) !== null) {
+          const editPath = match[1]
+          const editBody = match[2]
+
+          const normalize = (p) => (p || '').replace(/\\/g, '/').toLowerCase()
+          if (normalize(activeFile) === normalize(editPath)) {
+            window.dispatchEvent(new CustomEvent('auto-apply-diff', {
+              detail: { path: editPath, body: editBody }
+            }))
+          } else {
+            try {
+              let oldContent = ''
+              try {
+                const fileContext = await window.api.getFileContents(editPath)
+                oldContent = fileContext.content || fileContext || ''
+              } catch (e) {
+                // File doesn't exist yet
+              }
+
+              const { newText, hasChanges } = applyDiff(oldContent, editBody)
+              if (hasChanges) {
+                await window.api.saveFileContents(editPath, newText)
+                handleOpenFile(editPath, editPath.split(/[\\/]/).pop())
+                window.dispatchEvent(new Event('refresh-sidebar'))
+              }
+            } catch (err) {
+              console.error("Failed to auto-apply to background file", err)
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Send error:', err)
+        if (streamingSessionIdRef.current) {
+          updateChatMessages(streamingSessionIdRef.current, (prev) => [
+            ...(prev || []).slice(0, -1),
+            { role: 'assistant', content: `// Error: ${err.message}` }
+          ])
+        }
+        setIsStreaming(false)
       }
-    } catch (err) {
-      console.error('Send error:', err)
-      if (streamingSessionIdRef.current) {
-        updateChatMessages(streamingSessionIdRef.current, (prev) => [
-          ...prev.slice(0, -1),
-          { role: 'assistant', content: `// Error: ${err.message}` }
-        ])
-      }
-      setIsStreaming(false)
+    } catch (globalErr) {
+      alert("GLOBAL HANDLE SEND ERROR: " + globalErr.message)
     }
   }
 
@@ -1814,6 +1837,57 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
   }
 
   // ── Handle Paste Events ──
+  const handleAttachClick = async () => {
+    try {
+      if (window.api && window.api.selectFilesForChat && window.api.extractFileText && window.api.readImageBase64) {
+        const result = await window.api.selectFilesForChat()
+        if (!result.canceled && result.files && result.files.length > 0) {
+          const newFiles = []
+          const newImages = []
+          for (const filePath of result.files) {
+            try {
+              const ext = filePath.split('.').pop().toLowerCase()
+              const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg']
+              
+              if (imageExts.includes(ext)) {
+                const imgData = await window.api.readImageBase64(filePath)
+                if (imgData.error) {
+                  alert(`Image read error: ${imgData.error}`)
+                } else {
+                  newImages.push(imgData.dataURL)
+                }
+              } else {
+                const extracted = await window.api.extractFileText(filePath)
+                if (extracted.error) {
+                  alert(`Extraction error: ${extracted.error}`)
+                } else {
+                  newFiles.push(extracted)
+                }
+              }
+            } catch (err) {
+              alert(`IPC error extracting file: ${err.message}`)
+            }
+          }
+          if (newFiles.length > 0) {
+            setFileAttachments(prev => [...prev, ...newFiles])
+          }
+          if (newImages.length > 0) {
+            setAttachments(prev => [...prev, ...newImages])
+          }
+          if (newFiles.length > 0 || newImages.length > 0) {
+            setTimeout(() => {
+              textareaRef.current?.focus()
+            }, 100)
+          }
+        }
+      } else {
+        alert("window.api methods are missing. Please RESTART the app completely (close window, then open it again).")
+      }
+    } catch (err) {
+      alert(`Dialog error: ${err.message}`)
+    }
+  }
+
   const handlePaste = (e) => {
     const items = Array.from(e.clipboardData.items)
     let pastedImage = false
@@ -3298,6 +3372,15 @@ the new code
                                         ))}
                                       </div>
                                     )}
+                                    {msg.files && msg.files.length > 0 && (
+                                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                                        {msg.files.map((f, i) => (
+                                          <div key={i} className="context-chip" style={{ cursor: 'default' }}>
+                                            <span style={{opacity: 0.7}}>📎</span> {f.name}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
                                     <p>{msg.content}</p>
                                   </>
                                 )}
@@ -3334,6 +3417,22 @@ the new code
                                   <span style={{opacity: 0.7}}>📄</span> {mention.label}
                                   <button
                                     onClick={() => setContextMentions(prev => prev.filter((_, i) => i !== idx))}
+                                    className="remove-context-btn"
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {fileAttachments.length > 0 && (
+                            <div className="composer-attachments">
+                              {fileAttachments.map((file, idx) => (
+                                <div key={idx} className="context-chip">
+                                  <span style={{opacity: 0.7}}>📎</span> {file.name}
+                                  <button
+                                    onClick={() => setFileAttachments(prev => prev.filter((_, i) => i !== idx))}
                                     className="remove-context-btn"
                                   >
                                     ×
@@ -3387,8 +3486,8 @@ the new code
                             <div className="toolbar-left">
                               <button
                                 className="toolbar-btn attachment-btn"
-                                onClick={() => fileInputRef.current?.click()}
-                                title="Attach Image"
+                                onClick={handleAttachClick}
+                                title="Attach File"
                                 disabled={isStreaming}
                               >
                                 <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>

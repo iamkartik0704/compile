@@ -57,6 +57,27 @@ const PROVIDERS = {
     prefixes: [],
     placeholder: 'your-api-key-here'
   },
+  mistral: {
+    id: 'mistral',
+    name: 'Mistral',
+    color: '#f472b6',
+    prefixes: [],
+    placeholder: 'your-mistral-api-key'
+  },
+  nvidia: {
+    id: 'nvidia',
+    name: 'NVIDIA',
+    color: '#76b900',
+    prefixes: ['nvapi-'],
+    placeholder: 'nvapi-xxxxxxxxxxxxxxx'
+  },
+  huggingface: {
+    id: 'huggingface',
+    name: 'Hugging Face',
+    color: '#ffcc4d',
+    prefixes: ['hf_'],
+    placeholder: 'hf_xxxxxxxxxxxxxxx'
+  },
   oss: {
     id: 'oss',
     name: 'Open Source',
