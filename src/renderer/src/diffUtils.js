@@ -61,12 +61,15 @@ export function applyDiff(oldText, body) {
             hasChanges = true
           } else {
             console.warn("Could not find search block exactly or fuzzily as requested")
+            return { error: "Patch conflict: Could not locate target code block exactly or fuzzily." }
           }
         } catch (e) {
           console.warn("Fuzzy regex failed", e)
+          return { error: "Patch conflict: Regex matching failed." }
         }
       } else {
         console.warn("Search block contained only whitespace but was not completely empty.")
+        return { error: "Patch conflict: Search block was malformed." }
       }
     }
   }

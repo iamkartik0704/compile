@@ -1576,6 +1576,7 @@ export const CodeEditor = ({
   const monacoTheme = activeTheme === 'light-modern' ? 'vs' : 'vs-dark'
   const [originalText, setOriginalText] = useState(null)
   const [showDiff, setShowDiff] = useState(false)
+  const [previewDiff, setPreviewDiff] = useState(null)
   const [gutterOriginalTexts, setGutterOriginalTexts] = useState({})
   
   const activeFileObj = openFiles.find(f => f.path === activeFile)
@@ -2161,89 +2162,120 @@ export const CodeEditor = ({
     return () => window.removeEventListener('apply-code', handleApplyCode)
   }, [activeFile])
 
-  // Listen for 'force-apply-diff' events to apply code instantly and save
+  // Listen for 'preview-diff' events to show proposed agentic edits without saving
   useEffect(() => {
-    const handleForceApplyDiff = async (e) => {
-      const { path, body } = e.detail
-      const normalize = (p) => (p || '').replace(/\\/g, '/').toLowerCase()
-      if (normalize(activeFile) === normalize(path) && editorRef.current) {
-        const model = editorRef.current.getModel()
-        let newText = model.getValue()
+    const handlePreviewDiff = async (e) => {
+      const { path, body, id, ids } = e.detail
+      
+      let model = null
+      if (window.monaco) {
+        model = window.monaco.editor.getModel(window.monaco.Uri.file(path))
+      }
 
-        const { newText: diffedText, hasChanges } = applyDiff(newText, body)
-
-        if (hasChanges) {
-          const viewState = editorRef.current.saveViewState()
-          editorRef.current.pushUndoStop()
-          editorRef.current.executeEdits("ai-force-diff", [{
-            range: model.getFullModelRange(),
-            text: diffedText
-          }])
-          editorRef.current.pushUndoStop()
-          editorRef.current.restoreViewState(viewState)
-        }
-
-        if (e.detail.autoRun) {
-          window.dispatchEvent(new Event('global-run-file'))
-        } else {
-          // Force save (only if not auto-running, because auto-run saves it already)
-          try {
-            await window.api.saveFileContents(activeFile, diffedText)
-            setIsDirty(false)
-            if (typeof markFileClean === 'function') {
-              markFileClean(activeFile)
-            }
-          } catch (err) {
-            console.error("Force save failed:", err)
-          }
+      let currentText = ''
+      if (model) {
+        currentText = model.getValue()
+      } else {
+        try {
+          currentText = (await window.api.getFileContents(path)).content || ''
+        } catch(err) {
+          window.dispatchEvent(new CustomEvent('agentic-edit-error', { detail: { id, ids, error: "Failed to read file from disk." } }))
+          return
         }
       }
+
+      const { newText: diffedText, hasChanges, error } = applyDiff(currentText, body)
+      
+      if (error) {
+        window.dispatchEvent(new CustomEvent('agentic-edit-error', { detail: { id, ids, error } }))
+        return
+      }
+
+      if (hasChanges) {
+        setPreviewDiff({ path, diffedText, originalText: currentText, id, ids })
+      }
     }
-    window.addEventListener('force-apply-diff', handleForceApplyDiff)
-    return () => window.removeEventListener('force-apply-diff', handleForceApplyDiff)
+    window.addEventListener('preview-diff', handlePreviewDiff)
+    return () => window.removeEventListener('preview-diff', handlePreviewDiff)
   }, [activeFile])
 
-  // Listen for 'auto-apply-diff' events from the AI
+  // Listen for 'cancel-preview-diff'
   useEffect(() => {
-    const handleAutoApplyDiff = (e) => {
-      const { path, body } = e.detail
+    const handleCancelPreview = (e) => {
+      const { path } = e.detail
+      setPreviewDiff(prev => (prev && prev.path === path) ? null : prev)
+    }
+    window.addEventListener('cancel-preview-diff', handleCancelPreview)
+    return () => window.removeEventListener('cancel-preview-diff', handleCancelPreview)
+  }, [])
+
+  // Listen for 'force-apply-diff' events to approve an agentic edit
+  useEffect(() => {
+    const handleForceApplyDiff = async (e) => {
+      const { path, body, id, ids } = e.detail
       const normalize = (p) => (p || '').replace(/\\/g, '/').toLowerCase()
-      if (normalize(activeFile) === normalize(path) && editorRef.current) {
-        const model = editorRef.current.getModel()
-        let newText = model.getValue()
-
-        const { newText: diffedText, hasChanges, editRanges } = applyDiff(newText, body)
-
-        if (hasChanges) {
-          setOriginalText(newText)
-          newText = diffedText
-
-          const viewState = editorRef.current.saveViewState()
-          editorRef.current.pushUndoStop()
-          editorRef.current.executeEdits("ai-diff", [{
-            range: model.getFullModelRange(),
-            text: newText
-          }])
-          editorRef.current.pushUndoStop()
-          editorRef.current.restoreViewState(viewState)
-
-          if (editRanges && editRanges.length > 0 && monacoRef.current && decorationsCollectionRef.current) {
-            const monacoRanges = editRanges.map(r => ({
-              range: new monacoRef.current.Range(r.startLine, 1, r.endLine, 1),
-              options: {
-                isWholeLine: true,
-                className: 'ai-edit-highlight',
-                marginClassName: 'ai-edit-highlight'
-              }
-            }))
-            decorationsCollectionRef.current.set(monacoRanges)
-            setHasActiveAiEdit(true)
-          }
+      
+      // 1. Try to get in-memory model (unsaved changes)
+      let model = null
+      if (window.monaco) {
+        model = window.monaco.editor.getModel(window.monaco.Uri.file(path))
+      }
+      
+      let baseText = ''
+      if (model) {
+        baseText = model.getValue()
+      } else {
+        try {
+          const res = await window.api.getFileContents(path)
+          baseText = res.content || ''
+        } catch (err) {
+           window.dispatchEvent(new CustomEvent('agentic-edit-error', { detail: { id, ids, error: "Failed to read file from disk." } }))
+           return
         }
       }
+
+      const { newText: diffedText, hasChanges, error } = applyDiff(baseText, body)
+
+      if (error) {
+        window.dispatchEvent(new CustomEvent('agentic-edit-error', { detail: { id, ids, error } }))
+        return
+      }
+
+      if (hasChanges) {
+        if (model) {
+          // If file is open, apply to Monaco model to preserve undo stack
+          const viewState = editorRef.current && normalize(activeFile) === normalize(path) ? editorRef.current.saveViewState() : null
+          
+          model.pushStackElement()
+          model.pushEditOperations(
+            [],
+            [{ range: model.getFullModelRange(), text: diffedText }],
+            () => null
+          )
+          model.pushStackElement()
+          
+          if (viewState) editorRef.current.restoreViewState(viewState)
+          
+          if (typeof markFileDirty === 'function') markFileDirty(path)
+        } else {
+          // File not open, write directly to disk
+          try {
+            await window.api.saveFileContents(path, diffedText)
+          } catch (err) {
+             window.dispatchEvent(new CustomEvent('agentic-edit-error', { detail: { id, ids, error: "Failed to save file to disk." } }))
+             return
+          }
+        }
+        
+        // Clear preview if it was this file
+        setPreviewDiff(prev => (prev && prev.path === path) ? null : prev)
+        
+        window.dispatchEvent(new CustomEvent('agentic-edit-success', { detail: { id, ids } }))
+      }
     }
-    window.addEventListener('auto-apply-diff', handleAutoApplyDiff)
-    return () => window.removeEventListener('auto-apply-diff', handleAutoApplyDiff)
+    
+    window.addEventListener('force-apply-diff', handleForceApplyDiff)
+    return () => window.removeEventListener('force-apply-diff', handleForceApplyDiff)
   }, [activeFile])
 
   // Handle Content Change — also notify LSP
@@ -2722,11 +2754,11 @@ export const CodeEditor = ({
             )
           })()
         ) : !fileContents[activeFile]?.isLoading && (
-          effectiveShowDiff ? (
+          (effectiveShowDiff || (previewDiff && previewDiff.path === activeFile)) ? (
             <DiffEditor
               height="100%"
-              original={effectiveOriginalText}
-              modified={currentValue}
+              original={previewDiff && previewDiff.path === activeFile ? previewDiff.originalText : effectiveOriginalText}
+              modified={previewDiff && previewDiff.path === activeFile ? previewDiff.diffedText : currentValue}
               language={getLanguageFromPath(activeFile)}
               theme={monacoTheme}
               onMount={handleDiffEditorMountWrapper}
@@ -2736,7 +2768,7 @@ export const CodeEditor = ({
                 minimap: { enabled: editorSettings.minimap },
                 fontSize: Math.round(editorSettings.fontSize * Math.pow(1.1, editorSettings.zoomLevel || 0)),
                 fontFamily: editorSettings.fontFamily,
-                readOnly: !isGitDiff,
+                readOnly: (previewDiff && previewDiff.path === activeFile) ? true : !isGitDiff,
                 padding: { top: 16 },
                 glyphMargin: false,
                 lineDecorationsWidth: 16,

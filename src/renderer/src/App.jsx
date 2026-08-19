@@ -10,7 +10,7 @@ import ReactMarkdown from 'react-markdown'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { applyDiff, unescapeXml } from './diffUtils'
-import { Plus, Play, Bug, Maximize2, Minimize2, Trash2, CheckCircle, Circle, RefreshCw, Command, ChevronRight, ChevronDown, File, Code, Cpu, Activity, Info, LogOut, ArrowRight, X, Search, Settings, User, LayoutGrid, PanelLeft, PanelBottom, PanelRight, Square, Minus, Terminal, Key, ShieldCheck, Sparkles, Folder, GitBranch, Download, Share2 } from 'lucide-react'
+import { Plus, Play, Bug, Maximize2, Minimize2, Trash2, CheckCircle, Circle, RefreshCw, Command, ChevronRight, ChevronDown, ChevronUp, File, Code, Cpu, Activity, Info, LogOut, ArrowRight, X, Search, Settings, User, LayoutGrid, PanelLeft, PanelBottom, PanelRight, Square, Minus, Terminal, Key, ShieldCheck, Sparkles, Folder, GitBranch, Download, Share2 } from 'lucide-react'
 import { getEnclosingScope } from './utils/astParser'
 import { CodebaseVisualizer } from './components/CodebaseVisualizer'
 import { DSAExplainer } from './components/DSAExplainer'
@@ -375,6 +375,7 @@ function App() {
 
   const [shareLoading, setShareLoading] = useState(false)
   const [shareModal, setShareModal] = useState({ isOpen: false, mode: '', data: null, error: null })
+  const [isEditsExpanded, setIsEditsExpanded] = useState(true)
 
   const handleOpenShare = () => {
     if (!activeSession) return
@@ -835,6 +836,49 @@ function App() {
     window.addEventListener('global-run-file', handleGlobalRun)
     return () => {
       window.removeEventListener('global-run-file', handleGlobalRun)
+    }
+  }, [])
+  // Handle agentic edit events from CodeEditor
+  useEffect(() => {
+    const handleEditSuccess = (e) => {
+      const { id, ids } = e.detail;
+      const targetIds = ids || [id];
+      setChatSessions(prev => {
+        const next = { ...prev }
+        Object.keys(next).forEach(chatId => {
+          next[chatId] = next[chatId].map(msg => {
+            if (msg.proposedEdits) {
+              const updatedEdits = msg.proposedEdits.map(edit => targetIds.includes(edit.id) ? { ...edit, status: 'approved', error: null } : edit)
+              return { ...msg, proposedEdits: updatedEdits }
+            }
+            return msg
+          })
+        })
+        return next
+      })
+    }
+    const handleEditError = (e) => {
+      const { id, ids, error, isReject } = e.detail;
+      const targetIds = ids || [id];
+      setChatSessions(prev => {
+        const next = { ...prev }
+        Object.keys(next).forEach(chatId => {
+          next[chatId] = next[chatId].map(msg => {
+            if (msg.proposedEdits) {
+              const updatedEdits = msg.proposedEdits.map(edit => targetIds.includes(edit.id) ? { ...edit, status: isReject ? 'rejected' : 'pending', error } : edit)
+              return { ...msg, proposedEdits: updatedEdits }
+            }
+            return msg
+          })
+        })
+        return next
+      })
+    }
+    window.addEventListener('agentic-edit-success', handleEditSuccess)
+    window.addEventListener('agentic-edit-error', handleEditError)
+    return () => {
+       window.removeEventListener('agentic-edit-success', handleEditSuccess)
+       window.removeEventListener('agentic-edit-error', handleEditError)
     }
   }, [])
 
@@ -1808,35 +1852,26 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
         const finalMsg = streamRef.current
         const regex = /<edit_file\s+path="([^"]+)">([\s\S]*?)<\/edit_file>/g
         let match
+        const edits = []
         while ((match = regex.exec(finalMsg)) !== null) {
-          const editPath = match[1]
-          const editBody = match[2]
+          edits.push({
+            id: Date.now().toString() + Math.random().toString(),
+            path: match[1],
+            body: match[2],
+            status: 'pending' // 'pending' | 'approved' | 'rejected' | 'error'
+          })
+        }
 
-          const normalize = (p) => (p || '').replace(/\\/g, '/').toLowerCase()
-          if (normalize(activeFile) === normalize(editPath)) {
-            window.dispatchEvent(new CustomEvent('auto-apply-diff', {
-              detail: { path: editPath, body: editBody }
-            }))
-          } else {
-            try {
-              let oldContent = ''
-              try {
-                const fileContext = await window.api.getFileContents(editPath)
-                oldContent = fileContext.content || fileContext || ''
-              } catch (e) {
-                // File doesn't exist yet
-              }
-
-              const { newText, hasChanges } = applyDiff(oldContent, editBody)
-              if (hasChanges) {
-                await window.api.saveFileContents(editPath, newText)
-                handleOpenFile(editPath, editPath.split(/[\\/]/).pop())
-                window.dispatchEvent(new Event('refresh-sidebar'))
-              }
-            } catch (err) {
-              console.error("Failed to auto-apply to background file", err)
-            }
-          }
+        if (edits.length > 0) {
+          updateChatMessages(streamingSessionIdRef.current, (prev) => {
+            if (!prev || prev.length === 0) return prev
+            const newMsgs = [...prev]
+            const lastMsg = newMsgs[newMsgs.length - 1]
+            return [
+              ...newMsgs.slice(0, -1),
+              { ...lastMsg, proposedEdits: edits }
+            ]
+          })
         }
       } catch (err) {
         console.error('Send error:', err)
@@ -3505,7 +3540,8 @@ the new code
                               </div>
                               <div className="message-content">
                                 {msg.role === 'assistant' ? (
-                                  renderMessageParts(msg.content + (isStreaming && i === messages.length - 1 ? ' ▌' : '')).map((part, idx) => (
+                                  <>
+                                    {renderMessageParts(msg.content + (isStreaming && i === messages.length - 1 ? ' ▌' : '')).map((part, idx) => (
                                     part.type === 'text' ? (
                                       <ReactMarkdown
                                         key={idx}
@@ -3540,24 +3576,10 @@ the new code
                                       >
                                         {part.content}
                                       </ReactMarkdown>
-                                    ) : (
-                                      <div key={idx} className="edit-block-ui" style={{ margin: '10px 0', padding: '10px', background: 'transparent', width: '100%', boxSizing: 'border-box', borderRadius: '6px', border: '1px solid var(--border-light)' }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-main)', fontSize: '13px', marginBottom: '8px', flexWrap: 'wrap' }}>
-                                          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none" style={{ flexShrink: 0 }}><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
-                                          <strong style={{ flexShrink: 0 }}>Agent Edit:</strong> <span style={{ wordBreak: 'break-all', flex: '1 1 auto' }}>{part.path}</span>
-                                          <span style={{ marginLeft: 'auto', fontSize: '12px', color: 'var(--text-muted)', flexShrink: 0 }}>Auto-applied</span>
-                                        </div>
-                                        <details>
-                                          <summary style={{ cursor: 'pointer', outline: 'none', padding: '4px', background: 'transparent', borderRadius: '4px' }}>
-                                            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>View Changes (if auto-apply failed)</span>
-                                          </summary>
-                                          <pre style={{ marginTop: '8px', padding: '10px', background: 'transparent', borderRadius: '4px', overflowX: 'auto', width: '100%', boxSizing: 'border-box', fontSize: '13px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                                            {unescapeXml(part.body)}
-                                          </pre>
-                                        </details>
-                                      </div>
-                                    )
-                                  ))
+                                    ) : null
+                                    ))}
+
+                                  </>
                                 ) : (
                                   <>
                                     {msg.images && msg.images.length > 0 && (
@@ -3585,6 +3607,102 @@ the new code
                         ))}
                         <div ref={chatEndRef} />
                       </div>
+
+                      {/* ── Global Proposed Edits ── */}
+                      {(() => {
+                        const rawPendingEdits = messages.flatMap(m => m.proposedEdits || []).filter(e => e.status === 'pending');
+                        if (rawPendingEdits.length === 0) return null;
+                        
+                        const editMap = new Map();
+                        for (const edit of rawPendingEdits) {
+                          if (editMap.has(edit.path)) {
+                            const existing = editMap.get(edit.path);
+                            existing.body += '\n' + edit.body;
+                            existing.ids.push(edit.id);
+                          } else {
+                            editMap.set(edit.path, { ...edit, ids: [edit.id] });
+                          }
+                        }
+                        const globalPendingEdits = Array.from(editMap.values());
+                        
+                        return (
+                          <div className="proposed-edits-card" style={{ padding: '0 12px 8px 12px', display: 'flex', flexDirection: 'column', gap: '2px', background: 'transparent' }}>
+                            {isEditsExpanded && globalPendingEdits.map((edit, idx) => {
+                               const addedLines = (edit.body.match(/<replace>([\s\S]*?)<\/replace>/g) || []).reduce((acc, m) => acc + Math.max(0, m.replace(/<\/?replace>/g, '').split('\n').length - 1), 0);
+                               const removedLines = (edit.body.match(/<search>([\s\S]*?)<\/search>/g) || []).reduce((acc, m) => acc + Math.max(0, m.replace(/<\/?search>/g, '').split('\n').length - 1), 0);
+                               return (
+                                 <div 
+                                   key={edit.id} 
+                                   className="edit-row"
+                                   onClick={() => {
+                                      handleOpenFile(edit.path, edit.path.split('/').pop().split('\\').pop());
+                                      setTimeout(() => window.dispatchEvent(new CustomEvent('preview-diff', { detail: { path: edit.path, body: edit.body, id: edit.ids[0], ids: edit.ids } })), 100);
+                                   }}
+                                   style={{ 
+                                     display: 'flex', 
+                                     alignItems: 'center', 
+                                     padding: '4px 6px', 
+                                     cursor: 'pointer',
+                                     borderRadius: '4px',
+                                     background: 'transparent',
+                                     transition: 'background 0.1s ease',
+                                     gap: '12px'
+                                   }}
+                                   onMouseEnter={(e) => {
+                                     e.currentTarget.style.background = 'var(--bg-light)';
+                                   }}
+                                   onMouseLeave={(e) => {
+                                     e.currentTarget.style.background = 'transparent';
+                                   }}
+                                 >
+                                   {/* Status Icon */}
+                                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '12px', height: '12px', flexShrink: 0 }}>
+                                     <div style={{ width: '6px', height: '6px', borderRadius: '50%', border: '2px solid #d4af37' }} />
+                                   </div>
+
+                                   {/* Lines Added / Removed */}
+                                   <div style={{ display: 'flex', gap: '6px', fontSize: '11px', fontFamily: 'monospace', minWidth: '40px' }}>
+                                     <span style={{ color: '#22c55e' }}>+{addedLines}</span>
+                                     <span style={{ color: '#ef4444' }}>-{removedLines}</span>
+                                   </div>
+
+                                   {/* Filename */}
+                                   <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-main)', whiteSpace: 'nowrap' }}>
+                                     {edit.path.split('/').pop().split('\\').pop()}
+                                   </span>
+
+                                   {/* Path truncation */}
+                                   <span style={{ fontSize: '11px', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', direction: 'rtl', textAlign: 'left', flex: 1, opacity: 0.5 }}>
+                                     &hellip;{edit.path.slice(Math.max(0, edit.path.length - 25))}
+                                   </span>
+                                 </div>
+                               )
+                            })}
+                            
+                            {/* Footer Actions */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '4px 6px', marginTop: '2px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-muted)', fontSize: '12px', flex: 1 }}>
+                                <File size={12} />
+                                <div style={{ display: 'flex', flexDirection: 'column', lineHeight: '1.2' }}>
+                                  <span>{globalPendingEdits.length}</span>
+                                  <span>Files</span>
+                                </div>
+                                <button onClick={() => setIsEditsExpanded(!isEditsExpanded)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '2px 4px', display: 'flex', alignItems: 'center', marginLeft: '4px' }}>
+                                  {isEditsExpanded ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+                                </button>
+                              </div>
+                              <button onClick={() => globalPendingEdits.forEach(e => {
+                                window.dispatchEvent(new CustomEvent('cancel-preview-diff', { detail: { path: e.path } }));
+                                window.dispatchEvent(new CustomEvent('agentic-edit-error', { detail: { id: e.ids[0], ids: e.ids, isReject: true } }));
+                              })} style={{ fontSize: '12px', background: 'transparent', color: 'var(--text-muted)', border: 'none', cursor: 'pointer', padding: 0 }}>Reject<br/>all</button>
+                              
+                              <button onClick={() => globalPendingEdits.forEach(e => window.dispatchEvent(new CustomEvent('force-apply-diff', { detail: { path: e.path, body: e.body, id: e.ids[0], ids: e.ids } })))} style={{ fontSize: '12px', background: '#fde68a', color: '#000', border: 'none', borderRadius: '4px', padding: '4px 12px', cursor: 'pointer', fontWeight: 500 }}>
+                                Accept<br/>all
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })()}
 
                       {/* ── Input Bar (Composer) ── */}
                       <div className="input-bar">
