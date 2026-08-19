@@ -30,6 +30,37 @@ const liveServers = new Map();
 let apiKeyCache = {}
 
 // ============================================================
+// FREE MESSAGES PROXY & USAGE TRACKING
+// ============================================================
+const PROXY_URL = import.meta.env.VITE_PROXY_URL
+const APP_SECRET = import.meta.env.VITE_APP_SECRET
+const FREE_LIMIT = 2
+const FREE_USAGE_FILE = join(app.getPath('userData'), 'free-usage.json')
+
+function getFreeMessagesUsed() {
+  try {
+    if (existsSync(FREE_USAGE_FILE)) {
+      const data = JSON.parse(readFileSync(FREE_USAGE_FILE, 'utf-8'))
+      return data.count || 0
+    }
+  } catch (err) {
+    console.error('Failed to read free usage file', err)
+  }
+  return 0
+}
+
+function incrementFreeMessagesUsed() {
+  try {
+    const current = getFreeMessagesUsed()
+    writeFileSync(FREE_USAGE_FILE, JSON.stringify({ count: current + 1 }), 'utf-8')
+    return current + 1
+  } catch (err) {
+    console.error('Failed to write free usage file', err)
+    return 0
+  }
+}
+
+// ============================================================
 // SECURITY — Valid provider whitelist
 // Only these provider IDs are accepted via IPC. Prevents
 // arbitrary strings from being used as storage keys.
@@ -275,8 +306,27 @@ async function streamAnthropic(apiModel, prompt, sender, images = [], emitEvent 
  */
 async function streamGemini(apiModel, prompt, sender, images = [], emitEvent = 'ai-stream-chunk') {
   const { GoogleGenerativeAI } = await import('@google/generative-ai')
-  const genAI = new GoogleGenerativeAI(apiKeyCache['google'])
-  const model = genAI.getGenerativeModel({ model: apiModel })
+  
+  let apiKey = apiKeyCache['google']
+  let requestOptions = {}
+
+  if (!apiKey) {
+    // Increment usage since we are using the proxy
+    incrementFreeMessagesUsed()
+    
+    // Use proxy configuration
+    // The SDK requires an API key string, even if dummy, to instantiate
+    apiKey = 'PROXY_DUMMY_KEY'
+    requestOptions = {
+      baseUrl: PROXY_URL,
+      customHeaders: {
+        'X-App-Secret': APP_SECRET
+      }
+    }
+  }
+
+  const genAI = new GoogleGenerativeAI(apiKey)
+  const model = genAI.getGenerativeModel({ model: apiModel }, requestOptions)
 
   let parts = [prompt]
   if (images && images.length > 0) {
@@ -392,13 +442,28 @@ async function routeToProvider(modelId, prompt, sender, fullConfig = {}) {
   // Check if API key exists for this provider
   const apiKey = apiKeyCache[config.provider]
   if (!apiKey) {
-    sender.send(
-      emitEvent,
-      `// ⚠️ No API key configured for "${config.provider}".\n` +
-      `// Go to Settings (gear icon) → Select "${config.provider}" → Paste your API key → Save.\n` +
-      `// Then try again.\n`
-    )
-    return
+    if (config.provider === 'google') {
+      const freeUsage = getFreeMessagesUsed()
+      if (freeUsage < FREE_LIMIT) {
+        console.log(`Using free message ${freeUsage + 1}/${FREE_LIMIT} for Google Gemini...`)
+      } else {
+        sender.send(
+          emitEvent,
+          `// ⚠️ Free messages (${FREE_LIMIT}/${FREE_LIMIT}) exhausted. No API key configured for "${config.provider}".\n` +
+          `// Go to Settings (gear icon) → Select "${config.provider}" → Paste your API key → Save.\n` +
+          `// Then try again.\n`
+        )
+        return
+      }
+    } else {
+      sender.send(
+        emitEvent,
+        `// ⚠️ No API key configured for "${config.provider}".\n` +
+        `// Go to Settings (gear icon) → Select "${config.provider}" → Paste your API key → Save.\n` +
+        `// Then try again.\n`
+      )
+      return
+    }
   }
 
   if (config.provider === 'groq') {
