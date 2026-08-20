@@ -59,6 +59,7 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: npm run dist:win
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DEBUG: electron-builder,electron-rebuild:*
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
@@ -71,6 +72,7 @@ jobs:
           sips -z 1024 1024 build/icon.png
           npm run dist:mac:${{ matrix.arch }}
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DEBUG: electron-builder,electron-rebuild:*
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
