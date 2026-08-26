@@ -36,6 +36,7 @@ const api = {
   // ── File Operations ──
 
   // File Explorer
+  getStartupWorkspace: () => ipcRenderer.invoke('get-startup-workspace'),
   selectFolder: () => ipcRenderer.invoke('select-folder'),
       selectFile: () => ipcRenderer.invoke('select-file'),
       showSaveDialog: (options) => ipcRenderer.invoke('show-save-dialog', options),

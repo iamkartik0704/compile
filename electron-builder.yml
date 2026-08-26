@@ -18,6 +18,10 @@ publish:
 win:
   executableName: compile-editor
   icon: build/icon.ico
+  target:
+    - nsis
+nsis:
+  include: "build/installer.nsh"
 mac:
   target: ['zip']
   entitlements: build/entitlements.mac.plist

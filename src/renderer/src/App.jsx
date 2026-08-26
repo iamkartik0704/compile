@@ -51,7 +51,11 @@ function timeAgo(timestamp) {
   return "just now";
 }
 
-const renderMessageParts = (content) => {
+const renderMessageParts = (content, msg) => {
+  // Strip the plan block from the main text body if it exists, so we don't render raw XML.
+  if (msg && msg.plan) {
+    content = content.replace(/<plan>([\s\S]*?)(?:<\/plan>|$)/i, '')
+  }
   const parts = []
   // Matches <edit_file path="xyz"> ... </edit_file>
   // using [\s\S]*? to match across newlines
@@ -501,6 +505,14 @@ function App() {
   const [deletingProvider, setDeletingProvider] = useState(null) // which provider is pending delete confirmation
 
   useEffect(() => {
+    window.api.getStartupWorkspace().then(workspace => {
+      if (workspace) {
+        setProjectRoot(workspace)
+      }
+    })
+  }, [])
+
+  useEffect(() => {
     if (projectRoot) {
       try {
         const stored = localStorage.getItem('recent-projects')
@@ -843,35 +855,29 @@ function App() {
     const handleEditSuccess = (e) => {
       const { id, ids } = e.detail;
       const targetIds = ids || [id];
-      setChatSessions(prev => {
-        const next = { ...prev }
-        Object.keys(next).forEach(chatId => {
-          next[chatId] = next[chatId].map(msg => {
-            if (msg.proposedEdits) {
-              const updatedEdits = msg.proposedEdits.map(edit => targetIds.includes(edit.id) ? { ...edit, status: 'approved', error: null } : edit)
-              return { ...msg, proposedEdits: updatedEdits }
-            }
-            return msg
-          })
+      updateChatMessages(useChatStore.getState().activeSessionId, prev => {
+        if (!prev) return prev
+        return prev.map(msg => {
+          if (msg.proposedEdits) {
+            const updatedEdits = msg.proposedEdits.map(edit => targetIds.includes(edit.id) ? { ...edit, status: 'approved', error: null } : edit)
+            return { ...msg, proposedEdits: updatedEdits }
+          }
+          return msg
         })
-        return next
       })
     }
     const handleEditError = (e) => {
       const { id, ids, error, isReject } = e.detail;
       const targetIds = ids || [id];
-      setChatSessions(prev => {
-        const next = { ...prev }
-        Object.keys(next).forEach(chatId => {
-          next[chatId] = next[chatId].map(msg => {
-            if (msg.proposedEdits) {
-              const updatedEdits = msg.proposedEdits.map(edit => targetIds.includes(edit.id) ? { ...edit, status: isReject ? 'rejected' : 'pending', error } : edit)
-              return { ...msg, proposedEdits: updatedEdits }
-            }
-            return msg
-          })
+      updateChatMessages(useChatStore.getState().activeSessionId, prev => {
+        if (!prev) return prev
+        return prev.map(msg => {
+          if (msg.proposedEdits) {
+            const updatedEdits = msg.proposedEdits.map(edit => targetIds.includes(edit.id) ? { ...edit, status: isReject ? 'rejected' : 'pending', error } : edit)
+            return { ...msg, proposedEdits: updatedEdits }
+          }
+          return msg
         })
-        return next
       })
     }
     window.addEventListener('agentic-edit-success', handleEditSuccess)
@@ -1806,6 +1812,7 @@ the new code
 </replace>
 </edit_file>
 You can output multiple <search>/<replace> blocks if needed.
+CRITICAL RULE: Before outputting ANY <edit_file> blocks, you MUST first output an implementation plan wrapped in <plan>...</plan> tags explaining your reasoning. This is required even for simple single-file changes.
 CRITICAL RULE: If the file is empty, or you are creating a new file from scratch, or you want to entirely replace the file contents, you MUST leave the <search> block completely empty (i.e., <search></search>).`
 
         contextBlocks.push(diffInstructions)
@@ -1850,6 +1857,12 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
         // Stream is now fully finished
         setIsStreaming(false)
         const finalMsg = streamRef.current
+        
+        // Extract robustly: handles unclosed tags if stream was cut off
+        const planRegex = /<plan>([\s\S]*?)(?:<\/plan>|$)/i
+        const planMatch = planRegex.exec(finalMsg)
+        const planText = planMatch ? planMatch[1].trim() : null
+
         const regex = /<edit_file\s+path="([^"]+)">([\s\S]*?)<\/edit_file>/g
         let match
         const edits = []
@@ -1862,14 +1875,14 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
           })
         }
 
-        if (edits.length > 0) {
+        if (edits.length > 0 || planText) {
           updateChatMessages(streamingSessionIdRef.current, (prev) => {
             if (!prev || prev.length === 0) return prev
             const newMsgs = [...prev]
             const lastMsg = newMsgs[newMsgs.length - 1]
             return [
               ...newMsgs.slice(0, -1),
-              { ...lastMsg, proposedEdits: edits }
+              { ...lastMsg, proposedEdits: edits, plan: planText }
             ]
           })
         }
@@ -3541,7 +3554,7 @@ the new code
                               <div className="message-content">
                                 {msg.role === 'assistant' ? (
                                   <>
-                                    {renderMessageParts(msg.content + (isStreaming && i === messages.length - 1 ? ' ▌' : '')).map((part, idx) => (
+                                    {renderMessageParts(msg.content + (isStreaming && i === messages.length - 1 ? ' ▌' : ''), msg).map((part, idx) => (
                                     part.type === 'text' ? (
                                       <ReactMarkdown
                                         key={idx}
@@ -3625,8 +3638,29 @@ the new code
                         }
                         const globalPendingEdits = Array.from(editMap.values());
                         
+                        const activePlanMessage = messages.slice().reverse().find(m => m.plan && m.proposedEdits?.some(e => e.status === 'pending'));
+                        const activePlan = activePlanMessage?.plan;
+                        
                         return (
                           <div className="proposed-edits-card" style={{ padding: '0 12px 8px 12px', display: 'flex', flexDirection: 'column', gap: '2px', background: 'transparent' }}>
+                            {activePlan && isEditsExpanded && (
+                              <div className="plan-container" style={{ padding: '12px', marginBottom: '8px', background: 'var(--bg-light)', borderRadius: '6px', fontSize: '13px', color: 'var(--text-color)', border: '1px solid var(--border-light)' }}>
+                                <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Proposed Plan</div>
+                                <ReactMarkdown
+                                  components={{
+                                    code({ node, inline, className, children, ...props }) {
+                                      return (
+                                        <code {...props} className={className} style={{ background: 'var(--bg-dark)', padding: '2px 4px', borderRadius: '4px', fontFamily: 'monospace' }}>
+                                          {children}
+                                        </code>
+                                      )
+                                    }
+                                  }}
+                                >
+                                  {activePlan}
+                                </ReactMarkdown>
+                              </div>
+                            )}
                             {isEditsExpanded && globalPendingEdits.map((edit, idx) => {
                                const addedLines = (edit.body.match(/<replace>([\s\S]*?)<\/replace>/g) || []).reduce((acc, m) => acc + Math.max(0, m.replace(/<\/?replace>/g, '').split('\n').length - 1), 0);
                                const removedLines = (edit.body.match(/<search>([\s\S]*?)<\/search>/g) || []).reduce((acc, m) => acc + Math.max(0, m.replace(/<\/?search>/g, '').split('\n').length - 1), 0);
@@ -4079,8 +4113,8 @@ the new code
               {shareModal.mode === 'confirm-revoke' && "This chat is currently shared. Do you want to revoke the public link?"}
               {shareModal.mode === 'shared-success' && (
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center', background: 'var(--bg-input)', padding: '8px 12px', borderRadius: '6px', border: '1px solid var(--border-base)' }}>
-                  <input type="text" readOnly value={`https://kartikchawla.in/share/${shareModal.data.id}`} style={{ flex: 1, background: 'transparent', border: 'none', color: 'var(--text-main)', outline: 'none', fontSize: '0.9rem' }} />
-                  <CopyButton textToCopy={`https://kartikchawla.in/share/${shareModal.data.id}`} />
+                  <input type="text" readOnly value={`https://ideweb-eta.vercel.app/share/${shareModal.data.id}`} style={{ flex: 1, background: 'transparent', border: 'none', color: 'var(--text-main)', outline: 'none', fontSize: '0.9rem' }} />
+                  <CopyButton textToCopy={`https://ideweb-eta.vercel.app/share/${shareModal.data.id}`} />
                 </div>
               )}
               {shareModal.error && <div style={{ color: 'var(--accent-red, #f87171)', marginTop: '12px', fontSize: '0.85rem' }}>{shareModal.error}</div>}

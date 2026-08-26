@@ -116,12 +116,12 @@ function resolveAutoMode(prompt) {
 const MODEL_CONFIG = {
   'gemini-flash': {
     provider: 'google',
-    apiModel: 'gemini-2.5-flash',
+    apiModel: 'gemini-3.6-flash',
     type: 'gemini'
   },
   'gemini-1.5-flash': {
     provider: 'google',
-    apiModel: 'gemini-2.5-flash',
+    apiModel: 'gemini-3.6-flash',
     type: 'gemini'
   },
   'gemini-pro': {
@@ -661,6 +661,23 @@ function createWindow() {
 
 
 // --- FILE EXPLORER HANDLERS ---
+ipcMain.handle('get-startup-workspace', async () => {
+  // In packaged app, argv[1] is typically the file/folder path passed from Windows context menu
+  const args = app.isPackaged ? process.argv.slice(1) : process.argv.slice(2);
+  const targetPath = args.find(a => !a.startsWith('--') && !a.startsWith('comiple://') && a !== '.');
+  
+  if (targetPath) {
+    try {
+      const { statSync } = require('fs');
+      const { dirname } = require('path');
+      const stats = statSync(targetPath);
+      return stats.isDirectory() ? targetPath : dirname(targetPath);
+    } catch (e) {
+      return null;
+    }
+  }
+  return null;
+})
 ipcMain.handle('show-save-dialog', async (event, options) => {
   const result = await dialog.showSaveDialog(options || {})
   if (result.canceled) return null
