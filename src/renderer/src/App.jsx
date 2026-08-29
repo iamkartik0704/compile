@@ -1553,6 +1553,11 @@ the new code
             }
           }
 
+          // Let the terminal handle its own shortcuts natively (e.g. Ctrl+C for copy/SIGINT, Ctrl+V for paste)
+          if (activeEl && activeEl.classList.contains('xterm-helper-textarea') && id.startsWith('edit.')) {
+            return false;
+          }
+
           window.dispatchEvent(new CustomEvent('editor-action', { detail: id }))
           return true
         }
@@ -1885,6 +1890,12 @@ CRITICAL RULE: If the file is empty, or you are creating a new file from scratch
               { ...lastMsg, proposedEdits: edits, plan: planText }
             ]
           })
+
+          if (planText) {
+            const newId = `untitled:Implementation-Plan-${Date.now()}.md`
+            setOpenFiles(prev => [...prev, { name: 'Implementation Plan.md', path: newId, initialContent: planText }])
+            setActiveFile(newId)
+          }
         }
       } catch (err) {
         console.error('Send error:', err)
@@ -3455,10 +3466,10 @@ the new code
                   orientation="vertical"
                   onResize={(x) => setRightPanelWidth(Math.max(200, Math.min(window.innerWidth - x, 800)))}
                 />
-                <div className="right-pane" style={{ width: `${rightPanelWidth}px` }}>
+                <div className="right-pane" style={{ width: `${rightPanelWidth}px`, display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
                   {/* ── Chat Panel ── */}
                   {rightPanel === 'chat' && (
-                    <div className="chat-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                    <div className="chat-panel" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
                       <div className="chat-header" style={{ display: 'flex', padding: '10px 16px', borderBottom: '1px solid var(--border-subtle)', background: 'var(--bg-surface)', alignItems: 'center', gap: '8px' }}>
                         <div className="model-selector-wrapper" style={{ flex: 1 }}>
                           <select 
@@ -3645,20 +3656,26 @@ the new code
                           <div className="proposed-edits-card" style={{ padding: '0 12px 8px 12px', display: 'flex', flexDirection: 'column', gap: '2px', background: 'transparent' }}>
                             {activePlan && isEditsExpanded && (
                               <div className="plan-container" style={{ padding: '12px', marginBottom: '8px', background: 'var(--bg-light)', borderRadius: '6px', fontSize: '13px', color: 'var(--text-color)', border: '1px solid var(--border-light)' }}>
-                                <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Proposed Plan</div>
-                                <ReactMarkdown
-                                  components={{
-                                    code({ node, inline, className, children, ...props }) {
-                                      return (
-                                        <code {...props} className={className} style={{ background: 'var(--bg-dark)', padding: '2px 4px', borderRadius: '4px', fontFamily: 'monospace' }}>
-                                          {children}
-                                        </code>
-                                      )
-                                    }
-                                  }}
-                                >
-                                  {activePlan}
-                                </ReactMarkdown>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                  <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Proposed Plan</div>
+                                  <button
+                                    onClick={() => {
+                                      const newId = `untitled:Implementation-Plan-${msg.id || Date.now()}.md`
+                                      setOpenFiles(prev => {
+                                        const exists = prev.find(f => f.path === newId)
+                                        if (exists) return prev
+                                        return [...prev, { name: 'Implementation Plan.md', path: newId, initialContent: activePlan }]
+                                      })
+                                      setActiveFile(newId)
+                                    }}
+                                    style={{
+                                      background: 'var(--bg-hover)', color: 'var(--text-main)', border: '1px solid var(--border-subtle)',
+                                      padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px'
+                                    }}
+                                  >
+                                    Open in New Tab
+                                  </button>
+                                </div>
                               </div>
                             )}
                             {isEditsExpanded && globalPendingEdits.map((edit, idx) => {

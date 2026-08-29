@@ -734,3 +734,49 @@
   color: #1e1e1e;
 }
 
+/* Markdown Preview Styling */
+.markdown-preview {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  line-height: 1.6;
+}
+
+.markdown-preview h1,
+.markdown-preview h2,
+.markdown-preview h3,
+.markdown-preview h4,
+.markdown-preview h5,
+.markdown-preview h6 {
+  margin-top: 24px;
+  margin-bottom: 16px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--text-primary);
+}
+
+.markdown-preview h1 { font-size: 2em; padding-bottom: 0.3em; border-bottom: 1px solid var(--border-base); }
+.markdown-preview h2 { font-size: 1.5em; padding-bottom: 0.3em; border-bottom: 1px solid var(--border-base); }
+.markdown-preview h3 { font-size: 1.25em; }
+.markdown-preview h4 { font-size: 1em; }
+
+.markdown-preview p { margin-top: 0; margin-bottom: 16px; }
+
+.markdown-preview ul,
+.markdown-preview ol {
+  margin-top: 0;
+  margin-bottom: 16px;
+  padding-left: 2em;
+}
+
+.markdown-preview li {
+  margin-top: 0.25em;
+}
+
+.markdown-preview li > p {
+  margin-top: 16px;
+}
+
+.markdown-preview img {
+  max-width: 100%;
+  box-sizing: content-box;
+  background-color: transparent;
+}

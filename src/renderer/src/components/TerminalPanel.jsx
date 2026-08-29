@@ -250,6 +250,16 @@ export const TerminalPanel = forwardRef(({ height, cwd, onFixWithAi, hideHeader 
     }
   }, [height, isTerminalReady])
 
+  // Handle CWD change
+  const prevCwd = useRef(cwd)
+  useEffect(() => {
+    if (isTerminalReady && terminalId.current !== null && cwd && cwd !== prevCwd.current) {
+      prevCwd.current = cwd
+      // Use cd command and then clear to keep the terminal clean
+      window.api.sendTerminalData(terminalId.current, `cd "${cwd}"\r`)
+    }
+  }, [cwd, isTerminalReady])
+
   return (
     <div className="terminal-container" style={{ height: height ? (typeof height === 'number' ? `${height}px` : height) : '100%', display: 'flex', flexDirection: 'column' }}>
       {!hideHeader && (

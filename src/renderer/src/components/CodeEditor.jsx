@@ -9,6 +9,9 @@ import { GitGraph } from './GitGraph'
 import { PostmanView } from './PostmanView'
 import { SettingsEditor } from './SettingsEditor'
 import { KeyboardShortcuts } from './KeyboardShortcuts'
+import ReactMarkdown from 'react-markdown'
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { useAppStore } from '../store/appStore'
 import { EXTENSIONS } from '../utils/extensionRegistry'
 import { runEsLint, runPrettier, formatWithPrettier, isExtensionEnabled } from '../utils/linterService'
@@ -868,6 +871,9 @@ export const CodeEditor = ({
 
   const [fileContents, setFileContents] = useState({})
   const [currentValue, setCurrentValue] = useState('')
+  const [mdPreviewState, setMdPreviewState] = useState({})
+  
+  const extCounts = useFileCounts()
   const [draggedTabIdx, setDraggedTabIdx] = useState(null)
   const [contextMenu, setContextMenu] = useState(null)
   const [editorContextMenu, setEditorContextMenu] = useState(null)
@@ -1215,8 +1221,10 @@ export const CodeEditor = ({
 
     if (activeFile.startsWith('untitled:')) {
       if (!fileContents[activeFile]) {
-        setFileContents(prev => ({ ...prev, [activeFile]: { content: '', isLoading: false } }))
-        setCurrentValue('')
+        const fileObj = openFiles.find(f => f.path === activeFile)
+        const initContent = fileObj?.initialContent || ''
+        setFileContents(prev => ({ ...prev, [activeFile]: { content: initContent, isLoading: false } }))
+        setCurrentValue(initContent)
       } else {
         setCurrentValue(fileContents[activeFile].content)
       }
@@ -1933,8 +1941,16 @@ export const CodeEditor = ({
 
   const handleDiffEditorMountWrapper = (editor, monacoInstance) => {
     const modifiedEditor = editor.getModifiedEditor()
-    modifiedEditor.onDidChangeModelContent(() => {
+    const disposable = modifiedEditor.onDidChangeModelContent(() => {
+      const model = modifiedEditor.getModel()
+      if (!model || model.isDisposed()) return
       handleEditorChange(modifiedEditor.getValue())
+    })
+    
+    editor.onDidDispose(() => {
+      if (disposable) {
+        disposable.dispose()
+      }
     })
   }
 
@@ -2427,27 +2443,43 @@ export const CodeEditor = ({
 
         {/* Run & Optimizer Button Container pinned to the right */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 12px', flexShrink: 0 }}>
-          <button
-            className="action-btn compress-context-btn"
-            onClick={(e) => {
-              e.stopPropagation()
-              setShowContextInspector(true)
-            }}
-            style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'var(--bg-elevated)', color: 'var(--accent-color)', padding: '4px 12px', border: '1px solid var(--border-base)', borderRadius: '4px', cursor: 'pointer', fontWeight: 500, fontSize: '0.85rem' }}
-          >
-            <Sparkles size={14} />
-            Compress Context
-          </button>
-          <button
-            className="action-btn"
-            onClick={(e) => {
-              e.stopPropagation()
-              if (onRun) onRun()
-            }}
-            style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'var(--accent-color)', color: 'var(--bg-deep)', padding: '4px 12px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 500, fontSize: '0.85rem' }}
-          >
-            ▶ Run
-          </button>
+          {activeFile && !activeFile.match(/\.(md|txt|csv|json)$/i) && (
+            <button
+              className="action-btn compress-context-btn"
+              onClick={(e) => {
+                e.stopPropagation()
+                setShowContextInspector(true)
+              }}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'var(--bg-elevated)', color: 'var(--accent-color)', padding: '4px 12px', border: '1px solid var(--border-base)', borderRadius: '4px', cursor: 'pointer', fontWeight: 500, fontSize: '0.85rem' }}
+            >
+              <Sparkles size={14} />
+              Compress Context
+            </button>
+          )}
+          {activeFile && activeFile.endsWith('.md') && (
+            <button
+              className="action-btn"
+              onClick={(e) => {
+                e.stopPropagation()
+                setMdPreviewState(prev => ({ ...prev, [activeFile]: !prev[activeFile] }))
+              }}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'var(--bg-elevated)', color: 'var(--text-primary)', padding: '4px 12px', border: '1px solid var(--border-base)', borderRadius: '4px', cursor: 'pointer', fontWeight: 500, fontSize: '0.85rem' }}
+            >
+              {mdPreviewState[activeFile] ? 'Code Mode' : 'Preview Mode'}
+            </button>
+          )}
+          {activeFile && activeFile.match(/\.(js|jsx|ts|tsx|py|rb|go|rs|java|cpp|c|cs|sh|bash|php|toad)$/i) && (
+            <button
+              className="action-btn"
+              onClick={(e) => {
+                e.stopPropagation()
+                if (onRun) onRun()
+              }}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'var(--accent-color)', color: 'var(--bg-deep)', padding: '4px 12px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 500, fontSize: '0.85rem' }}
+            >
+              ▶ Run
+            </button>
+          )}
           
           <div style={{ width: '1px', height: '16px', background: 'var(--border-base)', margin: '0 4px' }} />
           
@@ -2753,6 +2785,47 @@ export const CodeEditor = ({
               </div>
             )
           })()
+        ) : !fileContents[activeFile]?.isLoading && mdPreviewState[activeFile] && activeFile.endsWith('.md') ? (
+          <div className="markdown-preview" style={{ padding: '40px', color: 'var(--text-main)', maxWidth: '900px', margin: '0 auto', height: '100%', overflowY: 'auto' }}>
+            <ReactMarkdown
+              components={{
+                code({ node, inline, className, children, ...props }) {
+                  const match = /language-(\w+)/.exec(className || '')
+                  return !inline && match ? (
+                    <SyntaxHighlighter
+                      style={vscDarkPlus}
+                      language={match[1]}
+                      PreTag="div"
+                      {...props}
+                    >
+                      {String(children).replace(/\n$/, '')}
+                    </SyntaxHighlighter>
+                  ) : (
+                    <code className={className} style={{ background: 'var(--bg-elevated)', padding: '2px 4px', borderRadius: '4px', color: 'var(--accent-color)' }} {...props}>
+                      {children}
+                    </code>
+                  )
+                },
+                a({ node, children, ...props }) {
+                  return <a style={{ color: '#60a5fa', textDecoration: 'underline' }} {...props}>{children}</a>
+                },
+                table({ node, children, ...props }) {
+                  return <table style={{ borderCollapse: 'collapse', width: '100%', marginBottom: '16px', border: '1px solid var(--border-base)' }} {...props}>{children}</table>
+                },
+                th({ node, children, ...props }) {
+                  return <th style={{ borderBottom: '1px solid var(--border-base)', padding: '8px 12px', textAlign: 'left', background: 'var(--bg-elevated)' }} {...props}>{children}</th>
+                },
+                td({ node, children, ...props }) {
+                  return <td style={{ borderBottom: '1px solid var(--border-base)', padding: '8px 12px' }} {...props}>{children}</td>
+                },
+                blockquote({ node, children, ...props }) {
+                  return <blockquote style={{ borderLeft: '4px solid var(--accent-color)', paddingLeft: '16px', margin: '16px 0', color: 'var(--text-muted)' }} {...props}>{children}</blockquote>
+                }
+              }}
+            >
+              {currentValue}
+            </ReactMarkdown>
+          </div>
         ) : !fileContents[activeFile]?.isLoading && (
           (effectiveShowDiff || (previewDiff && previewDiff.path === activeFile)) ? (
             <DiffEditor

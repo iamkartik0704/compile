@@ -3,10 +3,9 @@ const os = require('os')
 
 const ptys = {}
 
-// Default shell detection
 function getDefaultShell() {
   if (os.platform() === 'win32') {
-    return process.env.COMSPEC || 'powershell.exe'
+    return process.env.COMSPEC || 'cmd.exe'
   }
   return process.env.SHELL || '/bin/bash'
 }
@@ -15,7 +14,11 @@ process.on('message', (msg) => {
   try {
     if (msg.type === 'create') {
       const shell = msg.shell || getDefaultShell()
-      const ptyProcess = pty.spawn(shell, [], {
+      const args = []
+      if (os.platform() === 'win32' && shell.toLowerCase().endsWith('cmd.exe')) {
+        args.push('/k', 'doskey clear=cls')
+      }
+      const ptyProcess = pty.spawn(shell, args, {
         name: 'xterm-color',
         cols: msg.cols || 80,
         rows: msg.rows || 24,

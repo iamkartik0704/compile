@@ -15,7 +15,7 @@ class TerminalManager {
 
   getDefaultShell() {
     if (os.platform() === 'win32') {
-      return process.env.COMSPEC || 'powershell.exe'
+      return process.env.COMSPEC || 'cmd.exe'
     }
     if (os.platform() === 'darwin') {
       return process.env.SHELL || '/bin/zsh'
@@ -44,7 +44,12 @@ class TerminalManager {
 
       try {
         const shell = options.shell || this.getDefaultShell()
-        const ptyProcess = pty.spawn(shell, [], {
+        const args = []
+        if (os.platform() === 'win32' && shell.toLowerCase().endsWith('cmd.exe')) {
+          args.push('/k', 'doskey clear=cls')
+        }
+        
+        const ptyProcess = pty.spawn(shell, args, {
           name: 'xterm-color',
           cols: options.cols || 80,
           rows: options.rows || 24,

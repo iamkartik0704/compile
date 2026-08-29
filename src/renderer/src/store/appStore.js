@@ -8,7 +8,7 @@ export const useAppStore = create(
       activePanel: 'explorer', // 'explorer', 'search', 'git', 'extensions', 'settings'
       activeTheme: 'compile-dark', // 'compile-dark', 'dark-plus', 'light-modern', 'dracula'
       extensions: EXTENSIONS,
-      autoSave: false,
+      autoSave: true,
       breakpoints: {}, // { [filePath]: number[] }
       
       setActivePanel: (panel) => set({ activePanel: panel }),
