@@ -14,6 +14,7 @@ import {
   JAVA_INSTRUMENT_SOLUTION_PROMPT,
   EXPLANATION_PROMPT,
   SAMPLE_INPUT_PROMPT,
+  COMPLEXITY_ANALYSIS_PROMPT,
   detectStructure,
   extractJson
 } from './dsa/dsaUtils'
@@ -72,6 +73,7 @@ export function DSAExplainer({ initialCode, initialLanguage, aiConfig, onClose }
   const [explanationSteps, setExplanationSteps] = useState([])
   const [explanationLoading, setExplanationLoading] = useState(false)
   const [runOutput, setRunOutput] = useState('')
+  const [complexityData, setComplexityData] = useState(null)
 
   useEffect(() => { setCurrentStep(0); setIsPlaying(false) }, [trace])
 
@@ -86,6 +88,7 @@ export function DSAExplainer({ initialCode, initialLanguage, aiConfig, onClose }
     prevLanguageRef.current = language
     setTrace([])
     setExplanationSteps([])
+    setComplexityData(null)
     setErrorMsg('')
     setRunOutput('')
     setRunStatus('idle')
@@ -205,6 +208,7 @@ export function DSAExplainer({ initialCode, initialLanguage, aiConfig, onClose }
       setErrorMsg('')
       setTrace([])
       setExplanationSteps([])
+      setComplexityData(null)
       setTruncated(false)
       setAssumedInput(false)
 
@@ -374,11 +378,22 @@ export function DSAExplainer({ initialCode, initialLanguage, aiConfig, onClose }
       try {
         const rawExp = await runAiOnce(EXPLANATION_PROMPT(code, capturedTrace))
         if (runGenerationRef.current !== currentGen) return
-        const parsed = extractJson(stripFences(rawExp))
-        if (Array.isArray(parsed)) {
-          setExplanationSteps(parsed.map(s => String(s)))
+        
+        const parsedExp = extractJson(stripFences(rawExp))
+        if (Array.isArray(parsedExp)) {
+          setExplanationSteps(parsedExp.map(s => String(s)))
         } else {
           setExplanationSteps(capturedTrace.map((_, i) => `Step ${i + 1}: (explanation unavailable)`))
+        }
+
+        try {
+          const rawComp = await runAiOnce(COMPLEXITY_ANALYSIS_PROMPT(code, language))
+          if (runGenerationRef.current === currentGen && rawComp) {
+            const parsedComp = extractJson(stripFences(rawComp))
+            if (parsedComp && parsedComp.timeComplexity) setComplexityData(parsedComp)
+          }
+        } catch (compErr) {
+          // Ignore complexity analysis failure so it doesn't break the run
         }
       } catch (err) {
         setExplanationSteps(capturedTrace.map((_, i) => `Step ${i + 1}: (explanation unavailable)`))
@@ -554,6 +569,7 @@ export function DSAExplainer({ initialCode, initialLanguage, aiConfig, onClose }
               currentStep={currentStep}
               loading={explanationLoading}
               runOutput={runOutput}
+              complexityData={complexityData}
             />
           </div>
         </div>

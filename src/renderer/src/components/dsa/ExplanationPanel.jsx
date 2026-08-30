@@ -1,8 +1,9 @@
 import React, { useEffect, useRef } from 'react'
+import { Clock, Database, Lightbulb } from 'lucide-react'
 
 // Scrolls the paragraph matching the current step into view and
 // highlights it. `steps` is a string[] parallel to trace.
-export function ExplanationPanel({ steps, currentStep, loading, runOutput }) {
+export function ExplanationPanel({ steps, currentStep, loading, runOutput, complexityData }) {
   const containerRef = useRef(null)
   const activeRef = useRef(null)
 
@@ -46,6 +47,38 @@ export function ExplanationPanel({ steps, currentStep, loading, runOutput }) {
           </pre>
         </div>
       )}
+
+      {complexityData && (
+        <div style={{ marginBottom: '20px' }}>
+          <div style={sectionTitleStyle}>Complexity Analysis</div>
+          <div style={{ display: 'flex', gap: '12px', marginBottom: complexityData.recommendation ? '12px' : '0' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--bg-elevated)', padding: '8px 12px', borderRadius: '6px', border: '1px solid var(--border-base)', flex: 1 }}>
+              <Clock size={16} color="var(--accent-color)" />
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <span style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Time</span>
+                <span style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 500, fontFamily: 'monospace' }}>{complexityData.timeComplexity}</span>
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--bg-elevated)', padding: '8px 12px', borderRadius: '6px', border: '1px solid var(--border-base)', flex: 1 }}>
+              <Database size={16} color="var(--accent-color)" />
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <span style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Space</span>
+                <span style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 500, fontFamily: 'monospace' }}>{complexityData.spaceComplexity}</span>
+              </div>
+            </div>
+          </div>
+          {complexityData.recommendation && (
+            <div style={{ display: 'flex', gap: '10px', background: 'rgba(16, 185, 129, 0.1)', padding: '12px', borderRadius: '6px', borderLeft: '3px solid #10b981' }}>
+              <Lightbulb size={16} color="#10b981" style={{ flexShrink: 0, marginTop: '2px' }} />
+              <div style={{ fontSize: '12.5px', color: 'var(--text-primary)', lineHeight: 1.5 }}>
+                <strong style={{ display: 'block', fontSize: '11px', textTransform: 'uppercase', color: '#10b981', marginBottom: '4px' }}>Optimization Tip</strong>
+                {complexityData.recommendation}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <div style={sectionTitleStyle}>Explanation</div>
       {steps.map((text, i) => {
         const isActive = i === currentStep

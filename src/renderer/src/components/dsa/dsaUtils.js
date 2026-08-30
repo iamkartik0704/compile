@@ -190,6 +190,18 @@ Examples of valid outputs:
 [[3, 1, 4, 1, 5, 9, 2, 6]]
 `
 
+export const COMPLEXITY_ANALYSIS_PROMPT = (userCode, language) => `Analyze the time and space complexity of the following ${language} code.
+If the solution is a brute-force or naive approach, provide a short recommendation (1-2 sentences) for a more optimal approach. If it is already optimal, leave the recommendation empty.
+
+Code:
+${userCode}
+
+Return ONLY a JSON object (no markdown fences, no prose) with exactly these three keys:
+- "timeComplexity": A string representing the Big-O time complexity (e.g., "O(N^2)").
+- "spaceComplexity": A string representing the Big-O space complexity (e.g., "O(1)").
+- "recommendation": A string containing your suggestion for a better approach, or an empty string if optimal.
+`
+
 // ============================================================
 // STRUCTURE DETECTION
 // Inspects a trace frame's dataStructureState + user code and
