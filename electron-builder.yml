@@ -40,6 +40,7 @@ mac:
     - from: "resources/llvm-mac-arm64"
       to: "llvm"
       filter:
+        - "!**/*"
         - "bin/clangd"
         - "bin/clang++"
         - "bin/clang"
