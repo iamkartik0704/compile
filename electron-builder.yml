@@ -45,6 +45,7 @@ mac:
         - "bin/clang"
         - "include/**/*"
         - "lib/**/*"
+        - "!lib/**/*.a"
         - "LICENSE.TXT"
         - "NOTICE.TXT"
 afterPack: scripts/fix-permissions.js
