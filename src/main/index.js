@@ -13,7 +13,7 @@ import { terminalManager } from './terminal-manager.js'
 import { setupLspIpcHandlers, setMainWindowLspRef } from './lsp-manager.js'
 import { DapManager } from './dap-manager.js'
 import { setupCompilationDbHandlers } from './compilation-db.js'
-import { getCompilerPathsForLanguage, detectCppCompilers } from './compiler-detection.js'
+import { getCompilerPathsForLanguage, detectCppCompilers, getMacOsSdkPath, getCachedMacOsSdkPath } from './compiler-detection.js'
 import icon from '../../build/icon.png?asset'
 import { autoUpdater } from 'electron-updater'
           
@@ -1679,23 +1679,79 @@ async function resolveJdkTool(name) {
   return { path: name, useShell: true }
 }
 
-// Resolve the g++ / clang++ path. Prefer the compiler already saved
-// by clangd's detection (so we don't ship a second detection path);
-// fall back to the first auto-detected compiler; then to PATH.
+export function getBundledBinaryPath(binName) {
+  const isWin = process.platform === 'win32';
+  const executable = `${binName}${isWin ? '.exe' : ''}`;
+  const resourceBase = app.isPackaged 
+    ? path.join(process.resourcesPath, 'llvm') 
+    : path.join(__dirname, '../../resources', `llvm-${isWin ? 'win-x64' : 'mac-arm64'}`);
+
+  const binPath = path.join(resourceBase, 'bin', executable);
+  return existsSync(binPath) ? binPath : null;
+}
+
+export async function ensureMacSystemHeaders() {
+  if (process.platform === 'darwin') {
+    try {
+      require('child_process').execSync('xcode-select -p', { stdio: 'ignore' });
+      return await getMacOsSdkPath(); // Populates cache synchronously for LSP
+    } catch (e) {
+      dialog.showErrorBox(
+        'Xcode Command Line Tools Missing',
+        'comπle requires Xcode Command Line Tools to compile C++ on macOS. An installation prompt will now open. Please restart comπle after installation completes.'
+      );
+      require('child_process').exec('xcode-select --install'); 
+      return null;
+    }
+  }
+  return true;
+}
+
+// Resolve the g++ / clang++ path. Prefer the bundled llvm-mingw or Mac clang++ first.
 async function resolveCppCompilerPath() {
+  if (process.platform === 'darwin' && process.arch !== 'arm64') {
+    throw new Error("comπle's bundled C++ toolchain currently supports Apple Silicon Macs only");
+  }
+
+  let macSdkPath = process.platform === 'darwin' ? getCachedMacOsSdkPath() : true;
+  if (!macSdkPath) {
+    // Retry once if they installed it while the app was running
+    macSdkPath = await ensureMacSystemHeaders();
+    if (!macSdkPath) throw new Error("Compilation paused. Please install Xcode Command Line Tools and restart comπle.");
+  }
+
+  const requiredArgs = [];
+  if (process.platform === 'darwin' && typeof macSdkPath === 'string') {
+    requiredArgs.push('-isysroot', macSdkPath);
+  }
+
+  const targetBin = process.platform === 'win32' ? 'x86_64-w64-mingw32-clang++' : 'clang++';
+  const bundled = getBundledBinaryPath(targetBin);
+  
+  if (bundled) return { path: bundled, requiredArgs };
+
   const configured = getCompilerPathsForLanguage('cpp')
-  if (configured && existsSync(configured)) return configured
+  if (configured && existsSync(configured)) return { path: configured, requiredArgs }
 
   const detected = await detectCppCompilers()
   if (detected.length > 0) {
     const isClang = detected[0].binDir.toLowerCase().includes('clang')
     const exe = isClang ? 'clang++' : 'g++'
     const suffix = os.platform() === 'win32' ? '.exe' : ''
-    const candidate = require('path').join(detected[0].binDir, exe + suffix).replace(/\\/g, '/')
-    if (existsSync(candidate)) return candidate
+    const candidate = path.join(detected[0].binDir, exe + suffix).replace(/\\/g, '/')
+    if (existsSync(candidate)) return { path: candidate, requiredArgs }
   }
-  // Fall back to PATH — spawn will error if it's still missing.
-  return os.platform() === 'win32' ? 'g++.exe' : 'g++'
+  
+  // Verify final fallback against system PATH before returning
+  const fallback = os.platform() === 'win32' ? 'g++.exe' : 'g++';
+  try {
+    const { execFileSync } = require('child_process');
+    const checkCmd = os.platform() === 'win32' ? 'where' : 'which';
+    execFileSync(checkCmd, [fallback], { stdio: 'ignore' });
+    return { path: fallback, requiredArgs };
+  } catch (e) {
+    throw new Error("No C++ compiler found (bundled or system PATH).");
+  }
 }
 
 // Spawn a compiler, resolve with { success, stderr } — bounded by
@@ -1873,10 +1929,10 @@ async function runInstrumentedCodeCore(language, code) {
       return { success: false, error: 'Failed to write temp file: ' + err.message }
     }
 
-    const compilerPath = await resolveCppCompilerPath()
+    const compiler = await resolveCppCompilerPath()
     const compileResult = await runCompiler(
-      compilerPath,
-      ['-std=c++17', '-O0', '-w', srcPath, '-o', binPath],
+      compiler.path,
+      [...compiler.requiredArgs, '-std=c++17', '-O0', '-w', srcPath, '-o', binPath],
       tmpDir
     )
 
@@ -2074,7 +2130,10 @@ ipcMain.handle('toggle-dev-tools', () => {
   }
 })
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+    if (process.platform === 'darwin') {
+      await ensureMacSystemHeaders();
+    }
     // Register custom protocol for fetching WASM files
     protocol.registerFileProtocol('wasm', (request, callback) => {
       const url = request.url.substring(7)

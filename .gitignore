@@ -16,6 +16,7 @@ dist/
 dist-electron/
 release/
 build/
+resources/llvm-*/
 !build/icon.ico
 !build/icon.png
 !build/icon.icns

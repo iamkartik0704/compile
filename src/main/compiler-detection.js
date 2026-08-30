@@ -193,6 +193,10 @@ export async function getMacOsSdkPath() {
   }
 }
 
+export function getCachedMacOsSdkPath() {
+  return cachedMacOsSdkPath;
+}
+
 export function clearToolchainCache() {
   console.log('[LSP] Toolchain Cache Cleared!')
   cachedMacOsSdkPath = null;

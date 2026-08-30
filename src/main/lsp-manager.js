@@ -1,7 +1,8 @@
 import { spawn } from 'child_process'
 import { ipcMain } from 'electron'
 import { LSP_REGISTRY } from './lsp-config.js'
-import { detectCppCompilers, getCompilerConfig, saveCompilerConfig, validateHostToolchain, getMacOsSdkPath, getResolvedQueryDriverArg, clearToolchainCache } from './compiler-detection.js'
+import { detectCppCompilers, getCompilerConfig, saveCompilerConfig, validateHostToolchain, getMacOsSdkPath, getResolvedQueryDriverArg, clearToolchainCache, getCachedMacOsSdkPath } from './compiler-detection.js'
+import { getBundledBinaryPath } from './index.js'
 import fs from 'fs'
 import path from 'path'
 import url from 'url'
@@ -208,6 +209,12 @@ export async function startLanguageServer(language, rootUri = null, onMessage, o
       return { success: false, error: validation.error }
     }
     
+    const queryDriver = await getResolvedQueryDriverArg();
+    const bundledCommand = getBundledBinaryPath('clangd');
+    if (bundledCommand) {
+      command = bundledCommand;
+    }
+
     // Industrial-grade command-line flags for clangd
     args = [
       '--background-index',
@@ -216,14 +223,18 @@ export async function startLanguageServer(language, rootUri = null, onMessage, o
       '--completion-style=detailed',
       '--header-insertion=iwyu',
       '--fallback-style=llvm',
-      '--query-driver=**/*'
+      queryDriver
     ]
     
-    // Sandbox environment for macOS
+    if (process.platform === 'win32' && bundledCommand) {
+       args.push('--target=x86_64-w64-mingw32');
+    }
+
     if (process.platform === 'darwin') {
-      const sdkPath = await getMacOsSdkPath()
+      const sdkPath = getCachedMacOsSdkPath();
       if (sdkPath) {
-        spawnEnv.SDKROOT = sdkPath
+        spawnEnv.SDKROOT = sdkPath;
+        args.push(`-isysroot`, sdkPath);
       }
     }
   }

@@ -28,4 +28,27 @@ exports.default = async function(context) {
   } else {
     console.warn('Could not find spawn-helper to fix permissions!');
   }
+
+  // Fix permissions for LLVM bundled binaries (Mac only)
+  if (context.electronPlatformName === 'mac') {
+    // Find the .app bundle dynamically
+    const appDirName = fs.readdirSync(appOutDir).find(file => file.endsWith('.app'));
+    if (appDirName) {
+      const llvmBinDir = path.join(appOutDir, appDirName, 'Contents', 'Resources', 'llvm', 'bin');
+      if (fs.existsSync(llvmBinDir)) {
+        const binaries = ['clang', 'clang++', 'clangd'];
+        for (const bin of binaries) {
+          const binPath = path.join(llvmBinDir, bin);
+          if (fs.existsSync(binPath)) {
+            console.log(`Fixing permissions for ${binPath}`);
+            fs.chmodSync(binPath, '755');
+          }
+        }
+      } else {
+        console.warn(`Could not find llvm bin dir at ${llvmBinDir}`);
+      }
+    } else {
+      console.warn('Could not find .app bundle in appOutDir');
+    }
+  }
 };
