@@ -102,7 +102,6 @@
               dist/*.zip
               dist/*.yml
               dist/*.blockmap
-              dist/*.app/**/*
 
     publish-release:
       needs: build
