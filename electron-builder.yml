@@ -40,15 +40,7 @@ mac:
     - from: "resources/llvm-mac-arm64"
       to: "llvm"
       filter:
-        - "!**/*"
-        - "bin/clangd"
-        - "bin/clang++"
-        - "bin/clang"
-        - "lib/clang/*/include/**/*"
-        - "lib/*.dylib"
-        - "include/c++/**/*"
-        - "include/x86_64-unknown-linux-gnu/c++/**/*"
-        - "include/aarch64-unknown-linux-gnu/c++/**/*"
+        - "**/*"
         - "NOTICE.TXT"
 afterPack: scripts/fix-permissions.js
 linux:

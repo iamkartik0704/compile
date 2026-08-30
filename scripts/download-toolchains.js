@@ -135,6 +135,24 @@ async function extractArchive(filePath, destDir, type, extractOnly) {
            }
            fs.rmdirSync(innerFolder);
          }
+         
+         if (process.platform === 'darwin') {
+            console.log('Pruning massive Mac LLVM toolchain down to essential compiler parts...');
+            try {
+              child_process.execFileSync('bash', ['-c', `
+                cd "${destDir}"
+                rm -rf lib/*.a lib/*.dSYM lib/cmake lib/python*
+                rm -rf include/llvm include/llvm-c
+                rm -rf share libexec
+                cd bin
+                find . -type f ! -name "clang" ! -name "clang++" ! -name "clangd" -delete
+                find . -type l ! -name "clang" ! -name "clang++" ! -name "clangd" -delete
+              `], { stdio: 'inherit' });
+              console.log('Pruning complete!');
+            } catch (err) {
+              console.error('Failed to prune Mac LLVM:', err);
+            }
+         }
       }
     } catch (e) {
       throw new Error(`Failed to extract tar.xz: ${e.message}`);
