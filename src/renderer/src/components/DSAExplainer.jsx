@@ -553,6 +553,7 @@ export function DSAExplainer({ initialCode, initialLanguage, aiConfig, onClose }
               steps={explanationSteps}
               currentStep={currentStep}
               loading={explanationLoading}
+              runOutput={runOutput}
             />
           </div>
         </div>

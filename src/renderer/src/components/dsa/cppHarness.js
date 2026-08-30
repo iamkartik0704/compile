@@ -480,8 +480,19 @@ export function buildCppHarness(userCode, sampleInput) {
     '#include <vector>',
     '#include <string>',
     '#include <utility>',
-    (needsList || needsTree) ? '#include <queue>' : null
-  ].filter(Boolean).join('\n')
+    '#include <unordered_map>',
+    '#include <unordered_set>',
+    '#include <map>',
+    '#include <set>',
+    '#include <algorithm>',
+    '#include <numeric>',
+    '#include <cmath>',
+    '#include <stack>',
+    '#include <queue>',
+    '#include <deque>',
+    '#include <list>',
+    '#include <bitset>'
+  ].join('\n')
 
   // Split the file into preamble + suffix. The caller assembles the
   // final source as `preamble + <AI-instrumented Solution class> + suffix`.

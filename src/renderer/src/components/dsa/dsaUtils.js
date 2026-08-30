@@ -27,7 +27,7 @@ ${userCode}
 export const PY_INSTRUMENTATION_PROMPT = (userCode, sampleInput) => `You are a code instrumenter. Rewrite the Python snippet below so that it prints a JSON snapshot at every meaningful execution event (loop iteration, recursive call/return, swap, pointer/index change, comparison).
 
 STRICT RULES:
-1. import json at the top. Print each snapshot as: print("__DSA__" + json.dumps({"stepIndex": n, "line": L, "event": E, "variables": V, "dataStructureState": D, "callStack": C})). The "__DSA__" prefix is REQUIRED.
+1. import json at the top. Also add common imports used in LeetCode (e.g., collections, math, heapq, typing.*). Print each snapshot as: print("__DSA__" + json.dumps({"stepIndex": n, "line": L, "event": E, "variables": V, "dataStructureState": D, "callStack": C})). The "__DSA__" prefix is REQUIRED.
 2. stepIndex starts at 0 and increments monotonically. Use a module-level counter (e.g. via a list wrapper).
 3. "line" is the ORIGINAL user-code line number. The input code below is prefixed with line numbers. Use these EXACT numbers for the "line" field. Do NOT include line numbers in your generated Python output.
 4. "variables" is a shallow snapshot of relevant local names → values.

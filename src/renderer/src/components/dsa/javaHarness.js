@@ -426,7 +426,10 @@ export function buildJavaHarness(userCode, sampleInput) {
     needsTree ? TREENODE_SRC : null
   ].filter(Boolean).join('\n\n')
 
-  const preamble = `public class DsaTrace {
+  const preamble = `import java.util.*;
+import java.math.*;
+
+public class DsaTrace {
 ${injections}
 
   // ── User code (Solution class) — AI-instrumented with __DSA__ emissions ──

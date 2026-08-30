@@ -2826,7 +2826,7 @@ the new code
                   } },
                   { type: 'separator' },
                   { label: `Version: ${appVersion}`, action: () => {} },
-                  { label: 'About comπle', action: () => window.open('https://kartikchawla.in', '_blank') }
+                  { label: 'About comπle', action: () => window.open('https://ideweb-eta.vercel.app', '_blank') }
                 ]
               }
             ].map((menu) => (

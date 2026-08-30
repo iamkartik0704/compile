@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react'
 
 // Scrolls the paragraph matching the current step into view and
 // highlights it. `steps` is a string[] parallel to trace.
-export function ExplanationPanel({ steps, currentStep, loading }) {
+export function ExplanationPanel({ steps, currentStep, loading, runOutput }) {
   const containerRef = useRef(null)
   const activeRef = useRef(null)
 
@@ -24,12 +24,28 @@ export function ExplanationPanel({ steps, currentStep, loading }) {
     return (
       <div style={containerStyle}>
         <div style={emptyTextStyle}>No explanation yet. Run the code first.</div>
+        {runOutput && (
+          <div style={{ marginTop: '20px' }}>
+            <div style={sectionTitleStyle}>Output</div>
+            <pre style={{ margin: 0, padding: '10px 12px', background: 'var(--bg-elevated)', borderRadius: '6px', fontSize: '12px', color: 'var(--text-primary)', whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>
+              {runOutput}
+            </pre>
+          </div>
+        )}
       </div>
     )
   }
 
   return (
     <div ref={containerRef} style={containerStyle}>
+      {runOutput && (
+        <div style={{ marginBottom: '20px' }}>
+          <div style={sectionTitleStyle}>Output</div>
+          <pre style={{ margin: 0, padding: '10px 12px', background: 'var(--bg-elevated)', borderRadius: '6px', fontSize: '12px', color: 'var(--text-primary)', whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>
+            {runOutput}
+          </pre>
+        </div>
+      )}
       <div style={sectionTitleStyle}>Explanation</div>
       {steps.map((text, i) => {
         const isActive = i === currentStep
