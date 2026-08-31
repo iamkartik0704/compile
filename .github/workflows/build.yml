@@ -57,7 +57,7 @@
           uses: actions/cache@v4
           with:
             path: resources/
-            key: toolchains-${{ matrix.os }}-${{ matrix.arch }}-v1
+            key: toolchains-${{ matrix.os }}-${{ matrix.arch }}-v2
             restore-keys: |
               toolchains-${{ matrix.os }}-${{ matrix.arch }}-
 
