@@ -21,11 +21,6 @@ win:
   icon: build/icon.ico
   target:
     - nsis
-  extraResources:
-    - from: "resources/llvm-win-x64"
-      to: "llvm"
-      filter:
-        - "**/*"
 nsis:
   include: "build/installer.nsh"
 mac:
@@ -34,15 +29,6 @@ mac:
   entitlementsInherit: build/entitlements.mac.plist
   binaries:
     - './node_modules/node-pty/build/Release/spawn-helper'
-    - './resources/llvm-mac-arm64/bin/clangd'
-    - './resources/llvm-mac-arm64/bin/clang++'
-    - './resources/llvm-mac-arm64/bin/clang'
-  extraResources:
-    - from: "resources/llvm-mac-arm64"
-      to: "llvm"
-      filter:
-        - "**/*"
-        - "NOTICE.TXT"
 afterPack: scripts/fix-permissions.js
 linux:
   target:
