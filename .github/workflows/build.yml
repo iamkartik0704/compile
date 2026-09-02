@@ -85,12 +85,24 @@
             NODE_OPTIONS: --max-old-space-size=8192
           timeout-minutes: 30
 
+        - name: Prepare Toolchains
+          run: node scripts/prepare-toolchain-release.js
+          timeout-minutes: 15
+
         - name: Get Version
           id: get_version
           shell: bash
           run: |
             version=$(node -p "require('./package.json').version")
             echo "VERSION=$version" >> $GITHUB_ENV
+
+        - name: Upload Toolchains to GitHub Release
+          if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feature/auto-update' || startsWith(github.ref, 'refs/tags/')
+          env:
+            GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          shell: bash
+          run: |
+            gh release upload v${{ env.VERSION }} dist-toolchains/*-pruned.* --clobber || true
 
         # STEP A: Still saves the file as a temporary artifact on standard commits to main
         - uses: actions/upload-artifact@v4

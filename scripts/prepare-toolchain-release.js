@@ -179,7 +179,8 @@ async function main() {
   }
 
   for (const archive of targetInfo.archives) {
-    const finalDest = path.join(distDir, archive.dest + '-pruned.tar.xz');
+    const finalExt = process.platform === 'win32' ? '.zip' : '.tar.xz';
+    const finalDest = path.join(distDir, archive.dest + '-pruned' + finalExt);
     if (fs.existsSync(finalDest)) {
       console.log(`${finalDest} already exists, skipping download.`);
       continue;
@@ -198,13 +199,11 @@ async function main() {
       
       await extractArchive(tempFilePath, extractDir, archive.type, archive.extractOnly);
       
-      // If we're done extracting and pruning, repack as a tar.xz
+      // If we're done extracting and pruning, repack as a tar.xz or zip
       console.log(`Repacking ${archive.dest} to ${finalDest}...`);
       if (process.platform === 'win32') {
-         // Windows doesn't typically have `tar -J` (xz), but Windows 11 does have `tar`.
-         // Let's rely on standard tar if available, or just leave it for CI
-         console.log('Ensure you run this on a system with tar and xz support!');
-         child_process.execFileSync('tar', ['-caf', finalDest, '-C', distDir, archive.dest], { stdio: 'inherit' });
+         console.log('Compressing to ZIP using PowerShell...');
+         child_process.execFileSync('powershell', ['-NoProfile', '-Command', `Compress-Archive -Path "${path.join(distDir, archive.dest)}" -DestinationPath "${finalDest}" -Force`], { stdio: 'inherit' });
       } else {
          child_process.execFileSync('tar', ['-cJf', finalDest, '-C', distDir, archive.dest], { stdio: 'inherit' });
       }
