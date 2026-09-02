@@ -4,6 +4,7 @@ import fs from 'fs'
 import path from 'path'
 import { app } from 'electron'
 import { promisify } from 'util'
+import { TOOLCHAIN_CONFIG } from './toolchain-downloader.js'
 
 const execAsync = promisify(exec)
 
@@ -60,10 +61,13 @@ export async function detectCppCompilers() {
       // In production (.exe), bundled files live in process.resourcesPath. 
       // In dev, they live in process.cwd()
       const baseDir = app.isPackaged ? process.resourcesPath : process.cwd();
+      const userDataToolchains = path.join(app.getPath('userData'), 'toolchains', TOOLCHAIN_CONFIG.version);
       
       const possibleBundledDirs = [
+        path.join(userDataToolchains, 'llvm-win-x64', 'bin'),
         path.join(baseDir, 'toolchains', 'mingw64', 'bin'),
         path.join(baseDir, 'toolchains', 'llvm-mingw', 'bin'),
+        path.join(baseDir, 'resources', 'llvm-win-x64', 'bin'), // Legacy migration path
         'C:\\winlibs64\\mingw64\\bin', // Fallback for your local development
         'C:\\MinGW\\bin',
         'C:\\msys64\\mingw64\\bin',
@@ -95,6 +99,17 @@ export async function detectCppCompilers() {
         lines.push(...output.split('\n').map(l => l.trim()).filter(Boolean))
       } catch (e) {}
     } else if (platform === 'darwin') {
+      const baseDir = app.isPackaged ? process.resourcesPath : process.cwd();
+      const userDataToolchains = path.join(app.getPath('userData'), 'toolchains', TOOLCHAIN_CONFIG.version);
+      const possibleMacDirs = [
+        path.join(userDataToolchains, 'llvm-mac-arm64', 'bin'),
+        path.join(baseDir, 'resources', 'llvm-mac-arm64', 'bin') // Legacy migration path
+      ];
+      for (const dir of possibleMacDirs) {
+        if (fs.existsSync(path.join(dir, 'clang++'))) {
+          lines.push(path.join(dir, 'clang++'));
+        }
+      }
       try {
         const output = execSync('which g++ gcc clang clang++ 2>/dev/null', { encoding: 'utf8' })
         lines.push(...output.split('\n').map(l => l.trim()).filter(Boolean))
@@ -202,8 +217,11 @@ export function clearToolchainCache() {
   cachedMacOsSdkPath = null;
   versionCache.clear();
 }
-
+//
 export async function validateHostToolchain() {
+//  this has to be removed later
+//  return { success: false, error: 'Missing Toolchain', remediationCommand: 'Install MinGW-w64.', isWindows: true };
+//  this has to be removed later
   console.log('\n--- [PRE-FLIGHT VALIDATION] ---')
   const platform = os.platform();
   

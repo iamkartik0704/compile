@@ -1,7 +1,7 @@
 appId: com.compile.editor
 productName: comπle Editor
 artifactName: compile-${version}-${os}-${arch}.${ext}
-compression: normal
+compression: maximum
 nativeRebuilder: legacy
 directories:
   buildResources: build
@@ -12,6 +12,7 @@ files:
   - '!electron.vite.config.*'
   - '!{.eslintignore,.eslintrc.cjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  - '!resources/*'
   - 'build/icon.ico'
 publish:
   - provider: github

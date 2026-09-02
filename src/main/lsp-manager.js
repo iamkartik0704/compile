@@ -3,6 +3,7 @@ import { ipcMain } from 'electron'
 import { LSP_REGISTRY } from './lsp-config.js'
 import { detectCppCompilers, getCompilerConfig, saveCompilerConfig, validateHostToolchain, getMacOsSdkPath, getResolvedQueryDriverArg, clearToolchainCache, getCachedMacOsSdkPath } from './compiler-detection.js'
 import { getBundledBinaryPath } from './index.js'
+import { downloadToolchain, setupToolchainDownloaderHandlers } from './toolchain-downloader.js'
 import fs from 'fs'
 import path from 'path'
 import url from 'url'
@@ -170,7 +171,7 @@ function parseAndForwardMessages(language, entry, onMessage, setStatus) {
   entry.buffer = buffer
 }
 
-export async function startLanguageServer(language, rootUri = null, onMessage, onError, onStatusChange) {
+export async function startLanguageServer(language, rootUri = null, onMessage, onError, onStatusChange, isRetry = false) {
   if (lspProcesses.has(language)) {
     const entry = lspProcesses.get(language)
     if (entry.status === 'starting' || entry.status === 'ready') {
@@ -205,7 +206,17 @@ export async function startLanguageServer(language, rootUri = null, onMessage, o
   if (language === 'cpp' || language === 'c') {
     const validation = await validateHostToolchain()
     if (!validation.success) {
-      sendToWindow('show-missing-toolchain-modal', validation)
+      if ((validation.error === 'Missing Toolchain' || validation.error === 'Missing Toolchain.') && !isRetry) {
+        // Automatically start downloading if missing
+        downloadToolchain(lspWindows.values().next().value.webContents).then(async (res) => {
+          if (res.success) {
+            // Once finished, restart detection and start the server (pass true to avoid infinite loop)
+            startLanguageServer(language, rootUri, onMessage, onError, onStatusChange, true);
+          }
+        });
+      } else {
+        sendToWindow('show-missing-toolchain-modal', validation)
+      }
       return { success: false, error: validation.error }
     }
     
@@ -455,6 +466,8 @@ export function getLanguageServerStatusForLanguage(language) {
 
 // IPC Handlers
 export function setupLspIpcHandlers() {
+  setupToolchainDownloaderHandlers();
+
   ipcMain.handle('start-lsp', (_event, language, rootUri) => {
     return startLanguageServer(language, rootUri)
   })
@@ -469,7 +482,7 @@ export function setupLspIpcHandlers() {
     }
   })
 
-  ipcMain.on('lsp:document-open', async (event, { filePath, text, languageId }) => {
+  ipcMain.on('lsp:document-open', async (event, { filePath, text, languageId, isRetry = false }) => {
     if (!filePath) return
     const language = languageId || 'plaintext'
 
@@ -477,7 +490,16 @@ export function setupLspIpcHandlers() {
       const validation = await validateHostToolchain()
       if (!validation.success) {
         if (event && event.sender && !event.sender.isDestroyed()) {
-          event.sender.send('show-missing-toolchain-modal', validation)
+          if ((validation.error === 'Missing Toolchain' || validation.error === 'Missing Toolchain.') && !isRetry) {
+             downloadToolchain(event.sender).then(async (res) => {
+               if (res.success) {
+                 // Open document again once finished
+                 openDoc(filePath, text, language);
+               }
+             });
+          } else {
+             event.sender.send('show-missing-toolchain-modal', validation)
+          }
         }
         return
       }

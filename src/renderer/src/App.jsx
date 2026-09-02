@@ -561,6 +561,7 @@ function App() {
   const [dsaExplainer, setDsaExplainer] = useState(null) // null | { code, language }
   const [toast, setToast] = useState(null)
   const [missingToolchain, setMissingToolchain] = useState(null)
+  const [toolchainDownload, setToolchainDownload] = useState(null)
   const [activeMenu, setActiveMenu] = useState(null)
   const [activeSubmenu, setActiveSubmenu] = useState(null)
 
@@ -610,6 +611,20 @@ function App() {
     if (window.api && window.api.onShowMissingToolchainModal) {
       window.api.onShowMissingToolchainModal((validation) => {
         setMissingToolchain(validation)
+      })
+    }
+    if (window.api && window.api.onToolchainDownloadProgress) {
+      window.api.onToolchainDownloadProgress((data) => {
+        setToolchainDownload(data)
+        if (data.stage === 'complete') {
+          setTimeout(() => setToolchainDownload(null), 5000)
+        }
+      })
+    }
+    if (window.api && window.api.onToolchainDownloadError) {
+      window.api.onToolchainDownloadError((data) => {
+        setToolchainDownload({ error: data.error })
+        setTimeout(() => setToolchainDownload(null), 5000)
       })
     }
   }, [])
@@ -3958,6 +3973,29 @@ the new code
           {/* ── Status Bar ── */}
           <footer className="status-bar">
             <div className="status-left">
+              {toolchainDownload && (
+                <div className="status-item" style={{ color: toolchainDownload.error ? 'var(--accent-rose, #ef4444)' : 'var(--accent-color)', fontWeight: 'bold' }}>
+                  {toolchainDownload.error ? (
+                    <span>Download Failed: {toolchainDownload.error}</span>
+                  ) : toolchainDownload.stage === 'complete' ? (
+                    <span>C++ Toolchain Ready</span>
+                  ) : (
+                    <span>
+                      Downloading C++ Toolchain: {toolchainDownload.progress}% ({toolchainDownload.stage})
+                      <span
+                        style={{ marginLeft: '12px', cursor: 'pointer', textDecoration: 'underline', fontWeight: 'normal', opacity: 0.8 }}
+                        onClick={() => {
+                           window.api.cancelToolchainDownload();
+                           setToolchainDownload({ error: 'Canceled' });
+                           setTimeout(() => setToolchainDownload(null), 3000);
+                        }}
+                      >
+                        Cancel
+                      </span>
+                    </span>
+                  )}
+                </div>
+              )}
               {currentChordDisplay && (
                 <div className="status-item" style={{ color: 'var(--accent-color)', fontWeight: 'bold' }}>
                   {currentChordDisplay}

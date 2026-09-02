@@ -301,10 +301,10 @@ export function SettingsEditor() {
       },
       {
         id: 'files.autoSave',
-        default: 'off',
+        type: 'select',
         title: 'Files: Auto Save',
         description: 'Controls auto save of editors that have unsaved changes.',
-        type: 'select',
+        default: 'afterDelay',
         value: autoSave ? 'afterDelay' : 'off',
         options: autoSaveOptions,
         onChange: (v) => { setAutoSave(v !== 'off'); updateSetting('files-autoSave', v, () => {}) }

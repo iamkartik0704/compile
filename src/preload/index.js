@@ -106,6 +106,16 @@ const api = {
     ipcRenderer.removeAllListeners('show-missing-toolchain-modal')
     ipcRenderer.on('show-missing-toolchain-modal', (_event, validation) => callback(validation))
   },
+  
+  cancelToolchainDownload: () => ipcRenderer.invoke('cancel-toolchain-download'),
+  onToolchainDownloadProgress: (callback) => {
+    ipcRenderer.removeAllListeners('toolchain-download-progress')
+    ipcRenderer.on('toolchain-download-progress', (_event, data) => callback(data))
+  },
+  onToolchainDownloadError: (callback) => {
+    ipcRenderer.removeAllListeners('toolchain-download-error')
+    ipcRenderer.on('toolchain-download-error', (_event, data) => callback(data))
+  },
 
   // ── AI Communication ──
 

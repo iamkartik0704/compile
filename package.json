@@ -1,6 +1,6 @@
 {
   "name": "compile-editor",
-  "version": "1.1.16",
+  "version": "1.1.17",
   "description": "comπle Code Editor — A secure Electron IDE with AI streaming",
   "repository": {
     "type": "git",
@@ -16,8 +16,8 @@
     "rebuild-local": "electron-builder install-app-deps",
     "setup-lsp": "npm install -g typescript-language-server typescript bash-language-server",
     "download-toolchains": "node scripts/download-toolchains.js",
-    "dist:win": "npm run download-toolchains && electron-vite build && electron-builder --win --publish always",
-    "dist:mac:arm64": "npm run download-toolchains && electron-vite build && electron-builder --mac --arm64 --publish always",
+    "dist:win": "electron-vite build && electron-builder --win --publish always",
+    "dist:mac:arm64": "electron-vite build && electron-builder --mac --arm64 --publish always",
     "dist:linux": "electron-vite build && electron-builder --linux --publish always",
     "dist": "electron-vite build && electron-builder --publish always"
   },

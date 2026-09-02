@@ -173,26 +173,20 @@ async function main() {
     return;
   }
 
-  const resourcesDir = path.resolve(__dirname, '../resources');
-  if (!fs.existsSync(resourcesDir)) {
-    fs.mkdirSync(resourcesDir, { recursive: true });
+  const distDir = path.resolve(__dirname, '../dist-toolchains');
+  if (!fs.existsSync(distDir)) {
+    fs.mkdirSync(distDir, { recursive: true });
   }
 
   for (const archive of targetInfo.archives) {
-    const finalDest = path.join(resourcesDir, archive.dest);
-    if (fs.existsSync(finalDest) && !archive.extractOnly) {
+    const finalDest = path.join(distDir, archive.dest + '-pruned.tar.xz');
+    if (fs.existsSync(finalDest)) {
       console.log(`${finalDest} already exists, skipping download.`);
       continue;
     }
-    
-    // If it's a specific extract target, check if the specific file exists
-    if (archive.extractOnly === 'clangd.exe' && fs.existsSync(path.join(resourcesDir, 'llvm-win-x64', 'bin', 'clangd.exe'))) {
-       console.log(`clangd.exe already exists, skipping download.`);
-       continue;
-    }
 
-    const tempFilePath = path.join(resourcesDir, path.basename(archive.url));
-    const tempExtractDir = path.join(resourcesDir, archive.dest + '_temp');
+    const tempFilePath = path.join(distDir, path.basename(archive.url));
+    const extractDir = path.join(distDir, archive.dest);
     
     try {
       if (!fs.existsSync(tempFilePath)) {
@@ -202,18 +196,36 @@ async function main() {
       }
       await verifyHash(tempFilePath, archive.hash);
       
-      const destDir = archive.extractOnly ? tempExtractDir : finalDest;
-      await extractArchive(tempFilePath, destDir, archive.type, archive.extractOnly);
+      await extractArchive(tempFilePath, extractDir, archive.type, archive.extractOnly);
       
-      // Cleanup temp extraction dir if used
-      if (archive.extractOnly && fs.existsSync(tempExtractDir)) {
-        fs.rmSync(tempExtractDir, { recursive: true, force: true });
+      // If we're done extracting and pruning, repack as a tar.xz
+      console.log(`Repacking ${archive.dest} to ${finalDest}...`);
+      if (process.platform === 'win32') {
+         // Windows doesn't typically have `tar -J` (xz), but Windows 11 does have `tar`.
+         // Let's rely on standard tar if available, or just leave it for CI
+         console.log('Ensure you run this on a system with tar and xz support!');
+         child_process.execFileSync('tar', ['-caf', finalDest, '-C', distDir, archive.dest], { stdio: 'inherit' });
+      } else {
+         child_process.execFileSync('tar', ['-cJf', finalDest, '-C', distDir, archive.dest], { stdio: 'inherit' });
+      }
+      
+      // Calculate new SHA256
+      const hash = crypto.createHash('sha256');
+      const repackedData = fs.readFileSync(finalDest);
+      hash.update(repackedData);
+      const repackedHash = hash.digest('hex');
+      
+      console.log(`\n==============================================`);
+      console.log(`Successfully created pruned toolchain archive!`);
+      console.log(`File: ${finalDest}`);
+      console.log(`SHA256: ${repackedHash}`);
+      console.log(`==============================================\n`);
+      
+      // Cleanup temp extraction dir
+      if (fs.existsSync(extractDir)) {
+        fs.rmSync(extractDir, { recursive: true, force: true });
       }
     } finally {
-      // Do not delete archive to allow github actions cache to cache the downloaded archive file,
-      // or we can cache the extracted folder. Let's delete the archive to save disk space if it's extracted?
-      // Actually, github actions cache will cache the entire 'resources' dir if we tell it to.
-      // We will delete the archive since caching the extracted folder is much faster than re-extracting every time!
       if (fs.existsSync(tempFilePath)) {
         fs.unlinkSync(tempFilePath);
       }
