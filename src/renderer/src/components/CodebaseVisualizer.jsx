@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { ReactFlow, Controls, Background, applyNodeChanges, applyEdgeChanges, Handle, Position, MarkerType, useReactFlow, ReactFlowProvider, MiniMap } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { initTreeSitter } from '../utils/astParser'
 import dagre from 'dagre'
-import { FileCode, FileJson, FileType, File, Box, Database, Terminal, Folder, ChevronUp, ChevronDown } from 'lucide-react'
+import { FileCode, FileJson, FileType, File, Box, Database, Terminal, Folder, ChevronUp, ChevronDown, BoxSelect, Cuboid } from 'lucide-react'
+import ForceGraph3D from 'react-force-graph-3d'
 
 // Layout helpers
 const getDagreLayout = (nodes, edges, direction = 'TB') => {
@@ -412,6 +413,8 @@ function VisualizerFlow({ projectRoot, onClose, onFileSelect }) {
 
   const [hideOrphans, setHideOrphans] = useState(false)
   const [hideNonCode, setHideNonCode] = useState(false)
+  const [viewMode, setViewMode] = useState('2D')
+  const fgRef = useRef(null)
 
   // Run Layout on layoutMode, collapsedFolders, or filter change
   useEffect(() => {
@@ -545,7 +548,32 @@ function VisualizerFlow({ projectRoot, onClose, onFileSelect }) {
               Code Only
             </button>
           </div>
+          
+          {/* View Mode Toggle */}
           <div style={{ display: 'flex', background: 'var(--bg-input)', borderRadius: '6px', padding: '4px', gap: '4px', border: '1px solid var(--border-base)' }}>
+            <button
+              onClick={() => setViewMode('2D')}
+              style={{
+                background: viewMode === '2D' ? 'var(--bg-elevated)' : 'transparent',
+                color: viewMode === '2D' ? 'var(--text-bright)' : 'var(--text-muted)',
+                border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: '500', transition: 'all 0.2s', display: 'flex', alignItems: 'center', gap: '6px'
+              }}
+            >
+              <BoxSelect size={14} /> 2D
+            </button>
+            <button
+              onClick={() => setViewMode('3D')}
+              style={{
+                background: viewMode === '3D' ? 'var(--bg-elevated)' : 'transparent',
+                color: viewMode === '3D' ? 'var(--text-bright)' : 'var(--text-muted)',
+                border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: '500', transition: 'all 0.2s', display: 'flex', alignItems: 'center', gap: '6px'
+              }}
+            >
+              <Cuboid size={14} /> 3D
+            </button>
+          </div>
+
+          <div style={{ display: 'flex', background: 'var(--bg-input)', borderRadius: '6px', padding: '4px', gap: '4px', border: '1px solid var(--border-base)', opacity: viewMode === '3D' ? 0.5 : 1, pointerEvents: viewMode === '3D' ? 'none' : 'auto' }}>
             <button
               onClick={() => setLayoutMode('folder')}
               style={{
@@ -595,6 +623,31 @@ function VisualizerFlow({ projectRoot, onClose, onFileSelect }) {
             <span style={{ fontSize: '15px', letterSpacing: '0.5px' }}>Mapping Project Dependencies...</span>
             <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
           </div>
+        ) : viewMode === '3D' ? (
+          <ForceGraph3D
+            ref={fgRef}
+            graphData={{ nodes: displayNodes, links: edges }}
+            nodeLabel={node => node.data.label}
+            nodeColor={node => getLanguageConfig(node.data.ext, node.data.type).color}
+            linkColor={() => 'rgba(79, 70, 229, 0.4)'}
+            linkOpacity={0.6}
+            nodeRelSize={6}
+            onNodeClick={(node) => {
+              if (node.type === 'custom' && onFileSelect) {
+                onFileSelect(node.data.fullPath, node.data.label)
+              }
+              if (fgRef.current) {
+                const distance = 100;
+                const distRatio = 1 + distance/Math.hypot(node.x, node.y, node.z);
+                fgRef.current.cameraPosition(
+                  { x: node.x * distRatio, y: node.y * distRatio, z: node.z * distRatio }, 
+                  node, 
+                  1500 
+                );
+              }
+            }}
+            backgroundColor="#00000000" // transparent so it blends with var(--bg-deep)
+          />
         ) : (
           <ReactFlow
             nodes={displayNodes}
