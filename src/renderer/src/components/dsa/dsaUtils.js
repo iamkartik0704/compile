@@ -91,12 +91,12 @@ ${userCode}
 export const CPP_INSTRUMENT_SOLUTION_PROMPT = (solutionClass) => `Add __DSA__ execution-trace emissions to this C++ Solution class.
 
 RULES:
-1. Emit each snapshot with cout: std::cout << "__DSA__" << "{...json...}" << std::endl;
-2. Hand-serialize the JSON — no external library. Escape backslashes and quotes.
-3. Schema: {"stepIndex":N,"line":L,"event":"...","variables":{...},"dataStructureState":...,"callStack":[...]}
-4. stepIndex is a monotonic 0-based counter. DO NOT declare it. Use the globally defined \`__dsa_stepIndex\` variable.
+1. Emit each snapshot using the provided helper: dsa_snapshot(line, "event_name", vars_json, ds_json);
+2. Example: dsa_snapshot(24, "init", "{\\"n\\":" + std::to_string(n) + "}", "{\\"car\\":" + dsa_toJson(car) + "}");
+3. Schema: vars_json and ds_json must be valid JSON string objects (or "null" if empty).
+4. Do NOT manage stepIndex yourself. It is handled automatically by the helper.
 5. "line" is the ORIGINAL source line number. The input code below is prefixed with line numbers (e.g. "24: "). Use these EXACT numbers for the "line" field. Do NOT include line numbers in your generated C++ output.
-6. Do NOT emit more than 200 snapshots — short-circuit gracefully using \`if (__dsa_stepIndex > 200) return;\`.
+6. The dsa_snapshot helper already limits to 200 snapshots.
 7. Preserve the algorithm's behavior. ADD emissions only, do NOT rewrite logic.
 8. Output the FULL instrumented class Solution { ... } wrapper with your methods inside it. Do NOT include #includes or main().
 9. CRITICAL: DO NOT rename the method. DO NOT change the method signature. DO NOT output an empty class or use placeholder comments like "// code goes here". You MUST output the exact same method you were given, just with cout statements added.
@@ -126,12 +126,12 @@ ${solutionClass}
 export const CPP_INSTRUMENT_ONLY_PROMPT = (fullFile) => `Below is a complete, compilable C++ file. Instrument the Solution class methods so they emit a JSON snapshot at every meaningful execution event (loop iteration, recursive call/return, swap, pointer/index change, comparison).
 
 STRICT RULES:
-1. Emit each snapshot with cout as ONE line prefixed with "__DSA__" followed by a JSON object body. Use: std::cout << "__DSA__" << "{...json...}" << std::endl;
-2. Do NOT depend on any external JSON library — hand-serialize the object. Keys and string values in double quotes. Escape backslashes and inner quotes.
-3. Snapshot schema: {"stepIndex":N,"line":L,"event":"...","variables":{...},"dataStructureState":...,"callStack":[...]}
-4. stepIndex is a monotonic 0-based counter — declare a global variable \`int dsa_stepIndex = 0;\` at the top of the file, outside the Solution class.
+1. Emit each snapshot using the provided helper: dsa_snapshot(line, "event_name", vars_json, ds_json);
+2. Example: dsa_snapshot(24, "init", "{\\"n\\":" + std::to_string(n) + "}", "{\\"car\\":" + dsa_toJson(car) + "}");
+3. Schema: vars_json and ds_json must be valid JSON string objects (or "null" if empty).
+4. Do NOT manage stepIndex yourself. It is handled automatically by the helper.
 5. "line" is the ORIGINAL Solution-class line number the snapshot corresponds to.
-6. Do NOT emit more than 200 snapshots — short-circuit gracefully.
+6. The dsa_snapshot helper already limits to 200 snapshots.
 7. Preserve the algorithm's behavior. ADD emissions, do NOT rewrite the logic.
 8. DO NOT modify #include lines, the ListNode/TreeNode struct definitions, the dsa_* helper functions, or main(). Only edit the Solution class body.
 9. Use the provided dsa_toJson(var) helper to serialize data structures. DO NOT write your own JSON serialization logic for structs/vectors.

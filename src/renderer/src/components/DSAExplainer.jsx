@@ -19,6 +19,7 @@ import {
   extractJson
 } from './dsa/dsaUtils'
 import { buildCppHarness } from './dsa/cppHarness'
+import { instrumentCppSolution } from './dsa/cppInstrumentor'
 import { buildJavaHarness } from './dsa/javaHarness'
 import { ArgFields, parseSignatureFor, parseFieldValues } from './dsa/ArgFields'
 
@@ -126,12 +127,14 @@ export function DSAExplainer({ initialCode, initialLanguage, aiConfig, onClose }
   // Subscribes to the inline-ai stream channel for one Promise-shaped call.
   const runAiOnce = useCallback((prompt) => new Promise((resolve, reject) => {
     let buf = ''
-    const removeListener = window.api.on('inline-ai-stream-chunk', (chunk) => {
+    const channelId = 'inline-ai-stream-chunk-' + Math.random().toString(36).slice(2)
+    const removeListener = window.api.on(channelId, (chunk) => {
       if (typeof chunk === 'string') buf += chunk
     })
     window.api.sendInlineAiPrompt(prompt, {
       model: aiConfig?.model || 'auto',
-      customConfig: aiConfig?.customConfig
+      customConfig: aiConfig?.customConfig,
+      emitEvent: channelId
     }).then((res) => {
       removeListener?.()
       if (res && res.status === 'error') return reject(new Error(res.error || 'AI error'))
@@ -212,6 +215,9 @@ export function DSAExplainer({ initialCode, initialLanguage, aiConfig, onClose }
       setTruncated(false)
       setAssumedInput(false)
 
+      // Start complexity analysis immediately in the background since it only depends on the source code.
+      const complexityPromise = runAiOnce(COMPLEXITY_ANALYSIS_PROMPT(code, language)).catch(() => null)
+
       const resolved = resolveInputArgs()
       let inputArgs
       if (resolved.ok === 'error') {
@@ -268,31 +274,54 @@ export function DSAExplainer({ initialCode, initialLanguage, aiConfig, onClose }
         }
 
         if (prebuilt && prebuilt.ok) {
-          // Send ONLY the user's Solution class body to the AI. Splice
-          // its reply between our deterministic preamble/suffix so the
-          const promptFn = language === 'cpp' ? CPP_INSTRUMENT_SOLUTION_PROMPT : JAVA_INSTRUMENT_SOLUTION_PROMPT
-          const rawInstr = await runAiOnce(promptFn(numberedCode))
-          if (runGenerationRef.current !== currentGen) return
-          const methodBodies = stripFences(rawInstr)
-          
-          let instrumentedSolution = methodBodies
+          let instrumentedSolution = null
+
+          // ── Strategy 1: Deterministic instrumentation (instant, free, no AI) ──
           if (language === 'cpp') {
-            if (!/class\s+Solution\s*\{/.test(instrumentedSolution)) {
-              instrumentedSolution = `class Solution {\npublic:\n${instrumentedSolution}\n};`
+            try {
+              instrumentedSolution = instrumentCppSolution(code)
+              if (instrumentedSolution) {
+                console.log('[DSA-DEBUG] Deterministic instrumentor succeeded')
+              }
+            } catch (detErr) {
+              console.log('[DSA-DEBUG] Deterministic instrumentor failed:', detErr.message)
             }
-          } else if (language === 'java') {
-            if (!/class\s+Solution\s*\{/.test(instrumentedSolution)) {
-              instrumentedSolution = `class Solution {\n${instrumentedSolution}\n}`
+          }
+
+          // ── Strategy 2: AI fallback (only if deterministic failed) ──
+          if (!instrumentedSolution) {
+            console.log('[DSA-DEBUG] Falling back to AI instrumentation')
+            const promptFn = language === 'cpp' ? CPP_INSTRUMENT_SOLUTION_PROMPT : JAVA_INSTRUMENT_SOLUTION_PROMPT
+            const rawInstr = await runAiOnce(promptFn(numberedCode))
+            if (runGenerationRef.current !== currentGen) return
+            const methodBodies = stripFences(rawInstr)
+            
+            console.log('[DSA-DEBUG] AI raw response length:', rawInstr?.length)
+            console.log('[DSA-DEBUG] AI stripped response (first 500 chars):', methodBodies?.slice(0, 500))
+            
+            if (!methodBodies.includes('__DSA__') && !methodBodies.includes('dsa_snapshot(')) {
+              throw new Error('The AI model failed to insert trace statements (no dsa_snapshot calls found). Small/weak models often struggle with this task. Please switch to a stronger model. Capable FREE models: Gemini 1.5 Flash or Llama 3.1 70B. Capable PAID models: GPT-4o or Claude 3.5 Sonnet.')
+            }
+            
+            instrumentedSolution = methodBodies
+            if (language === 'cpp') {
+              if (!/class\s+Solution\s*\{/.test(instrumentedSolution)) {
+                instrumentedSolution = `class Solution {\npublic:\n${instrumentedSolution}\n};`
+              }
+            } else if (language === 'java') {
+              if (!/class\s+Solution\s*\{/.test(instrumentedSolution)) {
+                instrumentedSolution = `class Solution {\n${instrumentedSolution}\n}`
+              }
             }
           }
 
           if (language === 'java' && typeof prebuilt.wrapSolution === 'function') {
-            // Java splice: wrap the Solution class as an indented static
-            // inner class of DsaTrace (strip `public` and indent).
             instrumented = prebuilt.preamble + prebuilt.wrapSolution(instrumentedSolution) + prebuilt.suffix
           } else {
             instrumented = prebuilt.preamble + instrumentedSolution + prebuilt.suffix
           }
+          console.log('[DSA-DEBUG] Final instrumented code (first 1000 chars):', instrumented?.slice(0, 1000))
+          console.log('[DSA-DEBUG] Final code contains dsa_snapshot:', instrumented?.includes('dsa_snapshot('))
         } else if (prebuilt && prebuilt.error) {
           // Deterministic parse said "yes, this is a class Solution but
           // I can't marshal the signature." Fail loud instead of asking
@@ -308,6 +337,10 @@ export function DSAExplainer({ initialCode, initialLanguage, aiConfig, onClose }
           const rawInstr = await runAiOnce(prompt)
           if (runGenerationRef.current !== currentGen) return
           instrumented = stripFences(rawInstr)
+          
+          if (!instrumented.includes('__DSA__') && !instrumented.includes('dsa_snapshot(')) {
+            throw new Error('The AI model failed to insert trace statements. Small/weak models often struggle with this task. Please switch to a stronger model. Capable FREE models: Gemini 1.5 Flash or Llama 3.1 70B. Capable PAID models: GPT-4o or Claude 3.5 Sonnet.')
+          }
         }
 
         if (!instrumented) throw new Error('AI returned an empty instrumented script')
@@ -346,6 +379,17 @@ export function DSAExplainer({ initialCode, initialLanguage, aiConfig, onClose }
         setRunStatus('error')
         return
       }
+
+      console.log('[DSA-DEBUG] execResult:', JSON.stringify({
+        success: execResult?.success,
+        stage: execResult?.stage,
+        traceLength: execResult?.trace?.length,
+        truncated: execResult?.truncated,
+        exitCode: execResult?.exitCode,
+        stderr: execResult?.stderr?.slice(0, 500),
+        stdout: execResult?.stdout?.slice(0, 500),
+        error: execResult?.error
+      }))
 
       if (!execResult || !execResult.success) {
         const stage = execResult?.stage
@@ -386,14 +430,14 @@ export function DSAExplainer({ initialCode, initialLanguage, aiConfig, onClose }
           setExplanationSteps(capturedTrace.map((_, i) => `Step ${i + 1}: (explanation unavailable)`))
         }
 
-        try {
-          const rawComp = await runAiOnce(COMPLEXITY_ANALYSIS_PROMPT(code, language))
-          if (runGenerationRef.current === currentGen && rawComp) {
+        const rawComp = await complexityPromise
+        if (runGenerationRef.current === currentGen && rawComp) {
+          try {
             const parsedComp = extractJson(stripFences(rawComp))
             if (parsedComp && parsedComp.timeComplexity) setComplexityData(parsedComp)
+          } catch (compErr) {
+            // Ignore complexity analysis failure
           }
-        } catch (compErr) {
-          // Ignore complexity analysis failure so it doesn't break the run
         }
       } catch (err) {
         setExplanationSteps(capturedTrace.map((_, i) => `Step ${i + 1}: (explanation unavailable)`))

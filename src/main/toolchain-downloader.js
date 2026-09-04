@@ -15,7 +15,7 @@ const execFileAsync = promisify(child_process.execFile);
 export const TOOLCHAIN_CONFIG = {
   version: '1.0.0',
   win32: {
-    url: 'https://github.com/iamkartik0704/compile/releases/download/v1.1.17/llvm-win-x64-pruned.tar.xz',
+    url: 'https://github.com/iamkartik0704/compile/releases/download/v1.1.17/llvm-win-x64-pruned.zip',
     hashUrl: 'https://github.com/iamkartik0704/compile/releases/download/v1.1.17/llvm-win-x64-pruned.sha256',
     folderName: 'llvm-win-x64'
   },

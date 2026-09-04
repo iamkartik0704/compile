@@ -1196,11 +1196,13 @@ ipcMain.handle('window-is-maximized', (event) => BrowserWindow.fromWebContents(e
     }
 
     try {
-      await routeToProvider(model, prompt, event.sender, { ...config, emitEvent: 'inline-ai-stream-chunk' })
+      const emitEvent = config.emitEvent || 'inline-ai-stream-chunk'
+      await routeToProvider(model, prompt, event.sender, { ...config, emitEvent })
       return { status: 'done', model }
     } catch (err) {
       console.error('Provider error:', err)
-      event.sender.send('inline-ai-stream-chunk', `\n// ❌ Error: ${err.message}`)
+      const emitEvent = config.emitEvent || 'inline-ai-stream-chunk'
+      event.sender.send(emitEvent, `\n// ❌ Error: ${err.message}`)
       return { status: 'error', model, error: err.message }
     }
   })
@@ -1683,10 +1685,10 @@ export function getBundledBinaryPath(binName) {
   const isWin = process.platform === 'win32';
   const executable = `${binName}${isWin ? '.exe' : ''}`;
   const resourceBase = app.isPackaged 
-    ? path.join(process.resourcesPath, 'llvm') 
-    : path.join(__dirname, '../../resources', `llvm-${isWin ? 'win-x64' : 'mac-arm64'}`);
+    ? join(process.resourcesPath, 'llvm') 
+    : join(__dirname, '../../resources', `llvm-${isWin ? 'win-x64' : 'mac-arm64'}`);
 
-  const binPath = path.join(resourceBase, 'bin', executable);
+  const binPath = join(resourceBase, 'bin', executable);
   return existsSync(binPath) ? binPath : null;
 }
 
@@ -1833,8 +1835,19 @@ function captureTrace(cmd, args, cwd, cleanupPaths, extraEnv, useShell = false) 
             truncated = true
             try { child.kill('SIGKILL') } catch {}
           }
-        } catch {
-          // Ignore malformed JSON snapshot lines
+        } catch (err) {
+          // Push a fake trace frame so the frontend displays the JSON parsing error
+          // instead of silently dropping the frame.
+          if (trace.length < MAX_TRACE_FRAMES) {
+            trace.push({
+              stepIndex: trace.length,
+              line: -1,
+              event: "AI JSON Formatting Error",
+              variables: { "error": err.message, "raw_string": jsonPart },
+              dataStructureState: null,
+              callStack: []
+            })
+          }
         }
       } else {
         finalOutput += line + '\n'
@@ -1930,11 +1943,11 @@ async function runInstrumentedCodeCore(language, code) {
     }
 
     const compiler = await resolveCppCompilerPath()
-    const compileResult = await runCompiler(
-      compiler.path,
-      [...compiler.requiredArgs, '-std=c++17', '-O0', '-w', srcPath, '-o', binPath],
-      tmpDir
-    )
+    const compileArgs = [...compiler.requiredArgs, '-std=c++17', '-O0', '-w', srcPath, '-o', binPath]
+    if (os.platform() === 'win32') {
+      compileArgs.push('-static', '-static-libgcc', '-static-libstdc++')
+    }
+    const compileResult = await runCompiler(compiler.path, compileArgs, tmpDir)
 
     if (!compileResult.success) {
       // Clean up source; there is no binary to clean up.

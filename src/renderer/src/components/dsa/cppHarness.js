@@ -398,25 +398,100 @@ static void dsa_printVec(const std::vector<std::vector<T>>& v) {
   std::cout << "]";
 }
 
-template <typename T> static std::string dsa_toJson(const std::vector<T>& v);
-template <typename T> static std::string dsa_toJson(const std::vector<std::vector<T>>& v);
+template <typename T, typename A> static std::string dsa_toJson(const std::vector<T, A>& v);
+template <typename T, typename A1, typename A2> static std::string dsa_toJson(const std::vector<std::vector<T, A1>, A2>& v);
+template <typename T, typename C> static std::string dsa_toJson(std::stack<T, C> s);
+template <typename T, typename C> static std::string dsa_toJson(std::queue<T, C> q);
+template <typename T, typename C, typename Cmp> static std::string dsa_toJson(std::priority_queue<T, C, Cmp> q);
+template <typename T, typename A> static std::string dsa_toJson(const std::deque<T, A>& c);
+template <typename T, typename A> static std::string dsa_toJson(const std::list<T, A>& c);
+template <typename T, typename Cmp, typename A> static std::string dsa_toJson(const std::set<T, Cmp, A>& c);
+template <typename T, typename H, typename Eq, typename A> static std::string dsa_toJson(const std::unordered_set<T, H, Eq, A>& c);
+template <typename K, typename V, typename Cmp, typename A> static std::string dsa_toJson(const std::map<K,V,Cmp,A>& c);
+template <typename K, typename V, typename H, typename Eq, typename A> static std::string dsa_toJson(const std::unordered_map<K,V,H,Eq,A>& c);
+
 static std::string dsa_toJson(int v) { return std::to_string(v); }
 static std::string dsa_toJson(long v) { return std::to_string(v); }
 static std::string dsa_toJson(long long v) { return std::to_string(v); }
 static std::string dsa_toJson(double v) { return std::to_string(v); }
 static std::string dsa_toJson(bool v) { return v ? "true" : "false"; }
 static std::string dsa_toJson(const std::string& v) { return "\\"" + v + "\\""; }
-template <typename T>
-static std::string dsa_toJson(const std::vector<T>& v) {
+
+template <typename A, typename B>
+static std::string dsa_toJson(const std::pair<A, B>& p) {
+  return "[" + dsa_toJson(p.first) + "," + dsa_toJson(p.second) + "]";
+}
+
+template <typename T, typename A>
+static std::string dsa_toJson(const std::vector<T, A>& v) {
   std::string s = "[";
   for (size_t i = 0; i < v.size(); ++i) { if (i) s += ","; s += dsa_toJson(v[i]); }
   return s + "]";
 }
-template <typename T>
-static std::string dsa_toJson(const std::vector<std::vector<T>>& v) {
+template <typename T, typename A1, typename A2>
+static std::string dsa_toJson(const std::vector<std::vector<T, A1>, A2>& v) {
   std::string s = "[";
   for (size_t i = 0; i < v.size(); ++i) { if (i) s += ","; s += dsa_toJson(v[i]); }
   return s + "]";
+}
+template <typename T, typename C> static std::string dsa_toJson(std::stack<T, C> s) {
+  std::string res = "["; std::vector<T> tmp;
+  while (!s.empty()) { tmp.push_back(s.top()); s.pop(); }
+  for (auto it = tmp.rbegin(); it != tmp.rend(); ++it) {
+    if (it != tmp.rbegin()) res += ",";
+    res += dsa_toJson(*it);
+  }
+  return res + "]";
+}
+template <typename T, typename C> static std::string dsa_toJson(std::queue<T, C> q) {
+  std::string res = "["; bool first = true;
+  while (!q.empty()) { if (!first) res += ","; res += dsa_toJson(q.front()); q.pop(); first = false; }
+  return res + "]";
+}
+template <typename T, typename C, typename Cmp> static std::string dsa_toJson(std::priority_queue<T, C, Cmp> q) {
+  std::string res = "["; bool first = true;
+  while (!q.empty()) { if (!first) res += ","; res += dsa_toJson(q.top()); q.pop(); first = false; }
+  return res + "]";
+}
+template <typename T, typename A> static std::string dsa_toJson(const std::deque<T, A>& c) {
+  std::string res = "["; bool first = true;
+  for (const auto& item : c) { if (!first) res += ","; res += dsa_toJson(item); first = false; }
+  return res + "]";
+}
+template <typename T, typename A> static std::string dsa_toJson(const std::list<T, A>& c) {
+  std::string res = "["; bool first = true;
+  for (const auto& item : c) { if (!first) res += ","; res += dsa_toJson(item); first = false; }
+  return res + "]";
+}
+template <typename T, typename Cmp, typename A> static std::string dsa_toJson(const std::set<T, Cmp, A>& c) {
+  std::string res = "["; bool first = true;
+  for (const auto& item : c) { if (!first) res += ","; res += dsa_toJson(item); first = false; }
+  return res + "]";
+}
+template <typename T, typename H, typename Eq, typename A> static std::string dsa_toJson(const std::unordered_set<T, H, Eq, A>& c) {
+  std::string res = "["; bool first = true;
+  for (const auto& item : c) { if (!first) res += ","; res += dsa_toJson(item); first = false; }
+  return res + "]";
+}
+template <typename K, typename V, typename Cmp, typename A> static std::string dsa_toJson(const std::map<K,V,Cmp,A>& c) {
+  std::string res = "["; bool first = true;
+  for (const auto& item : c) { if (!first) res += ","; res += dsa_toJson(item); first = false; }
+  return res + "]";
+}
+template <typename K, typename V, typename H, typename Eq, typename A> static std::string dsa_toJson(const std::unordered_map<K,V,H,Eq,A>& c) {
+  std::string res = "["; bool first = true;
+  for (const auto& item : c) { if (!first) res += ","; res += dsa_toJson(item); first = false; }
+  return res + "]";
+}
+extern int __dsa_stepIndex;
+static void dsa_snapshot(int line, const std::string& event, const std::string& vars_json, const std::string& ds_json) {
+  if (__dsa_stepIndex > 200) return;
+  std::cout << "__DSA__{\\"stepIndex\\":" << __dsa_stepIndex++ 
+            << ",\\"line\\":" << line 
+            << ",\\"event\\":\\"" << event 
+            << "\\",\\"variables\\":" << vars_json 
+            << ",\\"dataStructureState\\":" << ds_json 
+            << "}" << std::endl;
 }
 `.trim()
 
