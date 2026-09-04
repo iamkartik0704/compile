@@ -432,7 +432,18 @@ import java.math.*;
 public class DsaTrace {
 ${injections}
 
-  // ── User code (Solution class) — AI-instrumented with __DSA__ emissions ──
+  static int __dsa_stepIndex = 0;
+  static void dsa_snapshot(int line, String event, String vars_json, String ds_json) {
+    if (__dsa_stepIndex > 200) return;
+    System.out.println("__DSA__{\\"stepIndex\\":" + (__dsa_stepIndex++) 
+              + ",\\"line\\":" + line 
+              + ",\\"event\\":\\"" + event 
+              + "\\",\\"variables\\":" + vars_json 
+              + ",\\"dataStructureState\\":" + ds_json 
+              + "}");
+  }
+
+  // ── User code (Solution class) — instrumented with __DSA__ emissions ──
 `
   const solutionSrc = indentBlock(stripPublicOnSolution(userCode), '  ')
   const suffix = `

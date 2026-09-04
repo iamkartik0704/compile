@@ -172,10 +172,16 @@ Original code:
 ${userCode}
 \`\`\`
 
-Captured trace (each entry is one execution step, in order):
+Captured trace (${summary.length} items):
 ${JSON.stringify(summary, null, 2)}
 
-Return ONLY a JSON array (no markdown, no prose) with exactly one string per step in the original trace. Each string is one short sentence (max ~25 words) describing what that specific step did — what changed, why, in terms a learner can follow. Reference variables and values that actually appeared in the trace at that step. Do not invent steps that are not in the trace. STATE FACTS PLAINLY. DO NOT use hedging or contradictory language like "actually" or "but due to". Describe only what the data shows.
+Return ONLY a JSON array of objects (no markdown, no prose). There must be exactly ${summary.length} objects, one for each item in the trace above.
+Each object must have this format:
+{
+  "stepIndex": <the stepIndex from the trace, or -1 if it's an elided note>,
+  "text": "<one short sentence, max 25 words, describing what happened in this step>"
+}
+Reference variables and values that actually appeared in the trace at that step. Do not invent steps. STATE FACTS PLAINLY. Describe only what the data shows.
 `
 }
 
@@ -273,9 +279,9 @@ export function extractPointers(frame, arrayLength) {
   const pointers = []
   for (const [name, value] of Object.entries(vars)) {
     if (POINTER_NAMES.has(name.toLowerCase()) &&
-        typeof value === 'number' &&
-        Number.isInteger(value) &&
-        value >= 0 && value < arrayLength) {
+      typeof value === 'number' &&
+      Number.isInteger(value) &&
+      value >= 0 && value < arrayLength) {
       pointers.push({ name, index: value })
     }
   }
@@ -300,5 +306,236 @@ export function extractJson(raw) {
       try { return JSON.parse(s.slice(first, last + 1)) } catch { return null }
     }
     return null
+  }
+}
+
+// ============================================================
+// DETERMINISTIC EXPLANATION GENERATOR
+// Produces meaningful per-step explanations from trace frames
+// without requiring an AI call. Used as:
+//   1. Instant fallback when AI explanation fails
+//   2. Initial display while AI explanations load
+// ============================================================
+export function generateDeterministicExplanations(trace, userCode) {
+  const codeLines = (userCode || '').split('\n')
+
+  function truncStr(s, max) {
+    if (!s) return ''
+    return s.length > max ? s.slice(0, max - 3) + '...' : s
+  }
+
+  function varSummary(vars, key) {
+    if (!(key in vars)) return ''
+    var val = JSON.stringify(vars[key])
+    return truncStr(val, 40)
+  }
+
+  return trace.map(function (frame, idx) {
+    var event = frame.event || ''
+    var vars = frame.variables || {}
+    var line = frame.line
+    var codeLine = (line >= 1 && line <= codeLines.length) ? codeLines[line - 1].trim() : ''
+
+    if (event === 'function_entry') {
+      var paramNames = Object.keys(vars)
+      if (paramNames.length === 0) return 'Function called with no arguments.'
+      var parts = paramNames.map(function (k) {
+        return k + ' = ' + truncStr(JSON.stringify(vars[k]), 40)
+      })
+      return 'Function called with ' + parts.join(', ') + '.'
+    }
+
+    if (event === 'loop_iteration') {
+      var counters = ['i', 'j', 'k', 'l', 'idx', 'index', 'n']
+      for (var ci = 0; ci < counters.length; ci++) {
+        if (counters[ci] in vars) {
+          return 'Loop iteration with ' + counters[ci] + ' = ' + vars[counters[ci]] + '.'
+        }
+      }
+      return 'Loop iteration at line ' + line + '.'
+    }
+
+    if (event === 'while_iteration') {
+      var wCounters = ['i', 'j', 'k', 'l', 'idx', 'index']
+      for (var wi = 0; wi < wCounters.length; wi++) {
+        if (wCounters[wi] in vars) {
+          return 'While-loop check with ' + wCounters[wi] + ' = ' + vars[wCounters[wi]] + '.'
+        }
+      }
+      return 'While-loop condition check at line ' + line + '.'
+    }
+
+    if (event === 'condition_check') {
+      return 'Condition evaluated at line ' + line + ': ' + truncStr(codeLine, 50)
+    }
+
+    if (event === 'else_branch') {
+      return 'Else branch taken at line ' + line + '.'
+    }
+
+    if (event === 'ds_modify') {
+      var pushMatch = codeLine.match(/(\w+)\.(push|append|add)\s*\((.+?)\)/)
+      var popMatch = codeLine.match(/(\w+)\.(pop|shift|remove)\s*\(/)
+      if (pushMatch) {
+        var dsName = pushMatch[1]
+        var dsVal = varSummary(vars, dsName)
+        return 'Pushed to ' + dsName + (dsVal ? ' \u2192 now ' + dsVal : '') + '.'
+      }
+      if (popMatch) {
+        var dsName2 = popMatch[1]
+        var dsVal2 = varSummary(vars, dsName2)
+        return 'Popped from ' + dsName2 + (dsVal2 ? ' \u2192 now ' + dsVal2 : '') + '.'
+      }
+      return 'Data structure modified at line ' + line + ': ' + truncStr(codeLine, 45)
+    }
+
+    if (event === 'assign') {
+      var assignMatch = codeLine.match(/(\w+(?:\[.*?\])?)\s*(?:=|\+=|-=|\*=|\/=)\s*(.+?);\s*$/)
+      if (assignMatch) {
+        var target = assignMatch[1]
+        var baseName = target.replace(/\[.*\]/, '')
+        if (baseName in vars) {
+          return target + ' updated \u2192 ' + truncStr(JSON.stringify(vars[baseName]), 40)
+        }
+        return 'Assignment: ' + truncStr(codeLine, 50)
+      }
+      return 'Variable updated at line ' + line + '.'
+    }
+
+    if (event === 'return') {
+      if (codeLine.startsWith('return')) {
+        var resultNames = ['result', 'ans', 'answer', 'res', 'output', 'ret', 'count', 'sum', 'max', 'min']
+        for (var ri = 0; ri < resultNames.length; ri++) {
+          if (resultNames[ri] in vars) {
+            return 'Returning ' + resultNames[ri] + ' = ' + truncStr(JSON.stringify(vars[resultNames[ri]]), 40)
+          }
+        }
+      }
+      return 'Function returning at line ' + line + '.'
+    }
+
+    if (event === 'recursive_call') return 'Recursive call at line ' + line + '.'
+    if (event === 'recursive_return') return 'Returning from recursive call at line ' + line + '.'
+    if (event === 'swap') return 'Swap operation at line ' + line + ': ' + truncStr(codeLine, 45)
+    if (event === 'transform') return 'Transformation at line ' + line + ': ' + truncStr(codeLine, 45)
+
+    if (codeLine) {
+      return 'Line ' + line + ': ' + truncStr(codeLine, 50)
+    }
+    return 'Step ' + (idx + 1) + ' at line ' + line + '.'
+  })
+}
+
+// ============================================================
+// DETERMINISTIC COMPLEXITY ANALYZER
+// Detects common algorithmic patterns to estimate time/space
+// complexity without requiring an AI call.
+// ============================================================
+export function analyzeDeterministicComplexity(userCode) {
+  var code = (userCode || '').replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '')
+
+  // Count loop nesting depth
+  var lines = code.split('\n')
+  var maxLoopDepth = 0
+  var currentLoopDepth = 0
+  var braceStack = []
+
+  for (var li = 0; li < lines.length; li++) {
+    var trimmed = lines[li].trim()
+    var isLoop = /^\s*(for|while)\s*\(/.test(trimmed)
+    if (isLoop) {
+      currentLoopDepth++
+      if (currentLoopDepth > maxLoopDepth) maxLoopDepth = currentLoopDepth
+    }
+    for (var ci = 0; ci < trimmed.length; ci++) {
+      if (trimmed[ci] === '{') {
+        braceStack.push(isLoop ? 'loop' : 'other')
+        isLoop = false
+      } else if (trimmed[ci] === '}') {
+        var popped = braceStack.pop()
+        if (popped === 'loop') currentLoopDepth--
+      }
+    }
+  }
+
+  // Pattern detection
+  var hasBinarySearch = /mid\s*=|lo\s*<\s*hi|low\s*<\s*high|left\s*<\s*right|>>>\s*1|Math\.floor\s*\(\s*\(.*\+.*\)\s*\/\s*2\s*\)/.test(code)
+  var hasSorting = /\.sort\s*\(|Arrays\.sort|Collections\.sort|sorted\s*\(|std::sort/.test(code)
+  var hasHashMap = /new\s+Map|new\s+Set|HashMap|HashSet|dict\s*\(|set\s*\(|\{\s*\}|defaultdict|Counter\s*\(|unordered_map|unordered_set/.test(code)
+  var hasRecursion = false
+  var funcMatch = code.match(/(?:function|def|var|let|const)\s+(\w+)|(\w+)\s*=\s*function/)
+  if (funcMatch) {
+    var funcName = funcMatch[1] || funcMatch[2]
+    if (funcName) {
+      var bodyAfterDef = code.slice(code.indexOf(funcName) + funcName.length)
+      hasRecursion = bodyAfterDef.indexOf(funcName + '(') !== -1
+    }
+  }
+  var hasStack = /\.push\s*\(.*\)[\s\S]*\.pop\s*\(/.test(code) || /stack/.test(code.toLowerCase())
+  var hasQueue = /\.shift\s*\(|\.offer\s*\(|deque|Queue/.test(code)
+  var hasHeap = /heapq|PriorityQueue|MinHeap|MaxHeap|heap/.test(code)
+  var hasDp = /dp\s*[\[=]|memo\s*[\[=]|tabulation|memoiz/.test(code.toLowerCase())
+  var hasMatrix = /\[\s*\[/.test(code) && maxLoopDepth >= 2
+
+  // Determine time complexity
+  var timeComplexity = 'O(N)'
+  var spaceComplexity = 'O(1)'
+  var recommendation = ''
+
+  if (hasBinarySearch && maxLoopDepth <= 1) {
+    timeComplexity = 'O(log N)'
+    spaceComplexity = hasRecursion ? 'O(log N)' : 'O(1)'
+  } else if (hasSorting && maxLoopDepth <= 1) {
+    timeComplexity = 'O(N log N)'
+    spaceComplexity = 'O(N)'
+  } else if (hasSorting && maxLoopDepth === 2) {
+    timeComplexity = 'O(N log N)'
+    spaceComplexity = 'O(N)'
+  } else if (hasRecursion && hasBinarySearch) {
+    timeComplexity = 'O(N log N)'
+    spaceComplexity = 'O(log N)'
+  } else if (hasRecursion && hasDp) {
+    timeComplexity = 'O(N)'
+    spaceComplexity = 'O(N)'
+  } else if (hasRecursion && !hasDp && maxLoopDepth <= 1) {
+    timeComplexity = 'O(2^N)'
+    spaceComplexity = 'O(N)'
+    recommendation = 'Consider using dynamic programming or memoization to avoid redundant recursive calls.'
+  } else if (maxLoopDepth >= 3) {
+    timeComplexity = 'O(N^' + maxLoopDepth + ')'
+    spaceComplexity = hasHashMap ? 'O(N)' : 'O(1)'
+    recommendation = 'Consider reducing loop nesting. Can any inner loops be replaced with hash lookups?'
+  } else if (maxLoopDepth === 2) {
+    if (hasMatrix) {
+      timeComplexity = 'O(M \u00D7 N)'
+      spaceComplexity = 'O(M \u00D7 N)'
+    } else {
+      timeComplexity = 'O(N\u00B2)'
+      spaceComplexity = hasHashMap ? 'O(N)' : 'O(1)'
+      if (!hasSorting && !hasBinarySearch) {
+        recommendation = 'Consider using a hash map or sorting to reduce from O(N\u00B2) to O(N) or O(N log N).'
+      }
+    }
+  } else if (maxLoopDepth === 1) {
+    timeComplexity = 'O(N)'
+    if (hasHashMap || hasStack || hasQueue) {
+      spaceComplexity = 'O(N)'
+    } else if (hasDp) {
+      spaceComplexity = 'O(N)'
+    }
+  } else if (maxLoopDepth === 0 && !hasRecursion) {
+    timeComplexity = 'O(1)'
+    spaceComplexity = 'O(1)'
+  }
+
+  if (hasHeap && maxLoopDepth <= 1) {
+    timeComplexity = 'O(N log K)'
+    spaceComplexity = 'O(K)'
+  }
+
+  return {
+    timeComplexity: timeComplexity,
+    spaceComplexity: spaceComplexity,
+    recommendation: recommendation
   }
 }

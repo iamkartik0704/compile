@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import Editor from '@monaco-editor/react'
 
 // Read-only Monaco pane that highlights the CURRENT step's line via a
@@ -8,6 +8,7 @@ export function CodePane({ code, language, activeLine, onCodeChange, editable })
   const editorRef = useRef(null)
   const monacoRef = useRef(null)
   const decorationsRef = useRef(null)
+  const [contextMenu, setContextMenu] = useState(null)
 
   const monacoLang =
     language === 'python' ? 'python' :
@@ -96,7 +97,23 @@ export function CodePane({ code, language, activeLine, onCodeChange, editable })
     if (editable && (!code || code.trim().length === 0)) {
       setTimeout(() => editor.focus(), 0)
     }
+
+    editor.onContextMenu((e) => {
+      if (!editable) return
+      e.event.preventDefault()
+      setContextMenu({
+        x: e.event.posx,
+        y: e.event.posy,
+        editor: editor
+      })
+    })
   }
+
+  useEffect(() => {
+    const closeContextMenu = () => setContextMenu(null)
+    window.addEventListener('click', closeContextMenu)
+    return () => window.removeEventListener('click', closeContextMenu)
+  }, [])
 
   const applyDecoration = (line) => {
     const editor = editorRef.current
@@ -163,12 +180,83 @@ export function CodePane({ code, language, activeLine, onCodeChange, editable })
           glyphMargin: true,
           wordWrap: 'on',
           automaticLayout: true,
-          // Monaco's own right-click menu (Cut/Copy/Paste) is REQUIRED so
-          // right-click paste works when opened from the activity bar with
-          // no prior selection.
-          contextmenu: true
+          // Monaco's own right-click menu is disabled because we use our own overlay
+          // to fix Electron clipboard issues.
+          contextmenu: false
         }}
       />
+      
+      {contextMenu && (
+        <div 
+          className="editor-context-menu" 
+          style={{ left: contextMenu.x, top: contextMenu.y, position: 'fixed', zIndex: 1000 }}
+          onMouseLeave={() => setContextMenu(null)}
+        >
+          <div className="editor-context-menu-item" onClick={() => {
+            const ed = contextMenu.editor
+            const selection = ed.getSelection()
+            if (selection && !selection.isEmpty()) {
+              const text = ed.getModel().getValueInRange(selection)
+              if (window.api && window.api.writeClipboardText) {
+                window.api.writeClipboardText(text).then(() => {
+                  ed.executeEdits("context-menu", [{ range: selection, text: "", forceMoveMarkers: true }])
+                })
+              } else {
+                navigator.clipboard.writeText(text).then(() => {
+                  ed.executeEdits("context-menu", [{ range: selection, text: "", forceMoveMarkers: true }])
+                })
+              }
+            }
+            setContextMenu(null)
+          }}>Cut</div>
+          <div className="editor-context-menu-item" onClick={() => {
+            const ed = contextMenu.editor
+            const selection = ed.getSelection()
+            if (selection && !selection.isEmpty()) {
+              const text = ed.getModel().getValueInRange(selection)
+              if (window.api && window.api.writeClipboardText) {
+                window.api.writeClipboardText(text)
+              } else {
+                navigator.clipboard.writeText(text)
+              }
+            }
+            setContextMenu(null)
+          }}>Copy</div>
+          <div className="editor-context-menu-item" onClick={async () => {
+            const ed = contextMenu.editor
+            try {
+              let text = ''
+              if (window.api && window.api.readClipboardText) {
+                const res = await window.api.readClipboardText()
+                text = res?.success ? res.text : (typeof res === 'string' ? res : '')
+              } else {
+                text = await navigator.clipboard.readText()
+              }
+              if (text) {
+                const position = ed.getPosition()
+                ed.executeEdits("context-menu", [{
+                  range: new monacoRef.current.Range(position.lineNumber, position.column, position.lineNumber, position.column),
+                  text: text,
+                  forceMoveMarkers: true
+                }])
+              }
+            } catch (err) {
+              console.error('Failed to read clipboard contents: ', err)
+            }
+            setContextMenu(null)
+          }}>Paste</div>
+          <div className="editor-context-menu-separator"></div>
+          <div className="editor-context-menu-item" onClick={() => {
+            contextMenu.editor.getAction('editor.action.formatDocument').run()
+            setContextMenu(null)
+          }}>Format Document</div>
+          <div className="editor-context-menu-item" onClick={() => {
+            contextMenu.editor.focus()
+            contextMenu.editor.trigger('anyString', 'editor.action.quickCommand')
+            setContextMenu(null)
+          }}>Command Palette</div>
+        </div>
+      )}
     </div>
   )
 }

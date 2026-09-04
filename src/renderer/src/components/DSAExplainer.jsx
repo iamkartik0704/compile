@@ -16,10 +16,17 @@ import {
   SAMPLE_INPUT_PROMPT,
   COMPLEXITY_ANALYSIS_PROMPT,
   detectStructure,
-  extractJson
+  extractJson,
+  generateDeterministicExplanations,
+  analyzeDeterministicComplexity
 } from './dsa/dsaUtils'
 import { buildCppHarness } from './dsa/cppHarness'
 import { instrumentCppSolution } from './dsa/cppInstrumentor'
+import { instrumentJavaSolution } from './dsa/javaInstrumentor'
+import { instrumentJsSolution } from './dsa/jsInstrumentor'
+import { instrumentPySolution } from './dsa/pyInstrumentor'
+import { buildJsHarness } from './dsa/jsHarness'
+import { buildPyHarness } from './dsa/pyHarness'
 import { buildJavaHarness } from './dsa/javaHarness'
 import { ArgFields, parseSignatureFor, parseFieldValues } from './dsa/ArgFields'
 
@@ -216,7 +223,10 @@ export function DSAExplainer({ initialCode, initialLanguage, aiConfig, onClose }
       setAssumedInput(false)
 
       // Start complexity analysis immediately in the background since it only depends on the source code.
-      const complexityPromise = runAiOnce(COMPLEXITY_ANALYSIS_PROMPT(code, language)).catch(() => null)
+      const complexityPromise = runAiOnce(COMPLEXITY_ANALYSIS_PROMPT(code, language)).catch((err) => {
+        console.warn('[DSA-DEBUG] Complexity AI call failed:', err.message)
+        return null
+      })
 
       const resolved = resolveInputArgs()
       let inputArgs
@@ -271,6 +281,10 @@ export function DSAExplainer({ initialCode, initialLanguage, aiConfig, onClose }
           prebuilt = buildCppHarness(code, inputArgs)
         } else if (language === 'java') {
           prebuilt = buildJavaHarness(code, inputArgs)
+        } else if (language === 'javascript') {
+          prebuilt = buildJsHarness(code, inputArgs)
+        } else if (language === 'python') {
+          prebuilt = buildPyHarness(code, inputArgs)
         }
 
         if (prebuilt && prebuilt.ok) {
@@ -281,10 +295,37 @@ export function DSAExplainer({ initialCode, initialLanguage, aiConfig, onClose }
             try {
               instrumentedSolution = instrumentCppSolution(code)
               if (instrumentedSolution) {
-                console.log('[DSA-DEBUG] Deterministic instrumentor succeeded')
+                console.log('[DSA-DEBUG] Deterministic instrumentor succeeded (cpp)')
               }
             } catch (detErr) {
-              console.log('[DSA-DEBUG] Deterministic instrumentor failed:', detErr.message)
+              console.log('[DSA-DEBUG] Deterministic instrumentor failed (cpp):', detErr.message)
+            }
+          } else if (language === 'java') {
+            try {
+              instrumentedSolution = instrumentJavaSolution(code)
+              if (instrumentedSolution) {
+                console.log('[DSA-DEBUG] Deterministic instrumentor succeeded (java)')
+              }
+            } catch (detErr) {
+              console.log('[DSA-DEBUG] Deterministic instrumentor failed (java):', detErr.message)
+            }
+          } else if (language === 'javascript') {
+            try {
+              instrumentedSolution = instrumentJsSolution(code)
+              if (instrumentedSolution) {
+                console.log('[DSA-DEBUG] Deterministic instrumentor succeeded (javascript)')
+              }
+            } catch (detErr) {
+              console.log('[DSA-DEBUG] Deterministic instrumentor failed (javascript):', detErr.message)
+            }
+          } else if (language === 'python') {
+            try {
+              instrumentedSolution = instrumentPySolution(code)
+              if (instrumentedSolution) {
+                console.log('[DSA-DEBUG] Deterministic instrumentor succeeded (python)')
+              }
+            } catch (detErr) {
+              console.log('[DSA-DEBUG] Deterministic instrumentor failed (python):', detErr.message)
             }
           }
 
@@ -328,7 +369,7 @@ export function DSAExplainer({ initialCode, initialLanguage, aiConfig, onClose }
           // the AI to guess a harness for an unsupported type.
           throw new Error(prebuilt.error)
         } else {
-          // Plain function (no class Solution) or JS/Python — legacy path:
+          // Plain function (no class Solution) or Python — legacy path:
           // let the AI generate everything including main().
           const prompt = language === 'python' ? PY_INSTRUMENTATION_PROMPT(numberedCode, inputArgs)
             : language === 'cpp' ? CPP_INSTRUMENTATION_PROMPT(numberedCode, inputArgs)
@@ -417,33 +458,72 @@ export function DSAExplainer({ initialCode, initialLanguage, aiConfig, onClose }
         return
       }
 
+      // ── Deterministic explanations: instant, no AI needed ──
+      const detExplanations = generateDeterministicExplanations(capturedTrace, code)
+      setExplanationSteps(detExplanations)
+
       setRunStatus('explaining')
       setExplanationLoading(true)
       try {
         const rawExp = await runAiOnce(EXPLANATION_PROMPT(code, capturedTrace))
         if (runGenerationRef.current !== currentGen) return
         
-        const parsedExp = extractJson(stripFences(rawExp))
-        if (Array.isArray(parsedExp)) {
-          setExplanationSteps(parsedExp.map(s => String(s)))
-        } else {
-          setExplanationSteps(capturedTrace.map((_, i) => `Step ${i + 1}: (explanation unavailable)`))
+        let parsedExp = extractJson(stripFences(rawExp))
+        // Some models wrap the array in an object like { steps: [...] } or { explanations: [...] }
+        if (parsedExp && !Array.isArray(parsedExp) && typeof parsedExp === 'object') {
+          const vals = Object.values(parsedExp)
+          const arrayVal = vals.find(v => Array.isArray(v))
+          if (arrayVal) parsedExp = arrayVal
         }
 
-        const rawComp = await complexityPromise
-        if (runGenerationRef.current === currentGen && rawComp) {
-          try {
-            const parsedComp = extractJson(stripFences(rawComp))
-            if (parsedComp && parsedComp.timeComplexity) setComplexityData(parsedComp)
-          } catch (compErr) {
-            // Ignore complexity analysis failure
-          }
+        if (Array.isArray(parsedExp)) {
+          // Re-map objects by stepIndex if they have one
+          // Start with deterministic explanations as base, upgrade with AI
+          const finalSteps = [...detExplanations]
+          parsedExp.forEach((item, idx) => {
+            if (typeof item === 'object' && item !== null && 'text' in item) {
+              const sIdx = typeof item.stepIndex === 'number' && item.stepIndex >= 0 ? item.stepIndex : idx
+              if (sIdx >= 0 && sIdx < finalSteps.length) {
+                finalSteps[sIdx] = item.text
+              }
+            } else if (typeof item === 'string') {
+              if (idx < finalSteps.length) finalSteps[idx] = item
+            }
+          })
+          setExplanationSteps(finalSteps)
         }
+        // If AI returned invalid format, we already have deterministic explanations — no action needed
       } catch (err) {
-        setExplanationSteps(capturedTrace.map((_, i) => `Step ${i + 1}: (explanation unavailable)`))
-        setErrorMsg('Explanation generation failed: ' + err.message)
+        // Deterministic explanations already set — just log the AI failure
+        console.warn('[DSA] AI explanation failed, using deterministic fallback:', err.message)
       } finally {
         setExplanationLoading(false)
+      }
+
+      // ── Complexity analysis — runs independently of AI explanation success ──
+      try {
+        const rawComp = await complexityPromise
+        console.log('[DSA-DEBUG] Complexity raw result:', rawComp ? rawComp.slice(0, 200) : 'null/empty')
+        if (runGenerationRef.current === currentGen) {
+          if (rawComp) {
+            const parsedComp = extractJson(stripFences(rawComp))
+            console.log('[DSA-DEBUG] Complexity parsed:', parsedComp)
+            if (parsedComp && parsedComp.timeComplexity) {
+              setComplexityData(parsedComp)
+            }
+          } else {
+             // Fallback to deterministic complexity
+             console.log('[DSA-DEBUG] AI complexity failed, using deterministic fallback')
+             const detComp = analyzeDeterministicComplexity(code)
+             setComplexityData(detComp)
+          }
+        }
+      } catch (compErr) {
+        console.warn('[DSA] Complexity analysis failed:', compErr.message)
+        // Fallback to deterministic complexity on hard error
+        console.log('[DSA-DEBUG] Using deterministic fallback after catch')
+        setComplexityData(analyzeDeterministicComplexity(code))
+      } finally {
         setRunStatus('done')
       }
     } finally {
