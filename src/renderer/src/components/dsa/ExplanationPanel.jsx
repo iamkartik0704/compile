@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { Clock, Database, Lightbulb, CheckCircle2 } from 'lucide-react'
 
 // Scrolls the paragraph matching the current step into view and
@@ -112,7 +113,10 @@ export function ExplanationPanel({ steps, currentStep, loading, runOutput, compl
           {steps.map((text, i) => {
             const isActive = i === currentStep
             return (
-              <div
+              <motion.div
+                layout
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
                 key={i}
                 ref={isActive ? activeRef : null}
                 style={{
@@ -132,7 +136,7 @@ export function ExplanationPanel({ steps, currentStep, loading, runOutput, compl
                   marginRight: '8px', fontFamily: 'monospace'
                 }}>#{i + 1}</span>
                 {text}
-              </div>
+              </motion.div>
             )
           })}
         </div>

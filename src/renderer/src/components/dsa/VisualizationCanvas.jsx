@@ -1,4 +1,5 @@
 import React from 'react'
+import { motion } from 'framer-motion'
 import { extractPointers } from './dsaUtils'
 
 // ============================================================
@@ -54,30 +55,38 @@ function ArrayView({ data, vars }) {
           const ptrsHere = pointers.filter(p => p.index === i)
           const isPointed = ptrsHere.length > 0
           const height = numeric ? Math.max(24, Math.round((Math.abs(v) / max) * 160)) : 60
+          
+          // Distinct colors for specific pointers
+          let highlightColor = 'var(--accent-color)'
+          let highlightText = 'var(--accent-text)'
+          if (ptrsHere.some(p => p.name === 'pivot' || p.name === 'mid')) { highlightColor = '#8b5cf6'; highlightText = '#fff' }
+          else if (ptrsHere.some(p => p.name === 'i' || p.name === 'left' || p.name === 'start')) { highlightColor = '#3b82f6'; highlightText = '#fff' }
+          else if (ptrsHere.some(p => p.name === 'j' || p.name === 'right' || p.name === 'end')) { highlightColor = '#10b981'; highlightText = '#fff' }
+
           return (
-            <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', minWidth: '44px' }}>
+            <motion.div layout key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', minWidth: '44px' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minHeight: '32px', justifyContent: 'flex-end' }}>
                 {ptrsHere.map(p => (
-                  <div key={p.name} style={{
-                    fontSize: '10px', fontWeight: 700, color: 'var(--accent-color)',
+                  <motion.div layoutId={`ptr-${p.name}`} key={p.name} style={{
+                    fontSize: '10px', fontWeight: 700, color: highlightColor,
                     background: 'var(--bg-elevated)', padding: '2px 6px',
-                    borderRadius: '4px', border: '1px solid var(--border-base)'
-                  }}>{p.name}↓</div>
+                    borderRadius: '4px', border: `1px solid ${highlightColor}`
+                  }}>{p.name}↓</motion.div>
                 ))}
               </div>
-              <div style={{
+              <motion.div layout style={{
                 width: '38px',
                 height: `${height}px`,
-                background: isPointed ? 'var(--accent-color)' : 'var(--bg-elevated)',
-                border: `1px solid ${isPointed ? 'var(--accent-color)' : 'var(--border-base)'}`,
+                background: isPointed ? highlightColor : 'var(--bg-elevated)',
+                border: `1px solid ${isPointed ? highlightColor : 'var(--border-base)'}`,
                 borderRadius: '4px',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: isPointed ? 'var(--accent-text)' : 'var(--text-primary)',
+                color: isPointed ? highlightText : 'var(--text-primary)',
                 fontSize: '12px', fontWeight: 600,
-                transition: 'background 0.25s ease, border-color 0.25s ease'
-              }}>{String(v)}</div>
+                boxShadow: isPointed ? `0 0 12px ${highlightColor}66` : 'none',
+              }}>{String(v)}</motion.div>
               <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>{i}</div>
-            </div>
+            </motion.div>
           )
         })}
       </div>
@@ -95,17 +104,29 @@ function TreeView({ root }) {
   return (
     <div>
       <SectionTitle>Tree</SectionTitle>
-      <svg width={width} height={height} style={{ background: 'var(--bg-elevated)', borderRadius: '8px', border: '1px solid var(--border-base)' }}>
-        {edges.map((e, i) => (
-          <line key={i} x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2} stroke="var(--text-muted)" strokeWidth="1.5" />
-        ))}
+      <div style={{ position: 'relative', width: width, height: height, background: 'var(--bg-elevated)', borderRadius: '8px', border: '1px solid var(--border-base)' }}>
+        <svg width={width} height={height} style={{ position: 'absolute', top: 0, left: 0 }}>
+          {edges.map((e, i) => (
+            <line key={i} x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2} stroke="var(--text-muted)" strokeWidth="1.5" />
+          ))}
+        </svg>
         {positions.map((p, i) => (
-          <g key={i} transform={`translate(${p.x}, ${p.y})`}>
-            <circle r="22" fill="var(--accent-color)" stroke="var(--accent-color)" strokeWidth="2" />
-            <text textAnchor="middle" dy="5" fill="var(--accent-text)" fontSize="13" fontWeight="600">{String(p.value)}</text>
-          </g>
+          <motion.div layout key={i} style={{
+            position: 'absolute',
+            left: p.x - 22,
+            top: p.y - 22,
+            width: '44px', height: '44px',
+            borderRadius: '22px',
+            background: 'var(--accent-color)',
+            border: '2px solid var(--accent-color)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: '13px', fontWeight: 'bold', color: 'var(--accent-text)',
+            boxShadow: '0 4px 6px rgba(0,0,0,0.2)'
+          }}>
+            {String(p.value)}
+          </motion.div>
         ))}
-      </svg>
+      </div>
     </div>
   )
 }
@@ -159,11 +180,9 @@ function layoutTree(root) {
 
 // ── Graph view — nodes in a circle + edges from adjacency ──
 function GraphView({ graph, vars }) {
-  // Build node id list + edge list
   const nodes = []
   const edges = []
   if (Array.isArray(graph) && Array.isArray(graph[0])) {
-    // Adjacency matrix
     for (let i = 0; i < graph.length; i++) nodes.push(String(i))
     for (let i = 0; i < graph.length; i++) {
       for (let j = 0; j < graph[i].length; j++) {
@@ -171,12 +190,10 @@ function GraphView({ graph, vars }) {
       }
     }
   } else if (typeof graph === 'object' && graph !== null) {
-    // Adjacency list { A: [B, C], ... }
     for (const [k, v] of Object.entries(graph)) {
       nodes.push(k)
       for (const other of (v || [])) edges.push({ a: k, b: String(other) })
     }
-    // Make sure targets appear as nodes too
     for (const e of edges) {
       if (!nodes.includes(e.b)) nodes.push(e.b)
     }
@@ -199,28 +216,33 @@ function GraphView({ graph, vars }) {
   return (
     <div>
       <SectionTitle>Graph</SectionTitle>
-      <svg width={size} height={size} style={{ background: 'var(--bg-elevated)', borderRadius: '8px', border: '1px solid var(--border-base)' }}>
-        {edges.map((e, i) => {
-          const A = positions.get(e.a), B = positions.get(e.b)
-          if (!A || !B) return null
-          return <line key={i} x1={A.x} y1={A.y} x2={B.x} y2={B.y} stroke="var(--text-muted)" strokeWidth="1.5" />
-        })}
+      <div style={{ position: 'relative', width: size, height: size, background: 'var(--bg-elevated)', borderRadius: '8px', border: '1px solid var(--border-base)' }}>
+        <svg width={size} height={size} style={{ position: 'absolute', top: 0, left: 0 }}>
+          {edges.map((e, i) => {
+            const A = positions.get(e.a), B = positions.get(e.b)
+            if (!A || !B) return null
+            return <line key={i} x1={A.x} y1={A.y} x2={B.x} y2={B.y} stroke="var(--text-muted)" strokeWidth="1.5" />
+          })}
+        </svg>
         {nodes.map((n) => {
           const p = positions.get(n)
           const isActive = activeSet.has(n)
           return (
-            <g key={n} transform={`translate(${p.x}, ${p.y})`}>
-              <circle
-                r="20"
-                fill={isActive ? 'var(--accent-color)' : 'var(--bg-surface)'}
-                stroke={isActive ? 'var(--accent-color)' : 'var(--border-base)'}
-                strokeWidth="2"
-              />
-              <text textAnchor="middle" dy="5" fill={isActive ? 'var(--accent-text)' : 'var(--text-primary)'} fontSize="12" fontWeight="600">{n}</text>
-            </g>
+            <motion.div key={n} layout style={{
+              position: 'absolute',
+              left: p.x - 20, top: p.y - 20,
+              width: '40px', height: '40px', borderRadius: '20px',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: isActive ? 'var(--accent-color)' : 'var(--bg-surface)',
+              border: `2px solid ${isActive ? 'var(--accent-color)' : 'var(--border-base)'}`,
+              color: isActive ? 'var(--accent-text)' : 'var(--text-primary)',
+              fontSize: '12px', fontWeight: 'bold'
+            }}>
+              {n}
+            </motion.div>
           )
         })}
-      </svg>
+      </div>
     </div>
   )
 }
@@ -231,7 +253,7 @@ function LinkedListView({ head }) {
   let cur = head
   let guard = 0
   while (cur && guard < 200) {
-    nodes.push(cur.val ?? cur.value ?? '·')
+    nodes.push({ val: cur.val ?? cur.value ?? '·' })
     cur = cur.next
     guard++
   }
@@ -239,13 +261,18 @@ function LinkedListView({ head }) {
     <div>
       <SectionTitle>Linked List</SectionTitle>
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-        {nodes.map((v, i) => (
+        {nodes.map((n, i) => (
           <React.Fragment key={i}>
-            <div style={{
-              padding: '10px 16px', border: '1px solid var(--accent-color)', borderRadius: '8px',
-              background: 'var(--accent-color)', color: 'var(--accent-text)',
-              fontWeight: 600, fontSize: '13px', minWidth: '40px', textAlign: 'center'
-            }}>{String(v)}</div>
+            <motion.div layout style={{
+              minWidth: '40px', height: '40px', padding: '0 12px',
+              borderRadius: '8px', background: 'var(--bg-elevated)',
+              border: '2px solid var(--accent-color)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: '12px', fontWeight: 'bold', color: 'var(--text-primary)',
+              boxShadow: '0 4px 6px rgba(0,0,0,0.2)'
+            }}>
+              {String(n.val)}
+            </motion.div>
             {i < nodes.length - 1 && <div style={{ color: 'var(--accent-color)', fontSize: '18px' }}>→</div>}
           </React.Fragment>
         ))}
