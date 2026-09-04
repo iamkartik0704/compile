@@ -316,11 +316,8 @@ function buildVarsJson(varNames) {
 function buildDsJson(vars) {
   const dsVars = vars.filter(v => isContainerType(v.type))
   if (dsVars.length === 0) return '"null"'
-  const parts = dsVars.map((v, idx) => {
-    const prefix = idx > 0 ? ',' : '{'
-    return '"' + prefix + '\\"' + v.name + '\\":" + dsa_toJson(' + v.name + ')'
-  })
-  return parts.join(' + ') + ' + "}"'
+  const primaryDs = dsVars[0]
+  return 'dsa_toJson(' + primaryDs.name + ')'
 }
 
 function isContainerType(type) {

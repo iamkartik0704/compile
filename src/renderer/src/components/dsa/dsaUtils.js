@@ -257,8 +257,8 @@ export function detectStructure(userCode, trace) {
     }
   }
 
-  // Array (default when sample is a flat array)
-  if (Array.isArray(sample) && sample.every(v => typeof v !== 'object' || v === null)) return 'array'
+  // Array (default when sample is an array, graph matrix check happens earlier)
+  if (Array.isArray(sample)) return 'array'
 
   // Fallback
   return 'watch'

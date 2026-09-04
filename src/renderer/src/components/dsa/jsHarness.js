@@ -23,6 +23,19 @@ export function buildJsHarness(userCode, sampleInput) {
   const preamble = `
 // ── DSA Trace Helper ──
 let __dsa_stepIndex = 0;
+function __dsa_clone(obj, seen = new WeakSet()) {
+  if (obj === null || typeof obj !== 'object') return obj;
+  if (seen.has(obj)) return '[Circular]';
+  seen.add(obj);
+  if (Array.isArray(obj)) return obj.map(x => __dsa_clone(x, seen));
+  const res = {};
+  for (let k in obj) {
+    if (Object.prototype.hasOwnProperty.call(obj, k)) {
+      res[k] = __dsa_clone(obj[k], seen);
+    }
+  }
+  return res;
+}
 function dsa_snapshot(line, event, vars, ds) {
   if (__dsa_stepIndex > 200) return;
   console.log("__DSA__" + JSON.stringify({

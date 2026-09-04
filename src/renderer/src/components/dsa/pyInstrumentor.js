@@ -32,8 +32,9 @@ export function instrumentPySolution(userCode) {
         scopes.push({ indent: baseIndent, vars: [...params] });
         
         const paramVarsJson = buildVarsJson(params);
+        const paramDsExpr = buildDsExpr(params);
         // Inject entry snapshot right after def
-        result.push(' '.repeat(baseIndent) + `dsa_snapshot(${lineNum}, "function_entry", ${paramVarsJson}, None)`);
+        result.push(' '.repeat(baseIndent) + `dsa_snapshot(${lineNum}, "function_entry", ${paramVarsJson}, ${paramDsExpr})`);
       }
       continue;
     }
@@ -72,39 +73,40 @@ export function instrumentPySolution(userCode) {
 
     const activeVars = getKnownVars();
     const currentVarsJson = buildVarsJson(activeVars);
+    const currentDsExpr = buildDsExpr(activeVars);
     const indentStr = ' '.repeat(indent + 4);
 
     // ── FOR loop ──
     if (trimmed.startsWith('for ')) {
       result.push(line);
-      result.push(indentStr + `dsa_snapshot(${lineNum}, "loop_iteration", ${currentVarsJson}, None)`);
+      result.push(indentStr + `dsa_snapshot(${lineNum}, "loop_iteration", ${currentVarsJson}, ${currentDsExpr})`);
       continue;
     }
 
     // ── WHILE loop ──
     if (trimmed.startsWith('while ')) {
       result.push(line);
-      result.push(indentStr + `dsa_snapshot(${lineNum}, "while_iteration", ${currentVarsJson}, None)`);
+      result.push(indentStr + `dsa_snapshot(${lineNum}, "while_iteration", ${currentVarsJson}, ${currentDsExpr})`);
       continue;
     }
 
     // ── IF statement ──
     if (trimmed.startsWith('if ') || trimmed.startsWith('elif ')) {
       result.push(line);
-      result.push(indentStr + `dsa_snapshot(${lineNum}, "condition_check", ${currentVarsJson}, None)`);
+      result.push(indentStr + `dsa_snapshot(${lineNum}, "condition_check", ${currentVarsJson}, ${currentDsExpr})`);
       continue;
     }
 
     // ── ELSE ──
     if (trimmed.startsWith('else:')) {
       result.push(line);
-      result.push(indentStr + `dsa_snapshot(${lineNum}, "else_branch", ${currentVarsJson}, None)`);
+      result.push(indentStr + `dsa_snapshot(${lineNum}, "else_branch", ${currentVarsJson}, ${currentDsExpr})`);
       continue;
     }
 
     // ── RETURN statement ──
     if (trimmed.startsWith('return ') || trimmed === 'return') {
-      result.push(' '.repeat(indent) + `dsa_snapshot(${lineNum}, "return", ${currentVarsJson}, None)`);
+      result.push(' '.repeat(indent) + `dsa_snapshot(${lineNum}, "return", ${currentVarsJson}, ${currentDsExpr})`);
       result.push(line);
       continue;
     }
@@ -112,14 +114,14 @@ export function instrumentPySolution(userCode) {
     // ── push/pop/append/insert/remove/sort/reverse ──
     if (/\.(append|pop|insert|remove|sort|reverse)\s*\(/.test(trimmed)) {
       result.push(line);
-      result.push(' '.repeat(indent) + `dsa_snapshot(${lineNum}, "ds_modify", ${currentVarsJson}, None)`);
+      result.push(' '.repeat(indent) + `dsa_snapshot(${lineNum}, "ds_modify", ${currentVarsJson}, ${currentDsExpr})`);
       continue;
     }
 
     // ── Variable assignment ──
     if (assignMatch && !trimmed.startsWith('for ')) {
       result.push(line);
-      result.push(' '.repeat(indent) + `dsa_snapshot(${lineNum}, "assign", ${currentVarsJson}, None)`);
+      result.push(' '.repeat(indent) + `dsa_snapshot(${lineNum}, "assign", ${currentVarsJson}, ${currentDsExpr})`);
       continue;
     }
 
@@ -134,4 +136,15 @@ function buildVarsJson(varNames) {
   const vars = [...new Set(varNames)].slice(0, 8); // deduplicate
   const parts = vars.map(name => `"${name}": ${name}`);
   return `{${parts.join(', ')}}`;
+}
+
+function buildDsExpr(varNames) {
+  if (varNames.length === 0) return 'None';
+  // Pick the first declared complex object (usually the input parameter)
+  let expr = 'None';
+  for (let i = varNames.length - 1; i >= 0; i--) {
+    const v = varNames[i];
+    expr = `${v} if isinstance(${v}, (list, dict)) or hasattr(${v}, "__dict__") else (${expr})`;
+  }
+  return expr;
 }

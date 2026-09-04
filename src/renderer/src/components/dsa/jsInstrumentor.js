@@ -33,8 +33,8 @@ export function instrumentJsSolution(userCode) {
       result.push(line);
       
       const paramVarsJson = buildVarsJson(params);
-      const paramDsJson = buildDsJson(params); // we don't know types in JS, just guess based on name or treat as normal var
-      result.push(`  dsa_snapshot(1, "function_entry", ${paramVarsJson}, null);`);
+      const paramDsJson = buildDsJson(params); 
+      result.push(`  dsa_snapshot(1, "function_entry", ${paramVarsJson}, ${paramDsJson});`);
       
       // Count opening brace if it's on this line
       if (trimmed.includes('{')) {
@@ -77,38 +77,39 @@ export function instrumentJsSolution(userCode) {
 
     const activeVars = getKnownVars();
     const currentVarsJson = buildVarsJson(activeVars);
+    const currentDsJson = buildDsJson(activeVars);
     
     // ── FOR loop ──
     if (/^\s*for\s*\(/.test(trimmed)) {
       result.push(line);
-      result.push(`      dsa_snapshot(${lineNum}, "loop_iteration", ${currentVarsJson}, null);`);
+      result.push(`      dsa_snapshot(${lineNum}, "loop_iteration", ${currentVarsJson}, ${currentDsJson});`);
       continue;
     }
 
     // ── WHILE loop ──
     if (/^\s*while\s*\(/.test(trimmed)) {
       result.push(line);
-      result.push(`      dsa_snapshot(${lineNum}, "while_iteration", ${currentVarsJson}, null);`);
+      result.push(`      dsa_snapshot(${lineNum}, "while_iteration", ${currentVarsJson}, ${currentDsJson});`);
       continue;
     }
 
     // ── IF statement ──
     if (/^\s*if\s*\(/.test(trimmed) || /^\s*\}\s*else\s+if\s*\(/.test(trimmed)) {
       result.push(line);
-      result.push(`      dsa_snapshot(${lineNum}, "condition_check", ${currentVarsJson}, null);`);
+      result.push(`      dsa_snapshot(${lineNum}, "condition_check", ${currentVarsJson}, ${currentDsJson});`);
       continue;
     }
 
     // ── ELSE ──
     if (/^\s*\}\s*else\s*\{/.test(trimmed) || trimmed === 'else{' || trimmed === 'else {' || trimmed === '}else{') {
       result.push(line);
-      result.push(`      dsa_snapshot(${lineNum}, "else_branch", ${currentVarsJson}, null);`);
+      result.push(`      dsa_snapshot(${lineNum}, "else_branch", ${currentVarsJson}, ${currentDsJson});`);
       continue;
     }
 
     // ── RETURN statement ──
     if (/^\s*return\b/.test(trimmed)) {
-      result.push(`      dsa_snapshot(${lineNum}, "return", ${currentVarsJson}, null);`);
+      result.push(`      dsa_snapshot(${lineNum}, "return", ${currentVarsJson}, ${currentDsJson});`);
       result.push(line);
       continue;
     }
@@ -116,14 +117,14 @@ export function instrumentJsSolution(userCode) {
     // ── push/pop/shift/unshift/splice ──
     if (/\.(push|pop|shift|unshift|splice|sort|reverse)\s*\(/.test(trimmed)) {
       result.push(line);
-      result.push(`      dsa_snapshot(${lineNum}, "ds_modify", ${currentVarsJson}, null);`);
+      result.push(`      dsa_snapshot(${lineNum}, "ds_modify", ${currentVarsJson}, ${currentDsJson});`);
       continue;
     }
 
     // ── Variable assignment ──
     if (!declMatch && /[a-zA-Z_]\w*\s*(\[.*?\])?\s*(=|\+=|-=|\*=|\/=)\s*[^=]/.test(trimmed) && !trimmed.startsWith('for')) {
       result.push(line);
-      result.push(`      dsa_snapshot(${lineNum}, "assign", ${currentVarsJson}, null);`);
+      result.push(`      dsa_snapshot(${lineNum}, "assign", ${currentVarsJson}, ${currentDsJson});`);
       continue;
     }
 
@@ -161,7 +162,13 @@ function buildVarsJson(varNames) {
 }
 
 function buildDsJson(varNames) {
-  // In JS it's harder to statically know what's an array without a TS parser.
-  // We can just rely on JSON.stringify on the variables block itself, which will dump arrays.
-  return 'null';
+  if (varNames.length === 0) return 'null';
+  
+  let expr = 'null';
+  for (let i = varNames.length - 1; i >= 0; i--) {
+    const v = varNames[i];
+    // Find the first non-null object variable and clone it
+    expr = `(typeof ${v} === 'object' && ${v} !== null ? __dsa_clone(${v}) : ${expr})`;
+  }
+  return expr;
 }
