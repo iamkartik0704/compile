@@ -104,7 +104,7 @@ export async function getEnclosingScope(code, cursorLine, language) {
   }
 }
 
-export async function skeletonizeCode(code, language) {
+export async function skeletonizeCode(code, language, options = { skeletonizeFunctions: true, removeComments: false, removeWhitespace: false }) {
   try {
     let p;
     try {
@@ -160,7 +160,7 @@ export async function skeletonizeCode(code, language) {
     const foundTypes = new Set()
     function walk(node) {
       nodesWalked++
-      if (isFunctionLike(node.type)) {
+      if (options.skeletonizeFunctions && isFunctionLike(node.type)) {
         foundTypes.add(node.type)
         const body = findBodyBlock(node)
         if (body && typeof body.startIndex === 'number' && typeof body.endIndex === 'number' && body.endIndex > body.startIndex) {
@@ -175,8 +175,21 @@ export async function skeletonizeCode(code, language) {
     }
 
     walk(tree.rootNode)
+    
+    if (options.removeComments) {
+      const commentTypes = new Set(['comment', 'line_comment', 'block_comment', 'string_literal', 'string']) // In python docstrings are just strings, but we shouldn't strip all strings. Actually just stick to 'comment' node types
+      function walkComments(node) {
+        if (node.type.includes('comment')) {
+          replaceRanges.push({ start: node.startIndex, end: node.endIndex, type: 'comment' })
+        }
+        for (let i = 0; i < node.childCount; i++) {
+          walkComments(node.child(i))
+        }
+      }
+      walkComments(tree.rootNode)
+    }
 
-    if (replaceRanges.length === 0) {
+    if (replaceRanges.length === 0 && options.skeletonizeFunctions) {
       return {
         code,
         error: `No skeletonizable function bodies found. Walked ${nodesWalked} nodes. Root: ${tree.rootNode.type}. Matched func types: [${[...foundTypes].join(', ') || 'none'}]. Parse error: ${tree.rootNode.hasError}`
@@ -196,7 +209,13 @@ export async function skeletonizeCode(code, language) {
     const placeholder = language === 'python' ? '...' : '{ /* ... */ }'
     let skeletonized = code
     for (const range of finalRanges) {
-      skeletonized = skeletonized.substring(0, range.start) + placeholder + skeletonized.substring(range.end)
+      const p = range.type === 'comment' ? '' : placeholder
+      skeletonized = skeletonized.substring(0, range.start) + p + skeletonized.substring(range.end)
+    }
+    
+    if (options.removeWhitespace) {
+      // Remove empty lines and trim extra spaces
+      skeletonized = skeletonized.replace(/^\s*[\r\n]/gm, '')
     }
 
     return { code: skeletonized, error: null }

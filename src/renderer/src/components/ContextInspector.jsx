@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
-import { X, Sparkles, Code2, Database } from 'lucide-react'
+import { motion } from 'framer-motion'
+import { X, Sparkles, Code2, Database, DollarSign, ToggleLeft, ToggleRight } from 'lucide-react'
 import { skeletonizeCode } from '../utils/astParser'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
@@ -31,6 +32,8 @@ export function ContextInspector({ isOpen, onClose, originalCode, filePath }) {
   const [isProcessing, setIsProcessing] = useState(false)
   const [lastOriginalCode, setLastOriginalCode] = useState(originalCode)
 
+  const [options, setOptions] = useState({ skeletonizeFunctions: true, removeComments: false, removeWhitespace: false })
+
   useEffect(() => {
     let active = true;
     if (isOpen && originalCode) {
@@ -50,7 +53,7 @@ export function ContextInspector({ isOpen, onClose, originalCode, filePath }) {
           return
         }
 
-        const result = await skeletonizeCode(originalCode, lang)
+        const result = await skeletonizeCode(originalCode, lang, options)
         if (!active) return
 
         if (typeof result === 'object' && result.error) {
@@ -75,7 +78,7 @@ export function ContextInspector({ isOpen, onClose, originalCode, filePath }) {
       process()
     }
     return () => { active = false }
-  }, [isOpen, originalCode, filePath])
+  }, [isOpen, originalCode, filePath, options])
 
   if (!isOpen) return null
 
@@ -89,6 +92,19 @@ export function ContextInspector({ isOpen, onClose, originalCode, filePath }) {
   const savedPercent = originalTokens > 0 ? Math.round((savedTokens / originalTokens) * 100) : 0
   const isNegative = savedTokens < 0
   const isZero = savedTokens === 0
+  const costPerMillion = 3.00 // $3 per 1M tokens (average)
+  const savedCost = (savedTokens / 1000000) * costPerMillion
+  const fillPercentage = originalTokens > 0 ? (skeletonTokens / originalTokens) * 100 : 100
+
+  const ToggleBtn = ({ label, prop }) => (
+    <div 
+      onClick={() => setOptions(p => ({ ...p, [prop]: !p[prop] }))}
+      style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', color: options[prop] ? 'var(--accent-color)' : 'var(--text-muted)', fontSize: '13px', fontWeight: '500', transition: 'color 0.2s' }}
+    >
+      {options[prop] ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}
+      {label}
+    </div>
+  )
 
   return (
     <div style={{
@@ -106,41 +122,69 @@ export function ContextInspector({ isOpen, onClose, originalCode, filePath }) {
         <div>
           <h2 style={{ margin: 0, color: 'var(--text-primary)', fontSize: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Sparkles size={20} color="var(--accent-color)" />
-            Passive Context Compressor
+            Context Optimization Dashboard
           </h2>
           <p style={{ margin: '4px 0 0', color: 'var(--text-muted)', fontSize: '13px' }}>
-            Preview how the AI sees your code before sending it to the API.
+            Visually analyze and optimize token consumption before querying the AI.
           </p>
         </div>
-        <button onClick={onClose} className="tab-action" style={{
-          background: 'transparent', border: 'none', color: 'var(--text-primary)', cursor: 'pointer'
-        }}>
-          <X size={18} />
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+          <div style={{ display: 'flex', gap: '16px', background: 'var(--bg-elevated)', padding: '8px 16px', borderRadius: '8px', border: '1px solid var(--border-base)' }}>
+            <ToggleBtn label="Skeletonize Functions" prop="skeletonizeFunctions" />
+            <ToggleBtn label="Strip Comments" prop="removeComments" />
+            <ToggleBtn label="Strip Whitespace" prop="removeWhitespace" />
+          </div>
+          <button onClick={onClose} className="tab-action" style={{
+            background: 'var(--bg-elevated)', border: '1px solid var(--border-base)', color: 'var(--text-primary)', cursor: 'pointer', padding: '6px', borderRadius: '4px'
+          }}>
+            <X size={18} />
+          </button>
+        </div>
       </div>
 
-      {/* Stats Bar */}
+      {/* Visual Stats Bar */}
       <div style={{
-        background: 'var(--bg-elevated)', padding: '16px 30px',
+        background: 'var(--bg-surface)', padding: '24px 30px',
         borderBottom: '1px solid var(--border-base)',
-        display: 'flex', gap: '40px'
+        display: 'flex', flexDirection: 'column', gap: '16px'
       }}>
-        <div>
-          <div style={{ color: 'var(--text-muted)', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Original Tokens</div>
-          <div style={{ color: 'var(--text-bright)', fontSize: '24px', fontWeight: '600' }}>{originalTokens.toLocaleString()}</div>
-        </div>
-        <div>
-          <div style={{ color: 'var(--text-muted)', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Skeleton Tokens</div>
-          <div style={{ color: 'var(--accent-color)', fontSize: '24px', fontWeight: '600' }}>{skeletonTokens.toLocaleString()}</div>
-        </div>
-        <div>
-          <div style={{ color: 'var(--text-muted)', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Token Savings</div>
-          <div style={{ color: isNegative ? '#ef4444' : (isZero ? 'var(--text-muted)' : '#10a37f'), fontSize: '24px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            {savedPercent > 0 ? `+${savedPercent}` : savedPercent}%
-            <span style={{ fontSize: '14px', background: isNegative ? 'rgba(239, 68, 68, 0.2)' : (isZero ? 'var(--bg-elevated)' : '#10a37f'), color: isNegative ? '#ef4444' : (isZero ? 'var(--text-primary)' : '#fff'), padding: '2px 8px', borderRadius: '12px' }}>
-              {savedTokens > 0 ? `-${savedTokens.toLocaleString()} tokens` : (isNegative ? `+${Math.abs(savedTokens).toLocaleString()} tokens` : '0 tokens')}
-            </span>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+          <div style={{ display: 'flex', gap: '40px' }}>
+            <div>
+              <div style={{ color: 'var(--text-muted)', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Original Tokens</div>
+              <div style={{ color: 'var(--text-bright)', fontSize: '24px', fontWeight: '600' }}>{originalTokens.toLocaleString()}</div>
+            </div>
+            <div>
+              <div style={{ color: 'var(--text-muted)', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Optimized Tokens</div>
+              <div style={{ color: 'var(--accent-color)', fontSize: '24px', fontWeight: '600' }}>{skeletonTokens.toLocaleString()}</div>
+            </div>
+            <div>
+              <div style={{ color: 'var(--text-muted)', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Tokens Saved</div>
+              <div style={{ color: isNegative ? '#ef4444' : (isZero ? 'var(--text-muted)' : '#10b981'), fontSize: '24px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {savedPercent > 0 ? `+${savedPercent}` : savedPercent}%
+              </div>
+            </div>
           </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.2)', padding: '8px 16px', borderRadius: '8px', color: '#10b981' }}>
+            <DollarSign size={20} />
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <div style={{ fontSize: '11px', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.5px' }}>Est. Cost Saved</div>
+                <div style={{ fontSize: '9px', background: 'rgba(16, 185, 129, 0.2)', padding: '2px 6px', borderRadius: '4px' }}>@ $3.00 / 1M Tokens</div>
+              </div>
+              <div style={{ fontSize: '18px', fontWeight: 700 }}>${savedCost > 0 ? savedCost.toFixed(5) : '0.00000'}</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Animated Progress Bar */}
+        <div style={{ width: '100%', height: '12px', background: 'var(--bg-elevated)', borderRadius: '6px', overflow: 'hidden', border: '1px solid var(--border-base)', position: 'relative' }}>
+          <motion.div 
+            initial={{ width: '100%' }}
+            animate={{ width: `${Math.min(100, Math.max(0, fillPercentage))}%` }}
+            transition={{ duration: 0.5, ease: "easeOut" }}
+            style={{ position: 'absolute', top: 0, left: 0, bottom: 0, background: 'var(--accent-color)' }}
+          />
         </div>
       </div>
 
