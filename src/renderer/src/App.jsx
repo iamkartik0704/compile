@@ -3603,9 +3603,7 @@ the new code
                                                   style={vscDarkPlus}
                                                   language={match[1]}
                                                   PreTag="div"
-                                                  wrapLines={true}
-                                                  wrapLongLines={true}
-                                                  customStyle={{ margin: 0, borderRadius: '6px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+                                                  customStyle={{ margin: 0, borderRadius: '6px', whiteSpace: 'pre-wrap', wordBreak: 'break-all', overflowX: 'auto' }}
                                                 />
                                               </div>
                                             ) : (
@@ -3700,8 +3698,8 @@ the new code
                                const addedLines = (edit.body.match(/<replace>([\s\S]*?)<\/replace>/g) || []).reduce((acc, m) => acc + Math.max(0, m.replace(/<\/?replace>/g, '').split('\n').length - 1), 0);
                                const removedLines = (edit.body.match(/<search>([\s\S]*?)<\/search>/g) || []).reduce((acc, m) => acc + Math.max(0, m.replace(/<\/?search>/g, '').split('\n').length - 1), 0);
                                return (
+                                 <React.Fragment key={edit.id}>
                                  <div 
-                                   key={edit.id} 
                                    className="edit-row"
                                    onClick={() => {
                                       handleOpenFile(edit.path, edit.path.split('/').pop().split('\\').pop());
@@ -3745,6 +3743,12 @@ the new code
                                      &hellip;{edit.path.slice(Math.max(0, edit.path.length - 25))}
                                    </span>
                                  </div>
+                                 {edit.error && (
+                                   <div style={{ padding: '6px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid var(--accent-rose, #ef4444)', borderRadius: '4px', marginTop: '6px', fontSize: '11px', color: 'var(--accent-rose, #ef4444)', wordBreak: 'break-word' }}>
+                                     <strong>Failed to apply:</strong> {edit.error}
+                                   </div>
+                                 )}
+                                 </React.Fragment>
                                )
                             })}
                             

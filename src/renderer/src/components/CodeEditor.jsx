@@ -2245,8 +2245,8 @@ export const CodeEditor = ({
           const res = await window.api.getFileContents(path)
           baseText = res.content || ''
         } catch (err) {
-           window.dispatchEvent(new CustomEvent('agentic-edit-error', { detail: { id, ids, error: "Failed to read file from disk." } }))
-           return
+          // If file doesn't exist, treat it as a new file (empty text)
+          baseText = ''
         }
       }
 
