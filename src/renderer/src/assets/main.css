@@ -571,6 +571,19 @@ body {
   margin-top: 4px;
 }
 
+.code-block-wrapper {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.code-block-wrapper pre,
+.code-block-wrapper code,
+.code-block-wrapper span {
+  white-space: pre-wrap !important;
+  word-break: break-word !important;
+  overflow-wrap: anywhere !important;
+}
+
 .cursor-blink {
   color: var(--accent-purple);
   animation: blink 0.7s step-end infinite;
