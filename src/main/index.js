@@ -727,13 +727,20 @@ ipcMain.handle('read-directory', async (event, dirPath) => {
   }
 })
 
+const IGNORED_DIRS = new Set([
+  'node_modules', '.git', 'dist', 'build', '.next', 'out', 'target', 
+  'coverage', '.cache', 'vendor', '.tox', '__pycache__', '.svelte-kit', 
+  '.nuxt', '.output', '.idea', '.vscode'
+])
+
 ipcMain.handle('get-project-tree', async (event, dirPath) => {
   async function walk(dir) {
     let results = []
     try {
       const entries = await fsPromises.readdir(dir, { withFileTypes: true })
       for (const entry of entries) {
-        if (entry.name === 'node_modules' || entry.name === '.git') continue
+        if (IGNORED_DIRS.has(entry.name)) continue
+        
         const fullPath = join(dir, entry.name)
         if (entry.isDirectory()) {
           const sub = await walk(fullPath)

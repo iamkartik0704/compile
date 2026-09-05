@@ -1,8 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react'
-import { Files, Search, GitBranch, Blocks, Settings, Database, Box, Anchor, FolderHeart, Send, Bug, User, ChevronRight, PlayCircle } from 'lucide-react'
+import { Files, Search, GitBranch, GitCommit, Blocks, Settings, Database, Box, Anchor, FolderHeart, Send, Bug, User, ChevronRight, PlayCircle } from 'lucide-react'
 import { useAppStore } from '../store/appStore'
 
-export function ActivityBar({ projectRoot, onShowVisualizer, onShowDsaExplainer, onOpenFile }) {
+export function ActivityBar({ projectRoot, onShowVisualizer, onShowDsaExplainer, onShowGitTimeline, onOpenFile }) {
   const { activePanel, setActivePanel, extensions } = useAppStore()
   const [gitCount, setGitCount] = useState(0)
   const [showSettingsMenu, setShowSettingsMenu] = useState(false)
@@ -139,6 +139,13 @@ export function ActivityBar({ projectRoot, onShowVisualizer, onShowDsaExplainer,
           onClick={() => onShowDsaExplainer && onShowDsaExplainer()}
         >
           <PlayCircle size={24} strokeWidth={1.5} />
+        </div>
+        <div
+          className="activity-item"
+          title="Git Time Machine"
+          onClick={() => onShowGitTimeline && onShowGitTimeline()}
+        >
+          <GitCommit size={24} strokeWidth={1.5} />
         </div>
       </div>
       

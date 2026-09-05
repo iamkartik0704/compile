@@ -14,6 +14,7 @@ import { Plus, Play, Bug, Maximize2, Minimize2, Trash2, CheckCircle, Circle, Ref
 import { getEnclosingScope } from './utils/astParser'
 import { CodebaseVisualizer } from './components/CodebaseVisualizer'
 import { DSAExplainer } from './components/DSAExplainer'
+import { GitTimeline } from './components/GitTimeline'
 import { ActivityBar } from './components/ActivityBar'
 
 import { SourceControlPanel } from './components/SourceControlPanel'
@@ -632,6 +633,7 @@ function App() {
   // ── Live Server State ──
   const [isLiveServerRunning, setIsLiveServerRunning] = useState(false)
   const [liveServerUrl, setLiveServerUrl] = useState(null)
+  const [showGitTimeline, setShowGitTimeline] = useState(false)
 
   const handleToggleLiveServer = async () => {
     let openPath = ''
@@ -2982,6 +2984,7 @@ the new code
           projectRoot={projectRoot}
           onShowVisualizer={() => setShowVisualizer(true)}
           onShowDsaExplainer={() => setDsaExplainer({ code: '', language: 'javascript' })}
+          onShowGitTimeline={() => setShowGitTimeline(true)}
           onOpenFile={handleOpenFile}
         />
 
@@ -4074,6 +4077,15 @@ the new code
               handleOpenFile(path, name)
             }}
           />
+        )}
+
+        {showGitTimeline && (
+          <div style={{ position: 'absolute', inset: 0, zIndex: 9999, background: 'var(--bg-deep)' }}>
+            <GitTimeline 
+              projectRoot={projectRoot} 
+              onClose={() => setShowGitTimeline(false)} 
+            />
+          </div>
         )}
 
         {dsaExplainer && (
