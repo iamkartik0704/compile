@@ -42,13 +42,13 @@ const getDagreLayout = (nodes, edges, direction = 'TB') => {
 const getFolderLayout = (nodes, edges, collState, onToggle) => {
   const nodeWidth = 260
   const nodeHeight = 150
-  const paddingX = 40
-  const paddingY = 40
+  const paddingX = 30
+  const paddingY = 30
   const headerHeight = 50
+  const MAX_COLS = 4
 
   const folders = {}
   nodes.forEach(node => {
-    // Only group file nodes (ignore existing group nodes if any)
     if (node.type === 'custom') {
       const dir = node.id.substring(0, Math.max(node.id.lastIndexOf('\\'), node.id.lastIndexOf('/'))) || 'Root'
       if (!folders[dir]) folders[dir] = []
@@ -57,21 +57,18 @@ const getFolderLayout = (nodes, edges, collState, onToggle) => {
   })
 
   const newNodes = []
-  
-  // Create Folder Groups and assign children
   let currentY = 0
-  const folderGap = 60
+  const folderGap = 40
 
   Object.keys(folders).sort().forEach((dir) => {
-    const isCollapsed = !!collState[dir]
+    const isCollapsed = collState[dir] !== false // default collapsed (true)
     const children = folders[dir]
     
-    // Group dimensions
-    const cols = children.length
-    const groupWidth = isCollapsed ? 300 : (cols * nodeWidth) + ((cols + 1) * paddingX)
-    const groupHeight = isCollapsed ? headerHeight : headerHeight + nodeHeight + paddingY * 2
+    const cols = Math.min(children.length, MAX_COLS)
+    const rows = Math.ceil(children.length / MAX_COLS)
+    const groupWidth = isCollapsed ? 350 : (cols * nodeWidth) + ((cols + 1) * paddingX)
+    const groupHeight = isCollapsed ? headerHeight : headerHeight + (rows * (nodeHeight + paddingY)) + paddingY
     
-    // Create parent group node
     newNodes.push({
       id: `folder-${dir}`,
       type: 'folderGroup',
@@ -81,18 +78,20 @@ const getFolderLayout = (nodes, edges, collState, onToggle) => {
         collapsed: isCollapsed,
         onToggle: () => onToggle(dir),
         width: groupWidth,
-        height: groupHeight
+        height: groupHeight,
+        fileCount: children.length
       },
       style: { width: groupWidth, height: groupHeight }
     })
 
-    // Assign children relative positions
-    children.forEach((node, colIndex) => {
+    children.forEach((node, idx) => {
+      const col = idx % MAX_COLS
+      const row = Math.floor(idx / MAX_COLS)
       node.parentId = `folder-${dir}`
       node.extent = 'parent'
       node.position = {
-        x: paddingX + colIndex * (nodeWidth + paddingX),
-        y: headerHeight + paddingY
+        x: paddingX + col * (nodeWidth + paddingX),
+        y: headerHeight + paddingY + row * (nodeHeight + paddingY)
       }
       node.targetPosition = Position.Top
       node.sourcePosition = Position.Bottom
@@ -103,10 +102,48 @@ const getFolderLayout = (nodes, edges, collState, onToggle) => {
 
     currentY += groupHeight + folderGap
   })
-  
-  // Filter edges to hide them if source or target is collapsed
-  // Actually ReactFlow natively handles hiding edges if their source or target node has hidden=true!
-  return { nodes: newNodes, edges }
+
+  // Build file-to-folder lookup
+  const fileToFolder = {}
+  nodes.forEach(node => {
+    if (node.type === 'custom') {
+      const dir = node.id.substring(0, Math.max(node.id.lastIndexOf('\\'), node.id.lastIndexOf('/'))) || 'Root'
+      fileToFolder[node.id] = dir
+    }
+  })
+
+  // Generate folder-to-folder edges from file-level edges
+  const folderEdgeSet = new Set()
+  const folderEdges = []
+  edges.forEach(edge => {
+    const srcFolder = fileToFolder[edge.source]
+    const tgtFolder = fileToFolder[edge.target]
+    if (!srcFolder || !tgtFolder) return
+    if (srcFolder === tgtFolder) return // skip intra-folder edges (they show when expanded)
+    
+    const srcCollapsed = collState[srcFolder] !== false
+    const tgtCollapsed = collState[tgtFolder] !== false
+    
+    // Show folder edge if at least one end is collapsed
+    if (srcCollapsed || tgtCollapsed) {
+      const fSrc = srcCollapsed ? `folder-${srcFolder}` : edge.source
+      const fTgt = tgtCollapsed ? `folder-${tgtFolder}` : edge.target
+      const fEdgeId = `fe-${fSrc}-${fTgt}`
+      if (!folderEdgeSet.has(fEdgeId)) {
+        folderEdgeSet.add(fEdgeId)
+        folderEdges.push({
+          id: fEdgeId,
+          source: fSrc,
+          target: fTgt,
+          animated: true,
+          style: { stroke: '#8b5cf6', strokeWidth: 2, opacity: 0.6 },
+          markerEnd: { type: MarkerType.ArrowClosed, color: '#8b5cf6' }
+        })
+      }
+    }
+  })
+
+  return { nodes: newNodes, edges: [...edges, ...folderEdges] }
 }
 
 const getLanguageConfig = (ext, type) => {
@@ -231,14 +268,25 @@ const FolderGroupNode = ({ data, selected }) => {
       <div style={{
         background: 'var(--bg-activity)',
         padding: '8px 12px',
-        borderBottom: '1px solid var(--border-base)',
+        borderBottom: data.collapsed ? 'none' : '1px solid var(--border-base)',
         display: 'flex',
         alignItems: 'center',
-        justifyContent: 'space-between'
+        justifyContent: 'space-between',
+        borderRadius: data.collapsed ? '8px' : '8px 8px 0 0'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-bright)', fontSize: '13px', fontWeight: '600' }}>
           <Folder size={16} color="var(--accent-color)" />
           {data.label}
+          <span style={{ 
+            fontSize: '11px', 
+            color: 'var(--text-muted)', 
+            background: 'var(--bg-deep)', 
+            padding: '1px 8px', 
+            borderRadius: '10px',
+            fontWeight: '500'
+          }}>
+            {data.fileCount}
+          </span>
         </div>
         <button
           onClick={(e) => {
@@ -252,6 +300,8 @@ const FolderGroupNode = ({ data, selected }) => {
           {data.collapsed ? <ChevronDown size={16}/> : <ChevronUp size={16}/>}
         </button>
       </div>
+      <Handle type="target" position={Position.Top} style={{ background: '#8b5cf6', width: '10px', height: '10px', top: '-5px', border: '2px solid var(--bg-deep)', opacity: data.collapsed ? 1 : 0 }} />
+      <Handle type="source" position={Position.Bottom} style={{ background: '#8b5cf6', width: '10px', height: '10px', bottom: '-5px', border: '2px solid var(--bg-deep)', opacity: data.collapsed ? 1 : 0 }} />
     </div>
   )
 }
@@ -274,7 +324,25 @@ function VisualizerFlow({ projectRoot, onClose, onFileSelect }) {
   const [collapsedFolders, setCollapsedFolders] = useState({})
 
   const toggleFolder = useCallback((folderId) => {
-    setCollapsedFolders(prev => ({ ...prev, [folderId]: !prev[folderId] }))
+    setCollapsedFolders(prev => {
+      const wasExpanded = prev[folderId] === false
+      return { ...prev, [folderId]: wasExpanded ? true : false }
+    })
+  }, [])
+
+  const expandAllFolders = useCallback(() => {
+    const expanded = {}
+    rawNodes.forEach(n => {
+      if (n.type === 'custom') {
+        const dir = n.id.substring(0, Math.max(n.id.lastIndexOf('\\'), n.id.lastIndexOf('/'))) || 'Root'
+        expanded[dir] = false
+      }
+    })
+    setCollapsedFolders(expanded)
+  }, [rawNodes])
+
+  const collapseAllFolders = useCallback(() => {
+    setCollapsedFolders({})
   }, [])
 
   const runLayout = useCallback((nodes, edges, mode, collState) => {
@@ -285,128 +353,192 @@ function VisualizerFlow({ projectRoot, onClose, onFileSelect }) {
     }
   }, [toggleFolder])
 
+  const [loadProgress, setLoadProgress] = useState('')
+  const [fileCount, setFileCount] = useState(0)
+  const [totalFiles, setTotalFiles] = useState(0)
+
   // Parse files ONCE
   useEffect(() => {
     let active = true
     async function buildGraph() {
       if (!projectRoot) return
       setLoading(true)
-      const allFiles = await window.api.getProjectTree(projectRoot)
-      if (!allFiles) return
+      setLoadProgress('Scanning project tree...')
       
+      let allFiles = await window.api.getProjectTree(projectRoot)
+      if (!allFiles || !active) return
+
+      // Filter out binary / non-useful files early
+      const SKIP_EXTS = new Set([
+        'png','jpg','jpeg','gif','svg','ico','webp','bmp','tiff',
+        'woff','woff2','ttf','eot','otf',
+        'mp3','mp4','wav','ogg','webm','avi','mov',
+        'zip','tar','gz','rar','7z',
+        'pdf','doc','docx','xls','xlsx','ppt','pptx',
+        'exe','dll','so','dylib','o','obj','class',
+        'lock','map','min.js','min.css',
+        'DS_Store','log'
+      ])
+      
+      allFiles = allFiles.filter(f => {
+        const ext = f.split('.').pop().toLowerCase()
+        return !SKIP_EXTS.has(ext)
+      })
+
+      // Cap at 500 files for performance  
+      const MAX_FILES = 500
+      const wasCapped = allFiles.length > MAX_FILES
+      if (wasCapped) {
+        allFiles = allFiles.slice(0, MAX_FILES)
+      }
+
+      setTotalFiles(allFiles.length)
+
+      // Build a filename lookup map for O(1) import resolution
+      const fileBasenameMap = new Map() // basename (no ext) -> [fullPaths]
+      allFiles.forEach(fp => {
+        const base = fp.split(/[\\/]/).pop().split('.')[0]
+        if (!fileBasenameMap.has(base)) fileBasenameMap.set(base, [])
+        fileBasenameMap.get(base).push(fp)
+      })
+
+      // Code extensions we'll actually parse
+      const CODE_EXTS = new Set(['js','jsx','ts','tsx','py','c','cpp','h','hpp','java','go','rs'])
+      const EXT_TO_LANG = { js: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript', py: 'python', cpp: 'cpp', hpp: 'cpp', c: 'c', h: 'c', java: 'java', go: 'go', rs: 'rust' }
+
+      // Pre-initialize tree-sitter parsers (once per language)
+      const parsers = {}
+      setLoadProgress('Initializing parsers...')
+      const langSet = new Set()
+      allFiles.forEach(f => {
+        const ext = f.split('.').pop().toLowerCase()
+        if (EXT_TO_LANG[ext]) langSet.add(EXT_TO_LANG[ext])
+      })
+      for (const lang of langSet) {
+        try {
+          parsers[lang] = await initTreeSitter(lang)
+        } catch (e) { /* parser not available */ }
+      }
+
       const newNodes = []
       const newEdges = []
-      const CHUNK_SIZE = 50
-      
+      const edgeIdSet = new Set()
+      const CHUNK_SIZE = 30
+      let processed = 0
+
       for (let i = 0; i < allFiles.length; i += CHUNK_SIZE) {
         if (!active) return
         const chunk = allFiles.slice(i, i + CHUNK_SIZE)
-        
+
         await Promise.all(chunk.map(async (filePath) => {
           if (!active) return
-          
-          const ext = filePath.split('.').pop()
-          let lang = null
-          if (ext === 'js' || ext === 'jsx') lang = 'javascript'
-          if (ext === 'ts' || ext === 'tsx') lang = 'typescript'
-          if (ext === 'py') lang = 'python'
-          if (ext === 'cpp' || ext === 'hpp') lang = 'cpp'
-          if (ext === 'c' || ext === 'h') lang = 'c'
-          if (ext === 'java') lang = 'java'
-          if (ext === 'go') lang = 'go'
-          if (ext === 'rs') lang = 'rust'
-          
+
+          const ext = filePath.split('.').pop().toLowerCase()
+          const lang = EXT_TO_LANG[ext] || null
           const fileName = filePath.split(/[\\/]/).pop()
-          
+          const isCode = CODE_EXTS.has(ext)
+
           const node = {
             id: filePath,
             type: 'custom',
             position: { x: 0, y: 0 },
             data: { label: fileName, type: lang || ext, ext, exports: [], fullPath: filePath }
           }
-          
-          const exports = []
-          const imports = []
 
-          try {
-            const codeRes = await window.api.getFileContents(filePath)
-            const code = codeRes.content || codeRes || ''
-            
-            if (code && lang) {
-              let treeParsed = false
-              try {
-                const p = await initTreeSitter(lang)
-                if (p) {
-                  const tree = p.parse(code)
-                  function walk(n) {
-                    const t = n.type
-                    if (t === 'import_statement' || t === 'import_from_statement' || t === 'preproc_include') {
-                      imports.push(n.text)
-                    }
-                    if (t === 'class_declaration' || t === 'function_declaration' || t === 'variable_declarator') {
-                      for (let j = 0; j < n.childCount; j++) {
-                        if (n.child(j).type === 'identifier') {
-                          exports.push(n.child(j).text)
-                          break
+          if (isCode) {
+            const exports = []
+            const importBases = [] // just the basenames we need to resolve
+
+            try {
+              const codeRes = await window.api.getFileContents(filePath)
+              const code = typeof codeRes === 'string' ? codeRes : (codeRes?.content || '')
+
+              if (code) {
+                // Tree-sitter pass
+                const parser = parsers[lang]
+                if (parser) {
+                  try {
+                    const tree = parser.parse(code)
+                    function walk(n) {
+                      const t = n.type
+                      if (t === 'class_declaration' || t === 'function_declaration' || t === 'variable_declarator') {
+                        for (let j = 0; j < n.childCount; j++) {
+                          if (n.child(j).type === 'identifier') {
+                            exports.push(n.child(j).text)
+                            break
+                          }
                         }
                       }
+                      for (let j = 0; j < n.childCount; j++) {
+                        walk(n.child(j))
+                      }
                     }
-                    for (let j = 0; j < n.childCount; j++) {
-                      walk(n.child(j))
-                    }
-                  }
-                  walk(tree.rootNode)
-                  treeParsed = true
+                    walk(tree.rootNode)
+                  } catch (e) { /* parse error */ }
                 }
-              } catch (e) {
-                console.warn('Tree sitter parsing failed, falling back to regex', e)
-              }
 
-              const importMatches = [...code.matchAll(/from\s+['"]([^'"]+)['"]/g), ...code.matchAll(/require\(['"]([^'"]+)['"]\)/g)]
-              importMatches.forEach(m => imports.push(m[1]))
-
-              const exportMatches = [...code.matchAll(/(?:export\s+)?(?:const|let|var|function|class)\s+([a-zA-Z0-9_]+)/g)]
-              exportMatches.forEach(m => exports.push(m[1]))
-            }
-          } catch (e) { }
-
-          node.data.exports = [...new Set(exports)].slice(0, 3)
-          
-          for (const imp of imports) {
-            for (const otherFile of allFiles) {
-              if (otherFile === filePath) continue
-              const otherBase = otherFile.split(/[\\/]/).pop().split('.')[0]
-              if (imp.includes(otherBase)) {
-                newEdges.push({
-                  id: `e-${otherFile}-${filePath}`,
-                  source: otherFile, 
-                  target: filePath,  
-                  animated: true,
-                  style: { stroke: '#4f46e5', strokeWidth: 2, opacity: 0.8 },
-                  markerEnd: { type: MarkerType.ArrowClosed, color: '#4f46e5' }
+                // Regex imports — extract basename of import path
+                const importMatches = [
+                  ...code.matchAll(/from\s+['"]([^'"]+)['"]/g),
+                  ...code.matchAll(/require\(\s*['"]([^'"]+)['"]\s*\)/g)
+                ]
+                importMatches.forEach(m => {
+                  const impPath = m[1]
+                  // Extract basename: './components/Sidebar' -> 'Sidebar'
+                  const base = impPath.split(/[\\/]/).pop().split('.')[0]
+                  if (base) importBases.push(base)
                 })
+
+                // Regex exports fallback
+                const exportMatches = [...code.matchAll(/(?:export\s+)?(?:const|let|var|function|class)\s+([a-zA-Z0-9_]+)/g)]
+                exportMatches.forEach(m => exports.push(m[1]))
+              }
+            } catch (e) { /* file read error */ }
+
+            node.data.exports = [...new Set(exports)].slice(0, 3)
+
+            // O(1) import resolution via lookup map
+            for (const base of importBases) {
+              const targets = fileBasenameMap.get(base)
+              if (!targets) continue
+              for (const targetFile of targets) {
+                if (targetFile === filePath) continue
+                const edgeId = `e-${targetFile}-${filePath}`
+                if (!edgeIdSet.has(edgeId)) {
+                  edgeIdSet.add(edgeId)
+                  newEdges.push({
+                    id: edgeId,
+                    source: targetFile,
+                    target: filePath,
+                    animated: true,
+                    style: { stroke: '#4f46e5', strokeWidth: 2, opacity: 0.8 },
+                    markerEnd: { type: MarkerType.ArrowClosed, color: '#4f46e5' }
+                  })
+                }
               }
             }
           }
-          
+
           newNodes.push(node)
         }))
+
+        processed += chunk.length
+        setFileCount(processed)
+        setLoadProgress(`Parsing files... ${Math.min(processed, allFiles.length)}/${allFiles.length}`)
+        
+        // Yield to the UI thread
+        await new Promise(r => setTimeout(r, 0))
       }
-      
-      const uniqueEdges = []
-      const edgeIds = new Set()
-      for (const e of newEdges) {
-        if (!edgeIds.has(e.id)) {
-          edgeIds.add(e.id)
-          uniqueEdges.push(e)
-        }
+
+      if (wasCapped) {
+        setLoadProgress(`Showing first ${MAX_FILES} files. Use filters to narrow down.`)
       }
-      
+
       setRawNodes(newNodes)
-      setRawEdges(uniqueEdges)
+      setRawEdges(newEdges)
       setLoading(false)
     }
-    
+
     buildGraph()
     return () => { active = false }
   }, [projectRoot])
@@ -595,6 +727,30 @@ function VisualizerFlow({ projectRoot, onClose, onFileSelect }) {
               Dependency Flow
             </button>
           </div>
+          {layoutMode === 'folder' && viewMode === '2D' && (
+            <div style={{ display: 'flex', background: 'var(--bg-input)', borderRadius: '6px', padding: '4px', gap: '4px', border: '1px solid var(--border-base)' }}>
+              <button
+                onClick={expandAllFolders}
+                style={{
+                  background: 'transparent',
+                  color: 'var(--text-muted)',
+                  border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: '500', transition: 'all 0.2s'
+                }}
+              >
+                Expand All
+              </button>
+              <button
+                onClick={collapseAllFolders}
+                style={{
+                  background: 'transparent',
+                  color: 'var(--text-muted)',
+                  border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: '500', transition: 'all 0.2s'
+                }}
+              >
+                Collapse All
+              </button>
+            </div>
+          )}
           <button
             onClick={onClose}
             style={{
@@ -618,9 +774,14 @@ function VisualizerFlow({ projectRoot, onClose, onFileSelect }) {
       
       <div style={{ flex: 1, position: 'relative' }}>
         {loading ? (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)' }}>
-            <div style={{ width: '40px', height: '40px', border: '3px solid var(--border-base)', borderTopColor: 'var(--accent-color)', borderRadius: '50%', animation: 'spin 1s linear infinite', marginBottom: '16px' }} />
-            <span style={{ fontSize: '15px', letterSpacing: '0.5px' }}>Mapping Project Dependencies...</span>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', gap: '12px' }}>
+            <div style={{ width: '40px', height: '40px', border: '3px solid var(--border-base)', borderTopColor: 'var(--accent-color)', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+            <span style={{ fontSize: '15px', letterSpacing: '0.5px' }}>{loadProgress || 'Mapping Project Dependencies...'}</span>
+            {totalFiles > 0 && (
+              <div style={{ width: '240px', height: '4px', background: 'var(--border-base)', borderRadius: '2px', overflow: 'hidden' }}>
+                <div style={{ height: '100%', background: 'var(--accent-color)', borderRadius: '2px', transition: 'width 0.3s', width: `${Math.min((fileCount / totalFiles) * 100, 100)}%` }} />
+              </div>
+            )}
             <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
           </div>
         ) : viewMode === '3D' ? (
@@ -665,6 +826,9 @@ function VisualizerFlow({ projectRoot, onClose, onFileSelect }) {
             defaultViewport={{ x: 0, y: 0, zoom: 0.8 }}
             minZoom={0.05}
             maxZoom={2}
+            panOnScroll={true}
+            zoomOnScroll={false}
+            zoomActivationKeyCode="Control"
             proOptions={{ hideAttribution: true }}
           >
             <Background color="var(--text-muted)" variant="dots" gap={20} size={1} opacity={0.15} />

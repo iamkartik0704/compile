@@ -308,10 +308,31 @@ export function GitTimeline({ projectRoot, onClose }) {
 
   if (error) {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', background: 'var(--bg-deep)' }}>
         <GitBranch size={48} style={{ marginBottom: '16px', opacity: 0.5 }} />
-        <div style={{ fontSize: '18px', fontWeight: '500', marginBottom: '8px' }}>Git Time Machine Unavailable</div>
-        <div style={{ fontSize: '14px', maxWidth: '400px', textAlign: 'center' }}>{error}</div>
+        <div style={{ fontSize: '18px', fontWeight: '500', marginBottom: '8px', color: 'var(--text-primary)' }}>Git Time Machine Unavailable</div>
+        <div style={{ fontSize: '14px', maxWidth: '400px', textAlign: 'center', marginBottom: '24px' }}>{error}</div>
+        <button 
+          onClick={onClose}
+          style={{ 
+            background: 'var(--bg-elevated)', 
+            border: '1px solid var(--border-base)', 
+            color: 'var(--text-primary)', 
+            padding: '8px 16px', 
+            borderRadius: '6px', 
+            cursor: 'pointer', 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: '8px', 
+            fontSize: '13px', 
+            fontWeight: '500',
+            transition: 'all 0.2s'
+          }}
+          onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-hover)'}
+          onMouseLeave={e => e.currentTarget.style.background = 'var(--bg-elevated)'}
+        >
+          <X size={16} /> Close
+        </button>
       </div>
     )
   }
