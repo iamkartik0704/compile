@@ -96,15 +96,20 @@ export function SourceControlPanel({ projectRoot, width, onOpenFile }) {
                 placeholder="Message (Enter to commit)"
                 style={{
                   width: '100%',
-                  minHeight: '60px',
-                  background: 'var(--bg-elevated)',
+                  minHeight: '70px',
+                  background: 'var(--bg-deep)',
                   border: '1px solid var(--border-base)',
-                  borderRadius: '4px',
+                  borderRadius: '6px',
                   color: 'var(--text-primary)',
-                  padding: '8px',
-                  fontSize: '12px',
-                  resize: 'vertical'
+                  padding: '10px',
+                  fontSize: '13px',
+                  resize: 'vertical',
+                  outline: 'none',
+                  transition: 'border-color 0.2s',
+                  fontFamily: 'inherit'
                 }}
+                onFocus={(e) => e.target.style.borderColor = 'var(--accent-color)'}
+                onBlur={(e) => e.target.style.borderColor = 'var(--border-base)'}
               />
               <button
                 onClick={handleCommit}
@@ -112,17 +117,22 @@ export function SourceControlPanel({ projectRoot, width, onOpenFile }) {
                 style={{
                   marginTop: '8px',
                   width: '100%',
-                  padding: '6px',
-                  background: 'var(--accent-color)',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  fontSize: '12px',
-                  opacity: (loading || !commitMessage.trim() || files.length === 0) ? 0.5 : 1
+                  padding: '8px',
+                  background: (loading || !commitMessage.trim() || files.length === 0) ? 'var(--bg-elevated)' : 'var(--accent-color)',
+                  color: (loading || !commitMessage.trim() || files.length === 0) ? 'var(--text-muted)' : 'var(--bg-deep)',
+                  border: (loading || !commitMessage.trim() || files.length === 0) ? '1px solid var(--border-base)' : '1px solid var(--accent-color)',
+                  borderRadius: '6px',
+                  cursor: (loading || !commitMessage.trim() || files.length === 0) ? 'not-allowed' : 'pointer',
+                  fontSize: '13px',
+                  fontWeight: '600',
+                  transition: 'all 0.2s',
+                  display: 'flex',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  gap: '6px'
                 }}
               >
-                Commit
+                <Check size={14} /> {loading ? 'Committing...' : 'Commit'}
               </button>
             </div>
 
@@ -133,6 +143,27 @@ export function SourceControlPanel({ projectRoot, width, onOpenFile }) {
               
               {files.map((f, i) => {
                 const isStaged = f.status[0] !== ' ' && f.status[0] !== '?'
+                
+                const parts = f.file.split(/[\\/]/)
+                const fileName = parts.pop()
+                const dirPath = parts.join('/')
+                
+                let statusLetter = f.status.trim()
+                let statusColor = 'var(--text-muted)'
+                if (f.status.includes('M')) {
+                  statusLetter = 'M'
+                  statusColor = '#eab308' 
+                } else if (f.status === '??') {
+                  statusLetter = 'U'
+                  statusColor = '#22c55e' 
+                } else if (f.status.includes('D')) {
+                  statusLetter = 'D'
+                  statusColor = '#ef4444' 
+                } else if (f.status.includes('A')) {
+                  statusLetter = 'A'
+                  statusColor = '#22c55e' 
+                }
+
                 return (
                   <div
                     key={i}
@@ -140,31 +171,46 @@ export function SourceControlPanel({ projectRoot, width, onOpenFile }) {
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
-                      padding: '4px',
+                      padding: '4px 6px',
                       cursor: 'pointer',
                       borderRadius: '4px',
                       fontSize: '13px',
                       color: isStaged ? 'var(--text-primary)' : 'var(--text-muted)',
-                      marginBottom: '2px'
+                      marginBottom: '2px',
+                      position: 'relative'
                     }}
-                    onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
-                    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = 'rgba(255,255,255,0.05)'
+                      const actions = e.currentTarget.querySelector('.file-actions')
+                      if(actions) actions.style.opacity = '1'
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'transparent'
+                      const actions = e.currentTarget.querySelector('.file-actions')
+                      if(actions) actions.style.opacity = '0'
+                    }}
                     onClick={() => {
                       const absolutePath = [projectRoot, f.file].join('/').replace(/\\/g, '/').replace(/\/+/g, '/')
                       onOpenFile(absolutePath, f.file.split(/[\\/]/).pop(), { diff: true, relPath: f.file })
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
-                      <FileText size={14} color={isStaged ? '#4ade80' : 'var(--text-muted)'} />
-                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.file}</span>
-                      <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 'bold' }}>{f.status.trim()}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden', flex: 1 }}>
+                      <FileText size={14} color={isStaged ? '#4ade80' : 'var(--text-muted)'} style={{ flexShrink: 0 }} />
+                      <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'baseline', gap: '6px' }}>
+                        <span style={{ color: isStaged ? '#fff' : 'var(--text-primary)' }}>{fileName}</span>
+                        {dirPath && <span style={{ fontSize: '11px', color: 'var(--text-muted)', opacity: 0.7 }}>{dirPath}</span>}
+                      </div>
                     </div>
-                    <div style={{ display: 'flex', gap: '4px' }}>
-                      {isStaged ? (
-                        <Minus size={14} onClick={(e) => { e.stopPropagation(); handleAction('unstage', f.file) }} title="Unstage Changes" style={{ cursor: 'pointer', color: 'var(--text-muted)' }} />
-                      ) : (
-                        <Plus size={14} onClick={(e) => { e.stopPropagation(); handleAction('add', f.file) }} title="Stage Changes" style={{ cursor: 'pointer', color: 'var(--text-muted)' }} />
-                      )}
+
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0, paddingLeft: '8px' }}>
+                      <div className="file-actions" style={{ display: 'flex', gap: '4px', opacity: 0, transition: 'opacity 0.1s' }}>
+                        {isStaged ? (
+                          <Minus size={14} onClick={(e) => { e.stopPropagation(); handleAction('unstage', f.file) }} title="Unstage Changes" style={{ cursor: 'pointer', color: 'var(--text-primary)' }} />
+                        ) : (
+                          <Plus size={14} onClick={(e) => { e.stopPropagation(); handleAction('add', f.file) }} title="Stage Changes" style={{ cursor: 'pointer', color: 'var(--text-primary)' }} />
+                        )}
+                      </div>
+                      <span style={{ fontSize: '11px', color: statusColor, fontWeight: '900', width: '16px', textAlign: 'center' }}>{statusLetter}</span>
                     </div>
                   </div>
                 )
