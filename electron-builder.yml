@@ -13,6 +13,9 @@ files:
   - '!{.eslintignore,.eslintrc.cjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
   - '!resources/*'
+  - '!dist-toolchains/*'
+  - '!temp_*'
+  - '!test_*'
   - 'build/icon.ico'
 publish:
   - provider: github
