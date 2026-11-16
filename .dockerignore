@@ -1,0 +1,71 @@
+# Keep the build context small and free of secrets.
+# NOTE: electron-builder packages '**/*' from the project root, so anything
+# that gets into the context can end up inside the packaged app.
+
+# VCS / editor / agent folders
+.git
+.github
+.vscode
+.idea
+.claude
+.cache
+.freebuff
+
+# Secrets — passed in via BuildKit secret mounts instead
+.env
+.env.*
+
+# Dependencies & build output (rebuilt inside the image)
+node_modules
+out
+dist
+dist-toolchains
+release
+resources/llvm-*
+compile ide
+
+# Local scratch, logs, dumps
+*.log
+*.txt
+*.zip
+*.pdf
+*.docx
+logs_extracted
+dev-fixtures
+dsa-test
+commit.html
+checks.html
+runs.json
+jobs.json
+release.json
+release_info.json
+diff*.txt
+temp_*
+test_*
+test-*.js
+test*.js
+scratch-*.js
+patch*.js
+*Check.js
+check*.js
+bisect.js
+findMissingBrace.js
+fix-*encodings.js
+modify-app.js
+reapply-styles.js
+get_*actions.js
+extract_files.py
+clean_releases.mjs
+upload_assets*.mjs
+electron.vite.config.*.mjs
+compile_commands.json
+codebase-deep-dive.md
+implementation_plan.md
+settings
+
+# Docker / CI files themselves
+Dockerfile
+docker-compose*.yml
+Jenkinsfile
+
+workspace

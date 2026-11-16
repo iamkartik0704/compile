@@ -2203,7 +2203,7 @@ app.whenReady().then(async () => {
     // --- Auto Updater Setup ---
     let isUpdateDownloaded = false
     
-    if (!is.dev) {
+    if (!is.dev && process.env.COMPILE_DISABLE_AUTO_UPDATE !== '1') {
       autoUpdater.on('update-downloaded', (info) => {
         isUpdateDownloaded = true
         const window = BrowserWindow.getAllWindows()[0]
@@ -2247,6 +2247,8 @@ app.whenReady().then(async () => {
 
     ipcMain.handle('check-for-updates', async () => {
       if (is.dev) return { status: 'dev' }
+      // Docker image sets this: updates ship as a new image, not in-app.
+      if (process.env.COMPILE_DISABLE_AUTO_UPDATE === '1') return { status: 'up-to-date' }
       if (isUpdateDownloaded) return { status: 'downloaded' }
       
       try {

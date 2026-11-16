@@ -1,0 +1,33 @@
+# Run the IDE in your browser:
+#   docker compose up --build        →  open http://localhost:6080
+#
+# Your projects live in ./workspace (bind mount); IDE settings/API keys
+# persist in the named volume "compile-config".
+services:
+  ide:
+    build:
+      context: .
+      target: runtime
+      secrets:
+        - env
+    image: ${IMAGE_NAME:-compile-ide}:${IMAGE_TAG:-latest}
+    container_name: compile-ide
+    ports:
+      - "127.0.0.1:${NOVNC_PORT:-6080}:6080"   # loopback only — put a reverse proxy in front to expose it
+    environment:
+      VNC_PASSWORD: ${VNC_PASSWORD:-}
+      SCREEN_GEOMETRY: ${SCREEN_GEOMETRY:-1920x1080x24}
+      APP_RESTART: "true"
+    volumes:
+      - ./workspace:/home/ide/workspace
+      - compile-config:/home/ide/.config
+    shm_size: "2gb"          # Chromium needs a large /dev/shm
+    init: false              # tini is already the entrypoint
+    restart: unless-stopped
+
+secrets:
+  env:
+    file: ./.env
+
+volumes:
+  compile-config:

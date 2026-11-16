@@ -56,3 +56,6 @@ dist-toolchains/
 temp_*
 test_*
 
+
+# Docker: local workspace mounted into the IDE container
+workspace/
