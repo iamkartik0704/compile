@@ -2628,7 +2628,13 @@ export const CodeEditor = ({
           
           <div className="editor-context-menu-separator" />
           
-          <div className="editor-context-menu-item" onClick={(e) => handleEditorContextAction('editor.action.quickCommand', e)}>
+          <div className="editor-context-menu-item" onClick={(e) => {
+            e.stopPropagation()
+            setEditorContextMenu(null)
+            // Focus first so the palette knows which editor its commands apply to.
+            if (editorRef.current) editorRef.current.focus()
+            window.dispatchEvent(new CustomEvent('execute-global-action', { detail: 'general.commandPalette' }))
+          }}>
             <span>Command Palette...</span>
             <span className="shortcut">{formatShortcut('general.commandPalette', 'Ctrl+Shift+P')}</span>
           </div>

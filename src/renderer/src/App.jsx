@@ -16,6 +16,7 @@ import { CodebaseVisualizer } from './components/CodebaseVisualizer'
 import { DSAExplainer } from './components/DSAExplainer'
 import { GitTimeline } from './components/GitTimeline'
 import { ActivityBar } from './components/ActivityBar'
+import { QuickOpen, buildMenuCommands, recordRecentFile } from './components/QuickOpen'
 
 import { SourceControlPanel } from './components/SourceControlPanel'
 import { ExtensionsPanel } from './components/ExtensionsPanel'
@@ -634,6 +635,8 @@ function App() {
   const [isLiveServerRunning, setIsLiveServerRunning] = useState(false)
   const [liveServerUrl, setLiveServerUrl] = useState(null)
   const [showGitTimeline, setShowGitTimeline] = useState(false)
+  const [quickOpen, setQuickOpen] = useState(null) // null | { input } — text the palette opens with ('' files, '>' commands)
+  const menuDefsRef = useRef([]) // latest title-bar menus, reused as palette commands
 
   const handleToggleLiveServer = async () => {
     let openPath = ''
@@ -1356,7 +1359,7 @@ the new code
   const executeGlobalAction = (id) => {
     switch (id) {
       case 'general.commandPalette':
-        window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.quickCommand' }))
+        setQuickOpen({ input: '>' })
         return true
       case 'general.terminal':
         setShowTerminal(true)
@@ -1539,7 +1542,7 @@ the new code
         window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: `Feature '${id}' is not yet implemented in this preview.`, type: 'info' } }))
         return true
       case 'nav.goToFile':
-        window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.quickCommand' }))
+        setQuickOpen({ input: '' })
         return true
 
       case 'ai.autocomplete': {
@@ -2548,6 +2551,33 @@ the new code
 
   const totalSearchMatches = searchResults.reduce((n, r) => n + r.matches.length, 0)
 
+  // ── Quick Open (Ctrl+P) ──
+  useEffect(() => {
+    recordRecentFile(activeFile)
+  }, [activeFile])
+
+  const openFromQuickOpen = (path, name, line, column) => {
+    handleOpenFile(path, name)
+    if (line && line > 0) {
+      // Same hand-off the Search panel uses: let the editor mount, then reveal.
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('jump-to-line', { detail: { path, line, column: column || 1 } }))
+      }, 60)
+    }
+  }
+
+  const getQuickOpenCommands = () => [
+    ...buildMenuCommands(menuDefsRef.current, formatShortcutById),
+    { id: 'view.aiChat', label: 'View: Toggle AI Chat', shortcut: formatShortcutById('ai.chat', 'Ctrl+L'), run: () => setRightPanel(rightPanel === 'chat' ? null : 'chat') },
+    { id: 'view.visualizer', label: 'View: Visualize Codebase', run: () => setShowVisualizer(true) },
+    { id: 'view.dsaExplainer', label: 'View: DSA Explainer', run: () => setDsaExplainer({ code: '', language: 'javascript' }) },
+    { id: 'view.gitTimeline', label: 'View: Git Time Machine', run: () => setShowGitTimeline(true) },
+    { id: 'prefs.settings', label: 'Preferences: Open Settings', shortcut: formatShortcutById('general.settings', 'Ctrl+,'), run: () => handleOpenFile('settings:main', 'Settings') },
+    { id: 'prefs.shortcuts', label: 'Preferences: Keyboard Shortcuts', shortcut: formatShortcutById('general.shortcuts', 'Ctrl+K Ctrl+S'), run: () => handleOpenFile('settings:shortcuts', 'Keyboard Shortcuts') },
+    { id: 'ai.toggleAutocomplete', label: `AI: Turn Autocomplete ${autoCompleteEnabled ? 'Off' : 'On'}`, run: () => executeGlobalActionRef.current('ai.autocomplete') },
+    { id: 'liveServer.toggle', label: `Live Server: ${isLiveServerRunning ? 'Stop' : 'Start'}`, run: () => handleToggleLiveServer() }
+  ]
+
   return (
     <div className="ide-root" style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: 'var(--bg-deep)', color: 'var(--text-primary)' }}>
       {/* ── Global Header ── */}
@@ -2557,7 +2587,7 @@ the new code
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '24px', WebkitAppRegion: 'no-drag', paddingLeft: navigator.userAgent.toLowerCase().includes('mac') ? '72px' : '0' }}>
           <span style={{ fontSize: '14px', fontWeight: 'bold', color: 'var(--accent-color, #8b5cf6)', letterSpacing: '0.5px' }}>comπle</span>
           <div style={{ display: 'flex', gap: '16px', fontSize: '13px', color: 'var(--text-muted)' }}>
-            {[
+            {(menuDefsRef.current = [
               {
                 name: 'File', items: [
                   {
@@ -2680,7 +2710,7 @@ the new code
               },
               {
                 name: 'View', items: [
-                  { label: 'Command Palette...', shortcutId: 'general.commandPalette', shortcut: 'Ctrl+Shift+P', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.quickCommand' })) },
+                  { label: 'Command Palette...', shortcutId: 'general.commandPalette', shortcut: 'Ctrl+Shift+P', action: () => setQuickOpen({ input: '>' }) },
                   { label: 'Open View...', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.quickCommand' })) },
                   { type: 'separator' },
                   {
@@ -2768,7 +2798,7 @@ the new code
                   { label: 'Back', shortcutId: 'nav.goBack', shortcut: 'Alt+LeftArrow', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'cursorUndo' })) },
                   { label: 'Forward', shortcutId: 'nav.goForward', shortcut: 'Alt+RightArrow', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'cursorRedo' })) },
                   { type: 'separator' },
-                  { label: 'Go to File...', shortcutId: 'nav.goToFile', shortcut: 'Ctrl+P', action: () => setActivePanel('search') },
+                  { label: 'Go to File...', shortcutId: 'nav.goToFile', shortcut: 'Ctrl+P', action: () => setQuickOpen({ input: '' }) },
                   { type: 'separator' },
                   { label: 'Go to Symbol in Editor...', shortcut: 'Ctrl+Shift+O', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.quickOutline' })) },
                   { label: 'Go to Definition', shortcutId: 'nav.goToDef', shortcut: 'F12', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.revealDefinition' })) },
@@ -2846,7 +2876,7 @@ the new code
                   { label: 'About comπle', action: () => window.open('https://ideweb-eta.vercel.app', '_blank') }
                 ]
               }
-            ].map((menu) => (
+            ]).map((menu) => (
               <div key={menu.name} style={{ position: 'relative' }}>
                 <span
                   style={{ cursor: 'pointer', WebkitAppRegion: 'no-drag', color: activeMenu === menu.name ? 'var(--text-primary)' : 'inherit' }}
@@ -2906,9 +2936,18 @@ the new code
 
         {/* Center Section */}
         <div style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '16px', WebkitAppRegion: 'no-drag' }}>
-          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-            {activeFile ? activeFile.split(/[/\\]/).pop() : (projectRoot ? projectRoot.split(/[/\\]/).pop() : 'comπle')}
-          </span>
+          <button
+            type="button"
+            className="command-center"
+            title={`Search files and commands (${formatShortcutById('nav.goToFile', 'Ctrl+P')})`}
+            onClick={() => setQuickOpen({ input: '' })}
+          >
+            <Search size={12} />
+            <span className="command-center-label">
+              {activeFile ? activeFile.split(/[/\\]/).pop() : (projectRoot ? projectRoot.split(/[/\\]/).pop() : 'comπle')}
+            </span>
+            <span className="command-center-keys">{formatShortcutById('nav.goToFile', 'Ctrl+P')}</span>
+          </button>
         </div>
 
         {/* Right Section */}
@@ -4071,6 +4110,18 @@ the new code
             </div>
           </footer>
         </div>
+
+        {quickOpen && (
+          <QuickOpen
+            initialInput={quickOpen.input}
+            projectRoot={projectRoot}
+            openFiles={openFiles}
+            activeFile={activeFile}
+            getCommands={getQuickOpenCommands}
+            onOpenFile={openFromQuickOpen}
+            onClose={() => setQuickOpen(null)}
+          />
+        )}
 
         {showVisualizer && (
           <CodebaseVisualizer
