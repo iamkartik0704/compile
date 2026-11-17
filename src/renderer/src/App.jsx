@@ -16,6 +16,7 @@ import { CodebaseVisualizer } from './components/CodebaseVisualizer'
 import { DSAExplainer } from './components/DSAExplainer'
 import { GitTimeline } from './components/GitTimeline'
 import { ActivityBar } from './components/ActivityBar'
+import { QuickOpen, buildMenuCommands, recordRecentFile } from './components/QuickOpen'
 
 import { SourceControlPanel } from './components/SourceControlPanel'
 import { ExtensionsPanel } from './components/ExtensionsPanel'
@@ -31,10 +32,18 @@ import { useAuthStore } from './store/authStore'
 import './assets/sidebar.css'
 import './assets/editor.css'
 import './assets/themes.css'
-import { useShortcutStore, normalizeEventToKeys, defaultShortcuts } from './store/shortcutStore'
+import { useShortcutStore, normalizeEventToKeys, keysToString, defaultShortcuts } from './store/shortcutStore'
 import { scanWorkspaceForDiagnostics } from './services/workspaceDiagnosticsScanner'
 import { useDiagnosticsStore } from './store/diagnosticsStore'
 import { useChatStore } from './store/chatStore'
+
+const LANGUAGE_LABELS = {
+  javascript: 'JavaScript', typescript: 'TypeScript', python: 'Python', cpp: 'C++', c: 'C', java: 'Java',
+  csharp: 'C#', go: 'Go', rust: 'Rust', php: 'PHP', ruby: 'Ruby', kotlin: 'Kotlin', swift: 'Swift',
+  html: 'HTML', css: 'CSS', scss: 'SCSS', less: 'Less', json: 'JSON', yaml: 'YAML', xml: 'XML', sql: 'SQL',
+  markdown: 'Markdown', shell: 'Shell Script', bash: 'Shell Script', plaintext: 'Plain Text', toadcode: 'ToadCode',
+  'objective-c': 'Objective-C'
+}
 
 function timeAgo(timestamp) {
   if (!timestamp) return '';
@@ -634,6 +643,25 @@ function App() {
   const [isLiveServerRunning, setIsLiveServerRunning] = useState(false)
   const [liveServerUrl, setLiveServerUrl] = useState(null)
   const [showGitTimeline, setShowGitTimeline] = useState(false)
+  const [quickOpen, setQuickOpen] = useState(null) // null | { input } — text the palette opens with ('' files, '>' commands)
+  const debugSessionRef = useRef(false) // true between a debug session starting and it stopping/exiting
+  const [editorStatus, setEditorStatus] = useState(null) // { line, column, selected, insertSpaces, tabSize, eol, language }
+
+  useEffect(() => {
+    const onStatus = (e) => setEditorStatus(e.detail)
+    const onStart = () => { debugSessionRef.current = true }
+    const onStop = () => { debugSessionRef.current = false }
+    window.addEventListener('editor-status-changed', onStatus)
+    window.addEventListener('start-debugging', onStart)
+    window.addEventListener('dap-stop', onStop)
+    if (window.api && window.api.onDapExit) window.api.onDapExit(onStop)
+    return () => {
+      window.removeEventListener('editor-status-changed', onStatus)
+      window.removeEventListener('start-debugging', onStart)
+      window.removeEventListener('dap-stop', onStop)
+    }
+  }, [])
+  const menuDefsRef = useRef([]) // latest title-bar menus, reused as palette commands
 
   const handleToggleLiveServer = async () => {
     let openPath = ''
@@ -809,6 +837,79 @@ function App() {
 
       await window.api.saveFileContents(activeFile, content)
       markFileClean(activeFile)
+    }
+  }
+
+  // Save the active file under a new name and retarget its tab.
+  const saveFileAs = async () => {
+    if (!activeFile) return
+    if (activeFile.startsWith('untitled:')) return saveActiveFile()
+    if (typeof window.getEditorValue !== 'function' || !window.api.showSaveDialog) return
+    const content = window.getEditorValue()
+    const newPath = await window.api.showSaveDialog({ title: 'Save As', defaultPath: activeFile })
+    if (!newPath) return
+    const res = await window.api.saveFileContents(newPath, content)
+    if (res && res.success === false) {
+      window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: `Could not save: ${res.error || 'unknown error'}`, type: 'error' } }))
+      return
+    }
+    if (newPath === activeFile) {
+      markFileClean(activeFile)
+      return
+    }
+    const name = newPath.split(/[/\\]/).pop()
+    setOpenFiles(prev => prev.some(f => f.path === newPath)
+      ? prev.filter(f => f.path !== activeFile)
+      : prev.map(f => f.path === activeFile ? { ...f, path: newPath, name, isDirty: false } : f))
+    setActiveFile(newPath)
+    window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: `Saved as ${name}`, type: 'success' } }))
+  }
+
+  // Save every dirty tab in every editor group.
+  const saveAllFiles = async () => {
+    const dirty = []
+    const seen = new Set()
+    for (const group of editorGroups) {
+      for (const file of group.openFiles) {
+        if (file.isDirty && !seen.has(file.path)) {
+          seen.add(file.path)
+          dirty.push(file)
+        }
+      }
+    }
+    if (dirty.length === 0) {
+      if (activeFile && activeFile.startsWith('untitled:')) await saveActiveFile()
+      return
+    }
+
+    const saved = new Set()
+    const failed = []
+    let untitled = 0
+    for (const file of dirty) {
+      if (file.path.startsWith('untitled:')) { untitled++; continue }
+      const content = file.path === activeFile && typeof window.getEditorValue === 'function'
+        ? window.getEditorValue()
+        : typeof window.getOpenFileValue === 'function' ? window.getOpenFileValue(file.path) : null
+      if (content === null || content === undefined) { failed.push(file.name); continue }
+      const res = await window.api.saveFileContents(file.path, content)
+      if (res && res.success === false) failed.push(file.name)
+      else saved.add(file.path)
+    }
+
+    if (saved.size > 0) {
+      setEditorGroups(prev => prev.map(group => ({
+        ...group,
+        openFiles: group.openFiles.map(f => saved.has(f.path) ? { ...f, isDirty: false } : f)
+      })))
+    }
+    // Untitled buffers need a name: prompt for the active one, mention the rest.
+    if (untitled > 0 && activeFile && activeFile.startsWith('untitled:')) { await saveActiveFile(); untitled-- }
+
+    if (failed.length) {
+      window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: `Saved ${saved.size}, failed: ${failed.join(', ')}`, type: 'error' } }))
+    } else if (saved.size > 0 || untitled > 0) {
+      const note = untitled > 0 ? ` (${untitled} untitled file${untitled > 1 ? 's' : ''} still need${untitled > 1 ? '' : 's'} a name)` : ''
+      window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: `Saved ${saved.size} file${saved.size === 1 ? '' : 's'}${note}`, type: untitled > 0 ? 'info' : 'success' } }))
     }
   }
 
@@ -1356,7 +1457,7 @@ the new code
   const executeGlobalAction = (id) => {
     switch (id) {
       case 'general.commandPalette':
-        window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.quickCommand' }))
+        setQuickOpen({ input: '>' })
         return true
       case 'general.terminal':
         setShowTerminal(true)
@@ -1407,7 +1508,7 @@ the new code
         handleOpenFile('settings:shortcuts', 'Keyboard Shortcuts')
         return true
       case 'file.saveAll':
-        saveActiveFile()
+        saveAllFiles()
         return true
       case 'file.closeFolder':
         setProjectRoot(null)
@@ -1440,6 +1541,8 @@ the new code
         }
         return true
       case 'file.saveAs':
+        saveFileAs()
+        return true
       case 'file.save':
         saveActiveFile()
         return true
@@ -1524,22 +1627,48 @@ the new code
         setRightPanel('chat')
         return true
 
-      case 'debug.start':
       case 'debug.breakpoint':
-      case 'debug.stepOver':
-      case 'debug.stepInto':
-      case 'debug.stepOut':
-      case 'debug.stop':
+        window.dispatchEvent(new CustomEvent('toggle-breakpoint'))
+        return true
+      case 'debug.start':
         setActivePanel('debug')
-        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: `Debug panel opened. Note: Full debugging requires a language-specific DAP backend.`, type: 'info' } }))
+        if (debugSessionRef.current) {
+          // F5 while paused = Continue (same as the Run menu's "Continue").
+          if (window.api && window.api.dapContinue) window.api.dapContinue()
+          window.dispatchEvent(new Event('dap-continue'))
+        } else {
+          // The debug panel owns session start; give it a tick to mount.
+          setTimeout(() => window.dispatchEvent(new CustomEvent('start-debugging')), 50)
+        }
+        return true
+      case 'debug.stepOver':
+        if (window.api && window.api.dapStep) window.api.dapStep()
+        return true
+      case 'debug.stepInto':
+        if (window.api && window.api.dapStepIn) window.api.dapStepIn()
+        return true
+      case 'debug.stepOut':
+        if (window.api && window.api.dapStepOut) window.api.dapStepOut()
+        return true
+      case 'debug.stop':
+        if (window.api && window.api.dapStop) window.api.dapStop()
+        window.dispatchEvent(new Event('dap-stop'))
         return true
 
+      // Inline-suggestion keys: Monaco binds Tab/Esc itself while ghost text is showing.
+      // Handling them here would swallow Tab indentation and Escape for every widget.
+      case 'ai.accept':
+      case 'ai.dismiss':
+        return false
+
       case 'nav.goBack':
+        window.dispatchEvent(new CustomEvent('editor-action', { detail: 'cursorUndo' }))
+        return true
       case 'nav.goForward':
-        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: `Feature '${id}' is not yet implemented in this preview.`, type: 'info' } }))
+        window.dispatchEvent(new CustomEvent('editor-action', { detail: 'cursorRedo' }))
         return true
       case 'nav.goToFile':
-        window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.quickCommand' }))
+        setQuickOpen({ input: '' })
         return true
 
       case 'ai.autocomplete': {
@@ -1590,11 +1719,6 @@ the new code
       if (useShortcutStore.getState().isEditing) return;
       if (e.repeat) return;
 
-      // DEBUG: log Ctrl key combos to diagnose zoom issue
-      if (e.ctrlKey && (e.key === '-' || e.key === '=' || e.key === '+' || e.key === '0' || e.key === 'Subtract' || e.key === 'Add')) {
-        console.log('[ZOOM DEBUG] e.key:', JSON.stringify(e.key), 'e.code:', e.code, 'e.keyCode:', e.keyCode)
-      }
-
       // Focus guard: ignore if typing in an input/textarea (unless it's the Monaco editor or xterm)
       const activeEl = document.activeElement;
       if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable)) {
@@ -1618,10 +1742,10 @@ the new code
       let matchFound = null;
       let partialMatch = false;
 
+      const matchStr = keysToString(keysToMatch);
       for (const group of shortcuts) {
         for (const item of group.items) {
-          const itemKeysStr = item.keys.join('+').toLowerCase();
-          const matchStr = keysToMatch.join('+').toLowerCase();
+          const itemKeysStr = keysToString(item.keys);
 
           if (itemKeysStr === matchStr) {
             matchFound = item;
@@ -1711,17 +1835,16 @@ the new code
         // Build a set of all default keybinding strings, then subtract the current ones.
         // Any default key combo that's no longer assigned to anything should be blocked
         // so Monaco doesn't fire its built-in action for it.
-        const matchStr = keysToMatch.join('+').toLowerCase();
         const currentKeySet = new Set();
         for (const group of shortcuts) {
           for (const item of group.items) {
-            currentKeySet.add(item.keys.join('+').toLowerCase());
+            currentKeySet.add(keysToString(item.keys));
           }
         }
         const defaultKeySet = new Set();
         for (const group of defaultShortcuts) {
           for (const item of group.items) {
-            defaultKeySet.add(item.keys.join('+').toLowerCase());
+            defaultKeySet.add(keysToString(item.keys));
           }
         }
         // "Orphaned" = was a default but is no longer assigned to any shortcut
@@ -2548,6 +2671,33 @@ the new code
 
   const totalSearchMatches = searchResults.reduce((n, r) => n + r.matches.length, 0)
 
+  // ── Quick Open (Ctrl+P) ──
+  useEffect(() => {
+    recordRecentFile(activeFile)
+  }, [activeFile])
+
+  const openFromQuickOpen = (path, name, line, column) => {
+    handleOpenFile(path, name)
+    if (line && line > 0) {
+      // Same hand-off the Search panel uses: let the editor mount, then reveal.
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('jump-to-line', { detail: { path, line, column: column || 1 } }))
+      }, 60)
+    }
+  }
+
+  const getQuickOpenCommands = () => [
+    ...buildMenuCommands(menuDefsRef.current, formatShortcutById),
+    { id: 'view.aiChat', label: 'View: Toggle AI Chat', shortcut: formatShortcutById('ai.chat', 'Ctrl+L'), run: () => setRightPanel(rightPanel === 'chat' ? null : 'chat') },
+    { id: 'view.visualizer', label: 'View: Visualize Codebase', run: () => setShowVisualizer(true) },
+    { id: 'view.dsaExplainer', label: 'View: DSA Explainer', run: () => setDsaExplainer({ code: '', language: 'javascript' }) },
+    { id: 'view.gitTimeline', label: 'View: Git Time Machine', run: () => setShowGitTimeline(true) },
+    { id: 'prefs.settings', label: 'Preferences: Open Settings', shortcut: formatShortcutById('general.settings', 'Ctrl+,'), run: () => handleOpenFile('settings:main', 'Settings') },
+    { id: 'prefs.shortcuts', label: 'Preferences: Keyboard Shortcuts', shortcut: formatShortcutById('general.shortcuts', 'Ctrl+K Ctrl+S'), run: () => handleOpenFile('settings:shortcuts', 'Keyboard Shortcuts') },
+    { id: 'ai.toggleAutocomplete', label: `AI: Turn Autocomplete ${autoCompleteEnabled ? 'Off' : 'On'}`, run: () => executeGlobalActionRef.current('ai.autocomplete') },
+    { id: 'liveServer.toggle', label: `Live Server: ${isLiveServerRunning ? 'Stop' : 'Start'}`, run: () => handleToggleLiveServer() }
+  ]
+
   return (
     <div className="ide-root" style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: 'var(--bg-deep)', color: 'var(--text-primary)' }}>
       {/* ── Global Header ── */}
@@ -2557,7 +2707,7 @@ the new code
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '24px', WebkitAppRegion: 'no-drag', paddingLeft: navigator.userAgent.toLowerCase().includes('mac') ? '72px' : '0' }}>
           <span style={{ fontSize: '14px', fontWeight: 'bold', color: 'var(--accent-color, #8b5cf6)', letterSpacing: '0.5px' }}>comπle</span>
           <div style={{ display: 'flex', gap: '16px', fontSize: '13px', color: 'var(--text-muted)' }}>
-            {[
+            {(menuDefsRef.current = [
               {
                 name: 'File', items: [
                   {
@@ -2625,8 +2775,8 @@ the new code
                   { type: 'separator' },
                   { label: `Auto Save ${autoSave ? '✓' : ''}`, action: () => setAutoSave(!autoSave) },
                   { label: 'Save', shortcutId: 'file.save', shortcut: 'Ctrl+S', action: () => saveActiveFile() },
-                  { label: 'Save As...', shortcutId: 'file.saveAs', shortcut: 'Ctrl+Shift+S', action: () => saveActiveFile() },
-                  { label: 'Save All', shortcutId: 'file.saveAll', shortcut: 'Ctrl+K S', action: () => saveActiveFile() },
+                  { label: 'Save As...', shortcutId: 'file.saveAs', shortcut: 'Ctrl+Shift+S', action: () => saveFileAs() },
+                  { label: 'Save All', shortcutId: 'file.saveAll', shortcut: 'Ctrl+K S', action: () => saveAllFiles() },
                   { type: 'separator' },
                   { label: 'Close Editor', shortcutId: 'file.close', shortcut: 'Ctrl+F4', action: () => activeFile ? closeFile(activeFile) : null },
                   { label: 'Close Folder', shortcut: 'Ctrl+K F', action: () => setProjectRoot(null) },
@@ -2680,7 +2830,7 @@ the new code
               },
               {
                 name: 'View', items: [
-                  { label: 'Command Palette...', shortcutId: 'general.commandPalette', shortcut: 'Ctrl+Shift+P', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.quickCommand' })) },
+                  { label: 'Command Palette...', shortcutId: 'general.commandPalette', shortcut: 'Ctrl+Shift+P', action: () => setQuickOpen({ input: '>' }) },
                   { label: 'Open View...', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.quickCommand' })) },
                   { type: 'separator' },
                   {
@@ -2768,7 +2918,7 @@ the new code
                   { label: 'Back', shortcutId: 'nav.goBack', shortcut: 'Alt+LeftArrow', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'cursorUndo' })) },
                   { label: 'Forward', shortcutId: 'nav.goForward', shortcut: 'Alt+RightArrow', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'cursorRedo' })) },
                   { type: 'separator' },
-                  { label: 'Go to File...', shortcutId: 'nav.goToFile', shortcut: 'Ctrl+P', action: () => setActivePanel('search') },
+                  { label: 'Go to File...', shortcutId: 'nav.goToFile', shortcut: 'Ctrl+P', action: () => setQuickOpen({ input: '' }) },
                   { type: 'separator' },
                   { label: 'Go to Symbol in Editor...', shortcut: 'Ctrl+Shift+O', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.quickOutline' })) },
                   { label: 'Go to Definition', shortcutId: 'nav.goToDef', shortcut: 'F12', action: () => window.dispatchEvent(new CustomEvent('editor-action', { detail: 'editor.action.revealDefinition' })) },
@@ -2842,11 +2992,10 @@ the new code
                     }
                   } },
                   { type: 'separator' },
-                  { label: `Version: ${appVersion}`, action: () => {} },
                   { label: 'About comπle', action: () => window.open('https://ideweb-eta.vercel.app', '_blank') }
                 ]
               }
-            ].map((menu) => (
+            ]).map((menu) => (
               <div key={menu.name} style={{ position: 'relative' }}>
                 <span
                   style={{ cursor: 'pointer', WebkitAppRegion: 'no-drag', color: activeMenu === menu.name ? 'var(--text-primary)' : 'inherit' }}
@@ -2906,9 +3055,18 @@ the new code
 
         {/* Center Section */}
         <div style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '16px', WebkitAppRegion: 'no-drag' }}>
-          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-            {activeFile ? activeFile.split(/[/\\]/).pop() : (projectRoot ? projectRoot.split(/[/\\]/).pop() : 'comπle')}
-          </span>
+          <button
+            type="button"
+            className="command-center"
+            title={`Search files and commands (${formatShortcutById('nav.goToFile', 'Ctrl+P')})`}
+            onClick={() => setQuickOpen({ input: '' })}
+          >
+            <Search size={12} />
+            <span className="command-center-label">
+              {activeFile ? activeFile.split(/[/\\]/).pop() : (projectRoot ? projectRoot.split(/[/\\]/).pop() : 'comπle')}
+            </span>
+            <span className="command-center-keys">{formatShortcutById('nav.goToFile', 'Ctrl+P')}</span>
+          </button>
         </div>
 
         {/* Right Section */}
@@ -4020,6 +4178,33 @@ the new code
               </span>
             </div>
             <div className="status-right">
+              {editorStatus && activeFile && !/^[a-z][\w-]*:(?![\\/])/i.test(activeFile) && (
+                <>
+                  <span
+                    className="status-item clickable"
+                    title={`Go to Line/Column (${formatShortcutById('nav.goToLine', 'Ctrl+G')})`}
+                    onClick={() => setQuickOpen({ input: ':' })}
+                  >
+                    Ln {editorStatus.line}, Col {editorStatus.column}
+                    {editorStatus.selected > 0 && ` (${editorStatus.selected} selected)`}
+                  </span>
+                  <span
+                    className="status-item clickable"
+                    title={`Click to convert indentation to ${editorStatus.insertSpaces ? 'tabs' : 'spaces'}`}
+                    onClick={() => window.dispatchEvent(new CustomEvent('editor-action', { detail: editorStatus.insertSpaces ? 'editor.action.indentationToTabs' : 'editor.action.indentationToSpaces' }))}
+                  >
+                    {editorStatus.insertSpaces ? 'Spaces' : 'Tab Size'}: {editorStatus.tabSize}
+                  </span>
+                  <span className="status-item" title="End of line sequence">{editorStatus.eol}</span>
+                  <span
+                    className="status-item clickable"
+                    title="Language mode — click to browse symbols in this file"
+                    onClick={() => setQuickOpen({ input: '@' })}
+                  >
+                    {LANGUAGE_LABELS[editorStatus.language] || (editorStatus.language ? editorStatus.language[0].toUpperCase() + editorStatus.language.slice(1) : '')}
+                  </span>
+                </>
+              )}
               <span
                 className="status-item clickable"
                 onClick={() => {
@@ -4071,6 +4256,18 @@ the new code
             </div>
           </footer>
         </div>
+
+        {quickOpen && (
+          <QuickOpen
+            initialInput={quickOpen.input}
+            projectRoot={projectRoot}
+            openFiles={openFiles}
+            activeFile={activeFile}
+            getCommands={getQuickOpenCommands}
+            onOpenFile={openFromQuickOpen}
+            onClose={() => setQuickOpen(null)}
+          />
+        )}
 
         {showVisualizer && (
           <CodebaseVisualizer

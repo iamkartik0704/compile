@@ -78,6 +78,17 @@ export const TerminalPanel = forwardRef(({ height, cwd, onFixWithAi, hideHeader 
   const terminalRef = useRef(null)
   const terminalInstance = useRef(null)
   const fitAddon = useRef(null)
+
+  // xterm throws ("reading 'dimensions'") if fit() runs while the panel is hidden or mid-teardown.
+  const safeFit = () => {
+    const host = terminalRef.current
+    if (!fitAddon.current || !terminalInstance.current || !host || host.offsetParent === null || host.clientWidth === 0) return
+    try {
+      fitAddon.current.fit()
+    } catch (err) {
+      // Renderer not attached yet; the next resize will fit it.
+    }
+  }
   const terminalId = useRef(null)
   const commandQueue = useRef([])
   const [isTerminalReady, setIsTerminalReady] = useState(false)
@@ -116,9 +127,11 @@ export const TerminalPanel = forwardRef(({ height, cwd, onFixWithAi, hideHeader 
       terminalId.current = id
       setIsTerminalReady(true)
 
-      // Listen for data from the backend pty and write to xterm
+      // Listen for data from the backend pty and write to xterm.
+      // After unmount the pty is killed and xterm disposed; late chunks must be dropped,
+      // otherwise xterm schedules a render on a torn-down renderer and throws.
       window.api.onTerminalData(id, (data) => {
-        term.write(data)
+        if (mounted) term.write(data)
       })
 
       // Flush any queued commands
@@ -191,15 +204,11 @@ export const TerminalPanel = forwardRef(({ height, cwd, onFixWithAi, hideHeader 
       })
 
       window.api.onTerminalExit(id, () => {
-        term.write('\r\n[Process exited]\r\n')
+        if (mounted) term.write('\r\n[Process exited]\r\n')
       })
     })
 
-    const handleWindowResize = () => {
-      if (fitAddon.current && terminalInstance.current) {
-        fitAddon.current.fit()
-      }
-    }
+    const handleWindowResize = () => safeFit()
     window.addEventListener('resize', handleWindowResize)
 
     return () => {
@@ -208,7 +217,18 @@ export const TerminalPanel = forwardRef(({ height, cwd, onFixWithAi, hideHeader 
       if (terminalId.current !== null) {
         window.api.killTerminal(terminalId.current)
       }
-      term.dispose()
+      // xterm's open() leaves a setTimeout and an animation frame pending (viewport sync /
+      // refresh). Disposing before they fire makes them throw "reading 'dimensions'", which
+      // happens on every dev double-mount. Let them settle, then tear down (with a fallback
+      // timer in case the window is hidden and frames never come).
+      let disposed = false
+      const disposeTerm = () => {
+        if (disposed) return
+        disposed = true
+        try { term.dispose() } catch (err) { /* already torn down */ }
+      }
+      const fallback = setTimeout(disposeTerm, 300)
+      requestAnimationFrame(() => { clearTimeout(fallback); setTimeout(disposeTerm, 0) })
     }
   }, []) // Empty dep array for init
 
@@ -246,7 +266,8 @@ export const TerminalPanel = forwardRef(({ height, cwd, onFixWithAi, hideHeader 
   // Refit when height changes
   useEffect(() => {
     if (isTerminalReady && fitAddon.current) {
-      setTimeout(() => fitAddon.current.fit(), 50)
+      const timer = setTimeout(safeFit, 50)
+      return () => clearTimeout(timer)
     }
   }, [height, isTerminalReady])
 
