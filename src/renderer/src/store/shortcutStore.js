@@ -240,13 +240,28 @@ export const useShortcutStore = create(
 );
 
 // Normalizes an event's modifier keys to an array format matching our keys array
+// The defaults are written as "Left" / "Esc"; KeyboardEvent.key says "ArrowLeft" / "Escape".
+// Everything that compares bindings goes through this so both spellings match.
+const CANONICAL_KEY_NAMES = {
+  arrowleft: 'Left', arrowright: 'Right', arrowup: 'Up', arrowdown: 'Down',
+  leftarrow: 'Left', rightarrow: 'Right', uparrow: 'Up', downarrow: 'Down',
+  escape: 'Esc', return: 'Enter', spacebar: 'Space', del: 'Delete'
+};
+
+export const canonicalKeyName = (key) => {
+  if (typeof key !== 'string') return key;
+  return CANONICAL_KEY_NAMES[key.toLowerCase()] || key;
+};
+
+export const keysToString = (keys) => (keys || []).map(canonicalKeyName).join('+').toLowerCase();
+
 export const normalizeEventToKeys = (e) => {
   const keys = [];
   if (e.ctrlKey) keys.push('Ctrl');
   if (e.shiftKey) keys.push('Shift');
   if (e.altKey) keys.push('Alt');
   if (e.metaKey) keys.push('Meta');
-  
+
   if (!['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) {
     let keyName = e.key;
     if (e.code === 'Backquote') {
@@ -255,6 +270,8 @@ export const normalizeEventToKeys = (e) => {
       keyName = 'Space';
     } else if (keyName.length === 1) {
       keyName = keyName.toUpperCase();
+    } else {
+      keyName = canonicalKeyName(keyName);
     }
     keys.push(keyName);
   }
@@ -264,6 +281,5 @@ export const normalizeEventToKeys = (e) => {
 // Check if an event matches a keys array
 export const matchKeys = (e, keysArray) => {
   if (!keysArray || keysArray.length === 0) return false;
-  const eventKeys = normalizeEventToKeys(e);
-  return eventKeys.join('+').toLowerCase() === keysArray.join('+').toLowerCase();
+  return keysToString(normalizeEventToKeys(e)) === keysToString(keysArray);
 };

@@ -155,6 +155,13 @@ const parseToMonacoKeybinding = (keys, monacoObj) => {
   );
 };
 
+// Commands whose shortcut only makes sense in a given editor state (mirrors Monaco's own defaults).
+const MONACO_WHEN_CLAUSES = {
+  'editor.action.inlineSuggest.commit': 'inlineSuggestionVisible',
+  'editor.action.inlineSuggest.hide': 'inlineSuggestionVisible',
+  'editor.action.inlineSuggest.trigger': 'editorTextFocus'
+};
+
 const syncMonacoKeybindings = (shortcuts, monacoObj) => {
   if (!monacoObj || !monacoObj.editor) return;
   const rules = [];
@@ -191,10 +198,11 @@ const syncMonacoKeybindings = (shortcuts, monacoObj) => {
         // Bind the current (possibly new) keybinding
         const keybinding = parseToMonacoKeybinding(item.keys, monacoObj);
         if (keybinding !== 0) {
-          rules.push({
-            keybinding,
-            command: monacoCommandId
-          });
+          const rule = { keybinding, command: monacoCommandId };
+          // Keep Monaco's context for keys it shares with core editing: without this, Tab
+          // (accept suggestion) and Esc (dismiss) would shadow indentation and closing widgets.
+          if (MONACO_WHEN_CLAUSES[monacoCommandId]) rule.when = MONACO_WHEN_CLAUSES[monacoCommandId];
+          rules.push(rule);
         }
       }
     });
@@ -1552,6 +1560,12 @@ export const CodeEditor = ({
       return editor.getValue()
     }
 
+    // Content of any open file (its Monaco model), used by Save All for files that aren't the active tab.
+    window.getOpenFileValue = (filePath) => {
+      const model = findMonacoModel(filePath)
+      return model && !model.isDisposed() ? model.getValue() : null
+    }
+
     // Expose save functionality for run command
     window.saveActiveFile = () => {
       return handleSave()
@@ -1769,37 +1783,53 @@ export const CodeEditor = ({
     errorLensDecorationsCollectionRef.current = editor.createDecorationsCollection([])
     breakpointDecorationsCollectionRef.current = editor.createDecorationsCollection([])
 
+    const toggleBreakpointAtLine = (line) => {
+      const model = editor.getModel()
+      if (!model || !line) return
+      const uri = model.uri.toString()
+
+      if (!breakpointsRef.current.has(uri)) breakpointsRef.current.set(uri, new Set())
+      const bpSet = breakpointsRef.current.get(uri)
+
+      if (bpSet.has(line)) {
+        bpSet.delete(line)
+      } else {
+        bpSet.add(line)
+      }
+
+      const newDecorations = Array.from(bpSet).map(l => ({
+        range: new monacoInstance.Range(l, 1, l, 1),
+        options: {
+          isWholeLine: false,
+          glyphMarginClassName: 'monaco-breakpoint-glyph'
+        }
+      }))
+
+      breakpointDecorationsCollectionRef.current.set(newDecorations)
+
+      useAppStore.getState().setBreakpoints(uri, Array.from(bpSet))
+
+      // Also fire a global event so DebugPanel could potentially listen to it
+      window.dispatchEvent(new CustomEvent('breakpoints-changed', { detail: { uri, breakpoints: Array.from(bpSet) } }))
+    }
+
     // Breakpoint Click Handler
     editor.onMouseDown((e) => {
       if (e.target.type === monacoInstance.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) {
-        const line = e.target.position.lineNumber
-        const uri = editor.getModel().uri.toString()
-        
-        if (!breakpointsRef.current.has(uri)) breakpointsRef.current.set(uri, new Set())
-        const bpSet = breakpointsRef.current.get(uri)
-        
-        if (bpSet.has(line)) {
-          bpSet.delete(line)
-        } else {
-          bpSet.add(line)
-        }
-        
-        const newDecorations = Array.from(bpSet).map(l => ({
-          range: new monacoInstance.Range(l, 1, l, 1),
-          options: {
-            isWholeLine: false,
-            glyphMarginClassName: 'monaco-breakpoint-glyph'
-          }
-        }))
-        
-        breakpointDecorationsCollectionRef.current.set(newDecorations)
-        
-        useAppStore.getState().setBreakpoints(uri, Array.from(bpSet))
-
-        // Also fire a global event so DebugPanel could potentially listen to it
-        window.dispatchEvent(new CustomEvent('breakpoints-changed', { detail: { uri, breakpoints: Array.from(bpSet) } }))
+        toggleBreakpointAtLine(e.target.position.lineNumber)
       }
     })
+
+    // F9 / "Toggle Breakpoint": acts on the editor that has focus (or the only one).
+    const handleToggleBreakpointShortcut = () => {
+      const all = monacoInstance.editor.getEditors()
+      const focused = all.find(candidate => candidate.hasTextFocus())
+      if (focused ? focused !== editor : all[0] !== editor) return
+      const position = editor.getPosition()
+      if (position) toggleBreakpointAtLine(position.lineNumber)
+    }
+    window.addEventListener('toggle-breakpoint', handleToggleBreakpointShortcut)
+    editor.onDidDispose(() => window.removeEventListener('toggle-breakpoint', handleToggleBreakpointShortcut))
 
     const hoverDecorationsCollectionRef = editor.createDecorationsCollection([])
     
@@ -1844,6 +1874,39 @@ export const CodeEditor = ({
         setCursorLine(line)
       }, 300)
     })
+
+    // ── Status bar feed: cursor, selection, indentation, EOL, language ──
+    // With split editors only the focused one reports, so the bar never flickers between groups.
+    const emitEditorStatus = () => {
+      const model = editor.getModel()
+      if (!model || model.isDisposed()) return
+      const otherHasFocus = monacoInstance.editor.getEditors().some(candidate => candidate !== editor && candidate.hasTextFocus())
+      if (otherHasFocus) return
+      const position = editor.getPosition()
+      const selections = editor.getSelections() || []
+      let selected = 0
+      for (const selection of selections) selected += model.getValueLengthInRange(selection)
+      const options = model.getOptions()
+      window.dispatchEvent(new CustomEvent('editor-status-changed', {
+        detail: {
+          line: position ? position.lineNumber : 1,
+          column: position ? position.column : 1,
+          selected,
+          selections: selections.length,
+          insertSpaces: options.insertSpaces,
+          tabSize: options.tabSize,
+          eol: model.getEOL() === '\n' ? 'LF' : 'CRLF',
+          language: model.getLanguageId(),
+          lineCount: model.getLineCount()
+        }
+      }))
+    }
+    editor.onDidChangeCursorSelection(emitEditorStatus)
+    editor.onDidChangeModel(emitEditorStatus)
+    editor.onDidChangeModelOptions(emitEditorStatus)
+    editor.onDidChangeModelLanguage(emitEditorStatus)
+    editor.onDidFocusEditorText(emitEditorStatus)
+    emitEditorStatus()
 
     // Custom Action: Run File
     editor.addAction({
